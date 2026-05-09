@@ -1,6 +1,7 @@
   // AI CHANGED: Phase C4 (slice 1) -- read-only paper combat math for console / future automation.
-  // Uses Runtime.hero.combatStats + Runtime.skills.slots. **Slice 11:** opener path also uses
-  // isActionBarSlotShowingCooldown() so we do not click a bar slot the UI marks as on cooldown.
+  // Uses Runtime.hero.combatStats + Runtime.skills.slots. **Slice 11:** opener path uses
+  // isActionBarSlotShowingCooldown(). **Slice 12:** opener hold ms from cast/channel cache
+  // (plannerOpenerHoldCastMs) for clickActionBarSlotHoldCast in combat.
   // Ground truth for real fights remains observeCombatDamage (C2) + enemy DB (C3).
 
   function estimatePaperBasicAttackDps(statsOverride) {
@@ -363,8 +364,41 @@
     return false;
   }
 
-  // AI CHANGED: Phase C4 slice 8 — pick action-bar index for opening attack, or null to use basic-only path.
-  function plannerPickSkillSlotToCast() {
+  // AI CHANGED: Phase C4 slice 12 — hold duration (ms) for opener when cache says cast time or channel_gear window.
+  function plannerOpenerHoldCastMs(slotRec) {
+    if (!slotRec || Config.planner.useHoldCastForChannelOpeners === false) {
+      return 0;
+    }
+    const pad = Number.isFinite(Config.planner.channelOpenerHoldPadMs)
+      ? Config.planner.channelOpenerHoldPadMs
+      : 180;
+    const cap = Number.isFinite(Config.planner.channelOpenerHoldCapMs)
+      ? Config.planner.channelOpenerHoldCapMs
+      : 4000;
+    const floor = Number.isFinite(Config.planner.channelOpenerHoldMinMs)
+      ? Config.planner.channelOpenerHoldMinMs
+      : 120;
+    let needMs = 0;
+    const ct = slotRec.castTimeSec;
+    if (Number.isFinite(ct) && ct > 0) {
+      needMs = Math.max(needMs, ct * 1000 + pad);
+    }
+    const effs = slotRec.effects || [];
+    for (let j = 0; j < effs.length; j += 1) {
+      const e = effs[j];
+      if (e && e.type === "channel_gear" && Number.isFinite(e.channelMaxSec) && e.channelMaxSec > 0) {
+        needMs = Math.max(needMs, e.channelMaxSec * 1000 + pad);
+        break;
+      }
+    }
+    if (needMs <= 0) {
+      return 0;
+    }
+    return Math.min(Math.max(needMs, floor), cap);
+  }
+
+  // AI CHANGED: Phase C4 slice 8+12 — full pick { slot, record } for opener (hold vs click uses record).
+  function plannerPickSkillOpeningPick() {
     if (!Config.planner.useRankedAttackSkillsInCombat) {
       return null;
     }
@@ -419,9 +453,15 @@
           continue;
         }
       }
-      return idx;
+      return { slot: idx, record: s };
     }
     return null;
+  }
+
+  // AI CHANGED: Phase C4 slice 8 — pick action-bar index for opening attack, or null to use basic-only path.
+  function plannerPickSkillSlotToCast() {
+    const p = plannerPickSkillOpeningPick();
+    return p ? p.slot : null;
   }
 
   function getLastFoughtEnemyKey() {

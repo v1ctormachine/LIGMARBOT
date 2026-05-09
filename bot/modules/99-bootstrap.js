@@ -75,6 +75,7 @@
       clearSecondRingOverlay: clearSecondRingOverlay,
       clickBasicAttack: clickBasicAttack,
       clickActionBarSlot: clickActionBarSlot,
+      clickActionBarSlotHoldCast: clickActionBarSlotHoldCast,
       isActionBarSlotShowingCooldown: isActionBarSlotShowingCooldown,
       isBasicAttackConfigured: isBasicAttackConfigured,
       setBasicAttackSelector: setBasicAttackSelector,
@@ -137,6 +138,8 @@
       quickCalibrationSession: quickCalibrationSession,
       getLastFoughtEnemyKey: getLastFoughtEnemyKey,
       plannerPickSkillSlotToCast: plannerPickSkillSlotToCast,
+      plannerPickSkillOpeningPick: plannerPickSkillOpeningPick,
+      plannerOpenerHoldCastMs: plannerOpenerHoldCastMs,
       plannerSkillHasDirectDamageForOpener: plannerSkillHasDirectDamageForOpener
     };
 

@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.27",
-    "description":  "Combat: ranked opener after re-find when first-burst-only",
-    "builtAt":  "2026-05-09T21:24:53.7051925+03:00",
+    "version":  "0.3.28",
+    "description":  "C4 slice 12: hold-cast opener for channel/cast-time skills",
+    "builtAt":  "2026-05-09T21:53:23.7623763+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.28",
+                        "description":  "C4 slice 12: hold-cast opener for channel/cast-time skills",
+                        "date":  "2026-05-09T21:53:23.7623763+03:00"
+                    },
                     {
                         "version":  "0.3.27",
                         "description":  "Combat: ranked opener after re-find when first-burst-only",

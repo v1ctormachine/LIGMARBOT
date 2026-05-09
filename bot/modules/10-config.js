@@ -41,7 +41,12 @@
       // AI CHANGED: Phase C4 slice 9 — only first attack burst after each find-enemy uses ranked skill; later bursts basic-only (saves MP/CD on multi-mob pulls).
       useRankedSkillOnlyFirstBurstAfterFind: true,
       // AI CHANGED: Phase C4 slice 11 — skip ranked opener when live DOM hints cooldown on that bar slot (see isActionBarSlotShowingCooldown).
-      skipOpenerWhenActionBarShowsCooldown: true
+      skipOpenerWhenActionBarShowsCooldown: true,
+      // AI CHANGED: Phase C4 slice 12 — ranked opener uses mousedown+hold+mouseup on bar when scan cache says channel / non-instant cast (see plannerOpenerHoldCastMs).
+      useHoldCastForChannelOpeners: true,
+      channelOpenerHoldPadMs: 180,
+      channelOpenerHoldMinMs: 120,
+      channelOpenerHoldCapMs: 4000
     },
     // AI CHANGED: Added runtime logging flags so noisy snapshot logs can be disabled quickly.
     logging: {

@@ -48,6 +48,45 @@
     return clickElementSafe(buttons[slotIndex], "action-slot-" + slotIndex);
   }
 
+  // AI CHANGED: Phase C4 slice 12 — hold-to-cast / channel opener: mousedown, hold, mouseup on same slot (no click()).
+  async function clickActionBarSlotHoldCast(slotIndex, holdMs) {
+    const bar = document.querySelector(Config.selectors.actionBar);
+    if (!bar) {
+      Logger.warn("ACTION", "action-bar hold-cast skipped: no action bar");
+      return false;
+    }
+    const buttons = bar.querySelectorAll("app-action-button");
+    const n = buttons ? buttons.length : 0;
+    if (!buttons || typeof slotIndex !== "number" || slotIndex < 0 || slotIndex >= n) {
+      Logger.warn("ACTION", "action-bar hold-cast skipped: bad index", { slotIndex: slotIndex, count: n });
+      return false;
+    }
+    const el = buttons[slotIndex];
+    if (!isElementVisible(el)) {
+      Logger.warn("ACTION", "action-bar hold-cast skipped: not visible", { slotIndex: slotIndex });
+      return false;
+    }
+    const raw = Number(holdMs);
+    const ms = Math.min(8000, Math.max(80, Number.isFinite(raw) ? raw : 200));
+    el.dispatchEvent(new MouseEvent("mousedown", {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      button: 0,
+      buttons: 1
+    }));
+    await sleep(ms);
+    el.dispatchEvent(new MouseEvent("mouseup", {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      button: 0,
+      buttons: 0
+    }));
+    Logger.log("ACTION", "action-slot-" + slotIndex + " hold-cast", { holdMs: ms });
+    return true;
+  }
+
   // AI CHANGED: Phase C4 slice 11 — best-effort live cooldown read for planner (tooltip CD alone is not enough).
   function isActionBarSlotShowingCooldown(slotIndex) {
     const bar = document.querySelector(Config.selectors.actionBar);

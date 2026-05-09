@@ -1,18 +1,33 @@
   // AI CHANGED: Phase C4 slice 8 — first swing: ranked attack skill (if enabled + pick), else basic attack.
   // AI CHANGED: slice 9 — optional opts.useRankedSkillOpener === false forces basic-only (follow-up bursts).
-  function clickPlannerOpeningAttack(opts) {
+  // AI CHANGED: slice 12 — channel / non-instant cast uses hold-cast on bar when plannerOpenerHoldCastMs > 0.
+  async function clickPlannerOpeningAttack(opts) {
     const useSkill =
       Config.planner.useRankedAttackSkillsInCombat &&
       (!opts || opts.useRankedSkillOpener !== false);
     if (useSkill) {
-      const pick = plannerPickSkillSlotToCast();
-      if (pick != null) {
-        const ok = clickActionBarSlot(pick);
-        if (ok) {
-          Logger.log("PLANNER", "Opening attack used ranked skill slot", { slot: pick });
-          return { ok: true, skillSlot: pick };
+      const opening = plannerPickSkillOpeningPick();
+      if (opening != null) {
+        const holdMs = plannerOpenerHoldCastMs(opening.record);
+        let ok = false;
+        if (holdMs > 0) {
+          ok = await clickActionBarSlotHoldCast(opening.slot, holdMs);
+          if (ok) {
+            Logger.log("PLANNER", "Opening attack used ranked skill slot (hold-cast)", {
+              slot: opening.slot,
+              holdMs: holdMs,
+              name: opening.record.name || ""
+            });
+            return { ok: true, skillSlot: opening.slot };
+          }
+          Logger.warn("PLANNER", "Hold-cast failed; trying normal click", { slot: opening.slot });
         }
-        Logger.warn("PLANNER", "Ranked skill slot click failed; falling back to basic attack", { slot: pick });
+        ok = clickActionBarSlot(opening.slot);
+        if (ok) {
+          Logger.log("PLANNER", "Opening attack used ranked skill slot", { slot: opening.slot });
+          return { ok: true, skillSlot: opening.slot };
+        }
+        Logger.warn("PLANNER", "Ranked skill slot click failed; falling back to basic attack", { slot: opening.slot });
       }
     }
     const basicOk = clickBasicAttack();
@@ -49,7 +64,7 @@
       ? Config.combat.attackProgressPollMs
       : 140;
 
-    const open = clickPlannerOpeningAttack(opts);
+    const open = await clickPlannerOpeningAttack(opts);
     if (!open.ok) {
       Logger.warn("LOOP", "Attack loop aborted: no attack click succeeded");
       return false;
