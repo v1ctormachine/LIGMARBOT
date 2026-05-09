@@ -1,8 +1,133 @@
 ﻿{
-    "version":  "0.2.7",
-    "description":  "Disable 2-ring overlay by default + speed up 1-ring scan (220ms wall timeout, 40ms poll)",
-    "builtAt":  "2026-05-09T14:49:27.6002205+03:00",
+    "version":  "0.3.24",
+    "description":  "C4 slice 10: planner UI for first-burst-only ranked skill toggle",
+    "builtAt":  "2026-05-09T20:57:57.4434240+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.24",
+                        "description":  "C4 slice 10: planner UI for first-burst-only ranked skill toggle",
+                        "date":  "2026-05-09T20:57:57.4434240+03:00"
+                    },
+                    {
+                        "version":  "0.3.23",
+                        "description":  "Fix slice 9: re-find after kill when multi-mob pull continues",
+                        "date":  "2026-05-09T20:26:46.1904239+03:00"
+                    },
+                    {
+                        "version":  "0.3.22",
+                        "description":  "C4 slice 9: inner combat bursts after find-enemy; ranked opener first burst only",
+                        "date":  "2026-05-09T20:10:55.0184593+03:00"
+                    },
+                    {
+                        "version":  "0.3.21",
+                        "description":  "C4 slice 8b: expose plannerSkillHasDirectDamageForOpener",
+                        "date":  "2026-05-09T20:00:24.0353131+03:00"
+                    },
+                    {
+                        "version":  "0.3.20",
+                        "description":  "C4 slice 8b: HP progress + skill opener basic fallback + opener damage filter",
+                        "date":  "2026-05-09T20:00:05.6903584+03:00"
+                    },
+                    {
+                        "version":  "0.3.19",
+                        "description":  "C4 slice 8: ranked opening skill + action bar click + plannerUi",
+                        "date":  "2026-05-09T19:53:04.2132219+03:00"
+                    },
+                    {
+                        "version":  "0.3.18",
+                        "description":  "C4 slice 7: planner toggles on panel + plannerUi localStorage",
+                        "date":  "2026-05-09T19:44:21.5415188+03:00"
+                    },
+                    {
+                        "version":  "0.3.17",
+                        "description":  "C4 slice 6: planner hooks in secureTile (DB refresh + log)",
+                        "date":  "2026-05-09T19:35:18.3443738+03:00"
+                    },
+                    {
+                        "version":  "0.3.16",
+                        "description":  "C4 slice 5: lastFoughtKey + quickCalibrationSession",
+                        "date":  "2026-05-09T19:34:03.5899977+03:00"
+                    },
+                    {
+                        "version":  "0.3.15",
+                        "description":  "observeCombatDamage: optional mergeToEnemyDb + LS summary v3",
+                        "date":  "2026-05-09T19:24:39.3559128+03:00"
+                    },
+                    {
+                        "version":  "0.3.14",
+                        "description":  "calibrateEnemyFromCombat: skip merge when zero hp_drop + hints",
+                        "date":  "2026-05-09T19:20:50.5699219+03:00"
+                    },
+                    {
+                        "version":  "0.3.13",
+                        "description":  "C4 slice 4: calibrateEnemyFromCombat + rankAttackSkillsByHeuristic",
+                        "date":  "2026-05-09T19:17:30.6227556+03:00"
+                    },
+                    {
+                        "version":  "0.3.12",
+                        "description":  "C4 slice 3: summarizeEnemyDbCalibration + getEnemyCalibrationRow",
+                        "date":  "2026-05-09T19:06:50.3009334+03:00"
+                    },
+                    {
+                        "version":  "0.3.11",
+                        "description":  "C4 slice 2: observe attribution + merge hp_drop into enemy DB",
+                        "date":  "2026-05-09T19:02:39.7862504+03:00"
+                    },
+                    {
+                        "version":  "0.3.10",
+                        "description":  "Phase C4 slice 1: paper basic DPS + planner summary API",
+                        "date":  "2026-05-09T18:55:38.6622281+03:00"
+                    },
+                    {
+                        "version":  "0.3.9",
+                        "description":  "Enemy DB: drop mob damageClass; cache v2; strip on load",
+                        "date":  "2026-05-09T18:54:34.3165338+03:00"
+                    },
+                    {
+                        "version":  "0.3.8",
+                        "description":  "Phase C3 enemy profile reader + enemy DB cache",
+                        "date":  "2026-05-09T18:45:00.9987871+03:00"
+                    },
+                    {
+                        "version":  "0.3.7",
+                        "description":  "Damage observer: coerce HP cur for lethal + non-finite guard",
+                        "date":  "2026-05-09T18:32:55.6690620+03:00"
+                    },
+                    {
+                        "version":  "0.3.6",
+                        "description":  "Damage observer: count lethal 0 HP as hp_drop not suspicious",
+                        "date":  "2026-05-09T18:30:08.2545879+03:00"
+                    },
+                    {
+                        "version":  "0.3.5",
+                        "description":  "Phase C2 damage observer: HP deltas + floating text scan",
+                        "date":  "2026-05-09T18:24:42.3147217+03:00"
+                    },
+                    {
+                        "version":  "0.3.4",
+                        "description":  "Hero stats: parse app-param-item rows + crit regex + click labels",
+                        "date":  "2026-05-09T18:19:38.4392794+03:00"
+                    },
+                    {
+                        "version":  "0.3.3",
+                        "description":  "Phase C1: hero combat stats reader + passive regen sampler",
+                        "date":  "2026-05-09T18:07:16.6513514+03:00"
+                    },
+                    {
+                        "version":  "0.3.2",
+                        "description":  "Console skill table: heal_hp vs heal_mp for potion rows",
+                        "date":  "2026-05-09T17:52:28.7394980+03:00"
+                    },
+                    {
+                        "version":  "0.3.1",
+                        "description":  "Skill parser: channel+gear%, stealth, mp/s drain, dodge, crit buff, Instantly cast, extra desc",
+                        "date":  "2026-05-09T17:40:56.5890172+03:00"
+                    },
+                    {
+                        "version":  "0.3.0",
+                        "description":  "Phase C0: skill scanner (auto-discover skills, mana, cast/cooldown, effects)",
+                        "date":  "2026-05-09T17:30:00.0000000+03:00"
+                    },
                     {
                         "version":  "0.2.7",
                         "description":  "Disable 2-ring overlay by default + speed up 1-ring scan (220ms wall timeout, 40ms poll)",

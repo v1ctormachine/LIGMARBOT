@@ -42,6 +42,46 @@
       phaseSinceNode: null,
       // AI CHANGED: 2-ring debug overlay refs (the SVG element + its auto-clear timer).
       secondRingOverlay: null,
-      secondRingOverlayTimer: null
+      secondRingOverlayTimer: null,
+      // AI CHANGED: Planner hook checkboxes (90-ui.js).
+      plannerRecordCheck: null,
+      plannerLogCheck: null,
+      // AI CHANGED: Phase C4 slice 8 — ranked skills in combat toggle.
+      plannerSkillsCheck: null,
+      // AI CHANGED: Phase C4 slice 10 — ranked skill only on first burst after find-enemy.
+      plannerFirstBurstOnlyCheck: null
+    },
+    // AI CHANGED: Phase C0 -- skill DB. Populated by scanSkills() (manual, console-first). Combat can
+    // consume cached slots when Config.planner.useRankedAttackSkillsInCombat is true (slice 8).
+    skills: {
+      slots: [],            // array of parsed action-bar slot records (see 82-skills.js for shape)
+      scannedAt: null,      // ms timestamp of last successful scan
+      cacheLoadedAt: null,  // ms timestamp when localStorage cache was loaded on boot
+      lastError: null       // string describing the last scan failure, or null
+    },
+    // AI CHANGED: Phase C1 -- hero combat stats + passive regen snapshots (see 81-hero.js).
+    hero: {
+      combatStats: null,
+      statsReadAt: null,
+      statsCacheLoadedAt: null,
+      passiveRegen: null,
+      regenMeasuredAt: null,
+      lastError: null
+    },
+    // AI CHANGED: Phase C2 -- damage observer; last completed session from observeCombatDamage().
+    damage: {
+      lastSession: null,
+      observedAt: null,
+      lastError: null
+    },
+    // AI CHANGED: Phase C3 -- enemy profile snapshots + accumulated DB (see 84-enemy.js).
+    enemy: {
+      lastSnapshot: null,
+      capturedAt: null,
+      db: [],
+      dbLoadedAt: null,
+      lastError: null,
+      // AI CHANGED: Last known enemy DB key from profile/observe/merge (for console + future automation).
+      lastFoughtKey: null
     }
   };

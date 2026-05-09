@@ -18,7 +18,28 @@
     combat: {
       maxFindEnemyAttempts: 8,
       maxAttackAttempts: 12,
-      attackTickMs: 350
+      attackTickMs: 350,
+      // AI CHANGED: slice 8b — attackUntilProgress waits for enemy kill OR target HP drop (same max).
+      attackProgressTimeoutMs: 6500,
+      attackProgressPollMs: 140,
+      // AI CHANGED: Phase C4 slice 9 — after each successful find-enemy, keep attacking until clear/stuck (bounded).
+      maxCombatAttackBurstsPerFind: 24
+    },
+    // AI CHANGED: Phase C4 -- paper DPS (hero sheet); verify against Phase C2 observer on real targets.
+    planner: {
+      // When crit damage % is missing from hero stats, use this crit vs non-crit damage ratio (2 = double).
+      defaultCritDamageMultiplier: 2,
+      // AI CHANGED: Auto-farm hooks (default OFF). Turn on from console: ligmarBot.Config.planner.recordEnemyDbBeforeAttack = true
+      // When true, secureTileAndLootOnce calls recordTargetToEnemyDb() after target acquire, before basic-attack loop.
+      recordEnemyDbBeforeAttack: false,
+      // When true, after combat clears (before loot), log lastFoughtKey + whether DB has hp_drop calibration + hint.
+      logPlannerAfterSecureTile: false,
+      // AI CHANGED: Phase C4 slice 8 — opening hit in attackUntilProgress tries ranked attack skill (cached scanSkills DB), else basic.
+      useRankedAttackSkillsInCombat: false,
+      // AI CHANGED: Absolute MP floor: cast only if curMp >= manaCost + skillMpReserve (skip skill if MP unread).
+      skillMpReserve: 5,
+      // AI CHANGED: Phase C4 slice 9 — only first attack burst after each find-enemy uses ranked skill; later bursts basic-only (saves MP/CD on multi-mob pulls).
+      useRankedSkillOnlyFirstBurstAfterFind: true
     },
     // AI CHANGED: Added runtime logging flags so noisy snapshot logs can be disabled quickly.
     logging: {
@@ -89,6 +110,65 @@
         minMatchRatio: 0.005
       }
     },
+    // AI CHANGED: Phase C1 -- hero profile / combat stats overlay (console API opens UI and parses rows).
+    hero: {
+      profileOpenTimeoutMs: 2800,
+      statsPanelSettleMs: 320,
+      pollMs: 70,
+      statsStorageKey: "ligmarbot.heroStats.v1",
+      regenDefaultTotalMs: 3500,
+      regenDefaultIntervalMs: 450
+    },
+    // AI CHANGED: Phase C3 -- enemy target panel (name, level, mob class icon, status bars) for DB / planner.
+    enemyProfile: {
+      storageKey: "ligmarbot.enemyDb.v1",
+      maxDbEntries: 400,
+      nameText: ".profile-name-text",
+      level: ".profile-level",
+      statusBarRoot: "app-battle-status-bar",
+      conditionBar: "app-canvas-condition-bar",
+      conditionValue: "span.value",
+      parentWalkMax: 14,
+      fallbackMinXFraction: 0.42
+    },
+    // AI CHANGED: Phase C2 -- passive combat damage observer (HP deltas + optional floating numbers).
+    damageObserver: {
+      defaultTotalMs: 4500,
+      defaultPollMs: 90,
+      maxSamplesCap: 800,
+      // Root under which we scan leaf nodes for short numeric combat text (extend if the game uses a narrower subtree).
+      scanRootSelector: "app-game",
+      // Subtrees to ignore so we don't read HP bars, ping, or profile sheets as "damage".
+      excludeClosestSelectors: [
+        "app-condition-bar",
+        '[data-test="ping-value"]',
+        "app-profile-avatar",
+        "app-action-info",
+        "app-battle-action-bar"
+      ],
+      // Ignore |delta| larger than this fraction of previous max HP when attributing hp_drop (target swap / full heal).
+      suspiciousHpJumpRatio: 0.55,
+      // localStorage key for the last session summary (not full raw samples — keep small).
+      storageKey: "ligmarbot.damageObserve.v1"
+    },
+    // AI CHANGED: Phase C0 -- skill scanner timings + storage key. Scanner opens each action-bar
+    // slot with a long-press, parses the description popup, then dismisses via close button.
+    skills: {
+      // How long to "hold" mousedown before the game decides it's a long-press and opens the popup.
+      // Most game UIs use ~300-500ms thresholds; 450ms gives margin without feeling sluggish.
+      holdToOpenMs: 450,
+      // Max wait for the popup root (app-action-info) to appear after mousedown. If we hit this,
+      // log a warning and skip the slot.
+      popupAppearTimeoutMs: 1500,
+      // Max wait for the popup to fully unmount after we click close.
+      popupCloseTimeoutMs: 1000,
+      // Poll cadence while waiting for the popup to appear/disappear.
+      popupPollMs: 60,
+      // Idle gap between slots so the game UI settles before the next mousedown.
+      betweenSlotsMs: 150,
+      // localStorage key for the skill DB cache. Bumped if we ever change the parsed schema.
+      storageKey: "ligmarbot.skillsDb.v1"
+    },
     selectors: {
       // AI CHANGED: Relaxed HP selector to avoid brittle container path mismatches.
       hpText: 'app-condition-bar[data-color="green"] span.value',
@@ -128,6 +208,32 @@
       battleStatusBarValue: "app-battle-status-bar span.value",
       pingText: '[data-test="ping-value"]',
       deathScreen: '[data-test="death-screen"]',
-      poorConnection: '[data-test="poor-connection"]'
+      poorConnection: '[data-test="poor-connection"]',
+      // AI CHANGED: Phase C0 -- action-bar / skill description popup selectors.
+      actionBar: "app-battle-action-bar",
+      actionButton: "app-battle-action-bar app-action-button",
+      // The popup root that appears after a long-press on a skill / potion / basic-attack slot.
+      skillPopup: "app-action-info",
+      skillPopupClose: "app-icon.modal-header-close",
+      skillPopupName: "app-action-info .action-name",
+      skillPopupTag: "app-action-info app-tag",
+      skillPopupDescription: "app-action-info .header-description",
+      // AI CHANGED: Secondary line e.g. "You can interrupt at any moment." -- merged into full text for parsing + stored separately.
+      skillPopupAdditionalDescription: "app-action-info .header-additional-description",
+      skillPopupParam: "app-action-info app-param-item-new",
+      skillPopupParamLeft: ".param-item-left",
+      skillPopupParamRight: ".param-item-right",
+      skillPopupParamValue: ".param-value-current",
+      skillPopupParamUnits: ".param-units",
+      // AI CHANGED: Phase C1 -- open profile -> Stats tab -> read combat stats -> Battle footer.
+      heroProfileAvatar: "app-profile-avatar",
+      heroProfileAvatarFallback: ".profile-avatar app-profile-avatar",
+      heroBattleFooterButton: ".footer-button .footer-button-text",
+      // Icon on the Battle footer button (close profile / return to game).
+      heroBattleFooterIcon: ".footer-button .icon-src-swords",
+      // AI CHANGED: Phase C3 -- enemy profile panel (for probeSelectors + consistency with enemyProfile.*).
+      enemyProfileNameText: ".profile-name-text",
+      enemyProfileLevel: ".profile-level",
+      enemyBattleStatusBar: "app-battle-status-bar"
     }
   };
