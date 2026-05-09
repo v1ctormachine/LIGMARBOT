@@ -46,7 +46,9 @@
       useHoldCastForChannelOpeners: true,
       channelOpenerHoldPadMs: 180,
       channelOpenerHoldMinMs: 120,
-      channelOpenerHoldCapMs: 4000
+      channelOpenerHoldCapMs: 4000,
+      // AI CHANGED: slice 12b — hold must stay below scan long-press (Config.skills.holdToOpenMs) or the game opens skill tooltip instead of casting.
+      channelOpenerAvoidPopupMarginMs: 120
     },
     // AI CHANGED: Added runtime logging flags so noisy snapshot logs can be disabled quickly.
     logging: {

@@ -17,6 +17,11 @@
       Logger.log("BOOT", `Loaded ${Runtime.skills.slots.length} skill slots from cache`, {
         savedAt: Runtime.skills.scannedAt
       });
+      // AI CHANGED: slice 12b — cache is global per browser key, not per class; stale slots break planner + open wrong popups.
+      Logger.log(
+        "BOOT",
+        "If you changed class/hero or action bar: ligmarBot.clearSkillsCache() then await ligmarBot.scanSkills() (auto-farm OFF)."
+      );
     } else {
       Logger.log("BOOT", "No cached skill DB. Run `ligmarBot.scanSkills()` (with auto-farm OFF) to populate it.");
     }

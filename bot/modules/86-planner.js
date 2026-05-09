@@ -394,7 +394,22 @@
     if (needMs <= 0) {
       return 0;
     }
-    return Math.min(Math.max(needMs, floor), cap);
+    const raw = Math.min(Math.max(needMs, floor), cap);
+    const openMs = Number.isFinite(Config.skills.holdToOpenMs) ? Config.skills.holdToOpenMs : 450;
+    const margin = Number.isFinite(Config.planner.channelOpenerAvoidPopupMarginMs)
+      ? Config.planner.channelOpenerAvoidPopupMarginMs
+      : 120;
+    const maxSafeHold = Math.max(80, openMs - margin);
+    if (raw > maxSafeHold) {
+      Logger.warn("PLANNER", "Opener hold-cast skipped (would open skill popup like scan long-press); using click", {
+        computedHoldMs: raw,
+        maxSafeHoldMs: maxSafeHold,
+        holdToOpenMs: openMs,
+        name: slotRec.name || ""
+      });
+      return 0;
+    }
+    return raw;
   }
 
   // AI CHANGED: Phase C4 slice 8+12 — full pick { slot, record } for opener (hold vs click uses record).
