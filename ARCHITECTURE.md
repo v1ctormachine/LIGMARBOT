@@ -39,7 +39,7 @@ Design principles:
 - Every action observable via debug logs + overlay
 - Recoverable from transient failures (missed click, stale DOM, delayed updates)
 
-### Current mono-script cycle (`bot/bot.user.js`)
+### Current bot cycle (built from `bot/modules/*.js` into `bot/bot.user.js`)
 
 - **Start of each farm cycle**: `prepMapForCombatCycle()` only ensures the map is open (`ensureMapOpen`). There is no tactical ring scan here; neighbor scanning is **`scanNeighborRing()`** inside **`exploreByScan()`** after idle/no-loot.
 - **Find enemy verification**: success when **target HP** becomes valid (red condition bar text parsed as `cur / max`); enemy count is **not** used as a pre-attack signal. HP strings may include **thousands separators** (e.g. `1,399 / 1,399`); `parseFractionText` normalizes commas before parsing so verification is not stuck at `valid: false` while the bar is visible.
@@ -50,8 +50,48 @@ Design principles:
 ### Repository layout
 
 - Git repo lives at the **project root** (`C:\Users\Victor\.cursor\projects\ligmarbot`).
-- Tracked files: `.gitignore`, `ARCHITECTURE.md`, `bot/bot.user.js`, `bot/zoom-tester.user.js`.
+- Tracked files: `.gitignore`, `ARCHITECTURE.md`, `bot/build.ps1`, `bot/bot.user.js`, `bot/modules/*.js`.
+- `bot/bot.user.js` is the **build artifact** loaded by Tampermonkey. **Do not hand-edit it.** It is regenerated from `bot/modules/*.js` by `bot/build.ps1`.
 - `.gitignore` excludes Cursor tooling artifacts (`mcps/`, `terminals/`, `agent-transcripts/`) and editor scratch files. They live on disk for the IDE but never reach GitHub.
+
+### Source modules and build pipeline
+
+The bot lives as **one IIFE in many files**. Modules under `bot/modules/` are concatenated by `bot/build.ps1` (filename-prefix order) into a single `bot/bot.user.js` that Tampermonkey loads directly. There is no module loader at runtime — every file's body executes inside a single `(function () { "use strict"; ... })();` closure, so all helpers and `const` declarations share one scope.
+
+Filename order is the **only** thing that controls concat order. Numeric prefixes are kept in reserved blocks so new modules can slot in without renaming neighbors:
+
+| File                   | Role                                                                                       |
+| ---------------------- | ------------------------------------------------------------------------------------------ |
+| `00-header.js`         | Tampermonkey `==UserScript==` header + IIFE open + auto-generated banner.                  |
+| `10-config.js`         | `Config` (selectors, timings, thresholds).                                                 |
+| `15-logger.js`         | `Logger` (timestamped, module-tagged `console.log/warn/error`).                            |
+| `20-runtime.js`        | `Runtime` (mutable state: autoFarm, exploration, zoom flag, UI refs).                      |
+| `30-utils.js`          | Pure helpers: `isGamePage`, `getCssPath`, `parseFractionText`, `parseFirstInt`, `sleep`, `toShortJson`, `isElementVisible`, `clickElementSafe`, `dispatchMouseAt`, `parseCoordsText`. |
+| `40-state.js`          | DOM state readers: `getFractionCandidates`, `inferFractionRoles`, `readBattleStatusBarText`, `isLootInteractionStatusBusy`, `readEnemyCount`, `readCurrentCoordsFromPopup`, `readTilePopupDetails`, `readBasicState`. |
+| `50-discover.js`       | Diagnostics: `probeSelectors`, `discoverFractionNodes`, `discoverButtons`.                 |
+| `60-actions.js`        | Raw clicks: `clickFindEnemy`, `clickLootOrActivate`, `clickCenterMap`, `clickMapToggle`, `closeHexPopupIfOpen`, `clickBasicAttack`, `isBasicAttackConfigured`, `setBasicAttackSelector`. |
+| `70-verify.js`         | Click-then-wait wrappers: `waitForCondition`, `waitForLootInteractionSettled`, `waitUntilNotMoving`, `waitForTargetAcquired`, `clickFindEnemyVerified`, `clickLootOrActivateVerified`, `clickCenterMapVerified`, `ensureMapOpen`. |
+| `80-map.js`            | Map/canvas + scan/move/explore: `getMapCanvas`, `ensureMapZoomedOut`, `forceZoomOut`, `isMovementInProgress`, `moveToMapPoint`, `clickMapCenterTile`, `clickMapRelative`, `getMapCenterClientPoint`, `scanNeighborRing`, `verifyMoveByCoordinates`, `getNextExplorationPoint`, `exploreIfIdle`, `parseLootKindsFromMarkers`, `scoreScannedTile`, `chooseBestScannedNeighbor`, `exploreByScan`. |
+| `85-combat.js`         | Combat + auto-farm runner: `attackUntilProgress`, `secureTileAndLootOnce`, `prepMapForCombatCycle`, `prepareAndScanOnce`, `runPreparedSecureCycle`, `getAutoFarmStatus`, `stopAutoFarmLoop`, `startAutoFarmLoop`. |
+| `90-ui.js`             | In-page panel: `updateControlPanelStatus`, `createControlPanel`.                            |
+| `99-bootstrap.js`      | `start()`, `window.ligmarBot` debug API, IIFE close, `start()` invocation.                  |
+
+**Build workflow** (Windows PowerShell, no Node toolchain required):
+
+```powershell
+.\bot\build.ps1
+# rebuilds bot/bot.user.js from bot/modules/*.js
+```
+
+The script reads every module as UTF-8 (no BOM), normalizes trailing newlines, joins them in filename order, and writes UTF-8 (no BOM) to `bot/bot.user.js`. After every rebuild, reload the userscript in Tampermonkey.
+
+**Why this layout (and not ES modules / `@require`):**
+
+- Tampermonkey's most reliable distribution shape is a single self-contained file. ES module imports inside a userscript add CSP/loader friction we don't need.
+- Function declarations are hoisted within the closure, so concat order doesn't change behavior — only readability. We keep the prefix order purely as documentation.
+- Build time is effectively zero (one file write); no watcher needed for a typical edit/reload cycle.
+
+**Adding a new module:** drop a new file into `bot/modules/` with a numeric prefix that places it logically (e.g. `82-pathing.js` between `80-map.js` and `85-combat.js`), then run `bot/build.ps1`. Do **not** wrap the new file in another IIFE — it is concatenated inside the existing one.
 
 ### Investigations (completed and folded into the bot)
 
