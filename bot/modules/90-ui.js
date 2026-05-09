@@ -230,6 +230,9 @@
       if (typeof p.useRankedAttackSkillsInCombat === "boolean") {
         Config.planner.useRankedAttackSkillsInCombat = p.useRankedAttackSkillsInCombat;
       }
+      if (typeof p.useRankedSkillOnlyFirstBurstAfterFind === "boolean") {
+        Config.planner.useRankedSkillOnlyFirstBurstAfterFind = p.useRankedSkillOnlyFirstBurstAfterFind;
+      }
     } catch (err) {
       // AI CHANGED: Ignore corrupt prefs.
     }
@@ -242,7 +245,8 @@
         JSON.stringify({
           recordEnemyDbBeforeAttack: !!Config.planner.recordEnemyDbBeforeAttack,
           logPlannerAfterSecureTile: !!Config.planner.logPlannerAfterSecureTile,
-          useRankedAttackSkillsInCombat: !!Config.planner.useRankedAttackSkillsInCombat
+          useRankedAttackSkillsInCombat: !!Config.planner.useRankedAttackSkillsInCombat,
+          useRankedSkillOnlyFirstBurstAfterFind: !!Config.planner.useRankedSkillOnlyFirstBurstAfterFind
         })
       );
     } catch (err) {
@@ -264,6 +268,12 @@
     }
     if (Runtime.ui.plannerSkillsCheck && Runtime.ui.plannerSkillsCheck.checked !== !!Config.planner.useRankedAttackSkillsInCombat) {
       Runtime.ui.plannerSkillsCheck.checked = !!Config.planner.useRankedAttackSkillsInCombat;
+    }
+    if (
+      Runtime.ui.plannerFirstBurstOnlyCheck &&
+      Runtime.ui.plannerFirstBurstOnlyCheck.checked !== !!Config.planner.useRankedSkillOnlyFirstBurstAfterFind
+    ) {
+      Runtime.ui.plannerFirstBurstOnlyCheck.checked = !!Config.planner.useRankedSkillOnlyFirstBurstAfterFind;
     }
 
     // Update Start/Stop button enabled-state so the GUI shows which action is currently meaningful.
@@ -472,9 +482,19 @@
       savePlannerUiPrefs();
       Logger.log("UI", "planner.useRankedAttackSkillsInCombat", Config.planner.useRankedAttackSkillsInCombat);
     });
+    const pf = makePlannerRow(
+      "Ranked skill: first burst after find only (save MP/CD)",
+      Config.planner.useRankedSkillOnlyFirstBurstAfterFind
+    );
+    pf.check.addEventListener("change", () => {
+      Config.planner.useRankedSkillOnlyFirstBurstAfterFind = pf.check.checked;
+      savePlannerUiPrefs();
+      Logger.log("UI", "planner.useRankedSkillOnlyFirstBurstAfterFind", Config.planner.useRankedSkillOnlyFirstBurstAfterFind);
+    });
     plannerWrap.appendChild(pr.row);
     plannerWrap.appendChild(pl.row);
     plannerWrap.appendChild(ps.row);
+    plannerWrap.appendChild(pf.row);
     panel.appendChild(plannerWrap);
 
     // ---- Phase block (the "what is the bot doing right now" area) ------
@@ -541,6 +561,7 @@
     Runtime.ui.plannerRecordCheck = pr.check;
     Runtime.ui.plannerLogCheck = pl.check;
     Runtime.ui.plannerSkillsCheck = ps.check;
+    Runtime.ui.plannerFirstBurstOnlyCheck = pf.check;
 
     updateControlPanelStatus();
 

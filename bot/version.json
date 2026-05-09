@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.23",
-    "description":  "Fix slice 9: re-find after kill when multi-mob pull continues",
-    "builtAt":  "2026-05-09T20:26:46.1904239+03:00",
+    "version":  "0.3.24",
+    "description":  "C4 slice 10: planner UI for first-burst-only ranked skill toggle",
+    "builtAt":  "2026-05-09T20:57:57.4434240+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.24",
+                        "description":  "C4 slice 10: planner UI for first-burst-only ranked skill toggle",
+                        "date":  "2026-05-09T20:57:57.4434240+03:00"
+                    },
                     {
                         "version":  "0.3.23",
                         "description":  "Fix slice 9: re-find after kill when multi-mob pull continues",
