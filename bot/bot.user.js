@@ -49,10 +49,12 @@
     // AI CHANGED: Added movement tuning for map exploration when idling on empty tiles.
     movement: {
       settleAfterMoveMs: 900,
-      // AI CHANGED: Fixed click distance from center for current calibration target.
-      neighborStepPx: 45,
+      // AI CHANGED: Calibrated for max-zoom-out via zoom-tester v0.3 (step=30, h=26).
+      neighborStepPx: 30,
       // AI CHANGED: Try all 6 hex directions before declaring blocked.
-      maxExploreAttemptsPerIdle: 6
+      maxExploreAttemptsPerIdle: 6,
+      // AI CHANGED: Number of synthetic wheel-out events to lock the map at minimum zoom before scanning.
+      maxZoomOutBursts: 40
     },
     // AI CHANGED: Added scan timing config for faster tile probing.
     scan: {
@@ -149,6 +151,10 @@
       lastKnownCoords: null,
       // AI CHANGED: Stores latest ring scan snapshot for GUI/debug use.
       lastRingScan: null
+    },
+    // AI CHANGED: Track whether we've already zoomed the map to minimum so scans use calibrated step distances.
+    zoom: {
+      maxedOut: false
     },
     // AI CHANGED: Added GUI runtime references for in-page control panel/status updates.
     ui: {
@@ -605,6 +611,44 @@
     return canvas;
   }
 
+  // AI CHANGED: One-shot max zoom-out so scanNeighborRing's neighborStepPx (30) matches actual on-screen tile spacing.
+  function ensureMapZoomedOut() {
+    if (Runtime.zoom.maxedOut) {
+      return { ok: true, skipped: true, reason: "already_maxed" };
+    }
+    const canvas = getMapCanvas();
+    if (!canvas) {
+      Logger.warn("ZOOM", "ensureMapZoomedOut: map canvas not visible; skipping");
+      return { ok: false, reason: "no_canvas" };
+    }
+    const rect = canvas.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const bursts = Config.movement.maxZoomOutBursts;
+    for (let i = 0; i < bursts; i += 1) {
+      canvas.dispatchEvent(new WheelEvent("wheel", {
+        bubbles: true,
+        cancelable: true,
+        deltaX: 0,
+        deltaY: 120,
+        deltaZ: 0,
+        deltaMode: 0,
+        clientX: cx,
+        clientY: cy,
+        ctrlKey: false
+      }));
+    }
+    Runtime.zoom.maxedOut = true;
+    Logger.log("ZOOM", `max zoom-out applied (${bursts} wheel events)`);
+    return { ok: true, bursts: bursts };
+  }
+
+  // AI CHANGED: Manual reset (e.g. after death or page reload) so the next scan re-applies max zoom-out.
+  function forceZoomOut() {
+    Runtime.zoom.maxedOut = false;
+    return ensureMapZoomedOut();
+  }
+
   // AI CHANGED: Added movement-state detector via yellow canvas condition bar "Moving".
   function isMovementInProgress() {
     const movingNode = document.querySelector(Config.selectors.movingBarValue);
@@ -761,6 +805,8 @@
     if (!opened.ok) {
       return { ok: false, reason: "map_not_open" };
     }
+    // AI CHANGED: Lock map at min zoom so neighborStepPx=30 maps to real tile centers (calibrated via zoom-tester v0.3).
+    ensureMapZoomedOut();
     const centered = await clickCenterMapVerified();
     if (!centered.ok) {
       return { ok: false, reason: "center_failed" };
@@ -1842,6 +1888,9 @@
       clickCenterMapVerified: clickCenterMapVerified,
       clickMapToggle: clickMapToggle,
       ensureMapOpen: ensureMapOpen,
+      // AI CHANGED: Expose zoom helpers so user can re-trigger max zoom-out after reload/death without restarting bot.
+      ensureMapZoomedOut: ensureMapZoomedOut,
+      forceZoomOut: forceZoomOut,
       getMapCanvas: getMapCanvas,
       moveToMapPoint: moveToMapPoint,
       exploreIfIdle: exploreIfIdle,

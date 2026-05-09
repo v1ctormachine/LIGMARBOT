@@ -45,6 +45,7 @@ Design principles:
 - **Find enemy verification**: success when **target HP** becomes valid (red condition bar text parsed as `cur / max`); enemy count is **not** used as a pre-attack signal. HP strings may include **thousands separators** (e.g. `1,399 / 1,399`); `parseFractionText` normalizes commas before parsing so verification is not stuck at `valid: false` while the bar is visible.
 - **Loot, when a loot button exists**: click loot → **`ensureMapOpen()`** → **`clickCenterMapVerified()`** → click **current map center tile** → wait until **`div.battle-event-button.highlight` stays absent** and the visible **`app-battle-status-bar span.value`** text is **not** a known busy label (`opening`, `activating`; extend via `Config.verification.lootInteractionBusySubstrings`) for a **stable window** (`Config.verification.lootSettleStableMs`, default ~400ms). This avoids treating post-click DOM flicker or mid-animation gaps as “done”.
 - **Movement gate**: actions that depend on a settled position wait until the moving-state UI bar (`Config.selectors.movingBarValue`) clears, so scan/ring code never sees mid-step state.
+- **Zoom gate before scanning**: `scanNeighborRing()` calls **`ensureMapZoomedOut()`** right after `ensureMapOpen()` succeeds. The helper dispatches `Config.movement.maxZoomOutBursts` (40) synthetic `WheelEvent`s with `deltaY=120` at the canvas center the **first time only** per session; the result is recorded in `Runtime.zoom.maxedOut`. This locks the map at minimum zoom so `Config.movement.neighborStepPx` (currently **30 px**, vertical `h = round(30 * 0.86) = 26 px`) lands on real tile centers. `forceZoomOut()` clears the flag and re-applies — useful after death or page reload.
 
 ### Repository layout
 
@@ -52,23 +53,15 @@ Design principles:
 - Tracked files: `.gitignore`, `ARCHITECTURE.md`, `bot/bot.user.js`, `bot/zoom-tester.user.js`.
 - `.gitignore` excludes Cursor tooling artifacts (`mcps/`, `terminals/`, `agent-transcripts/`) and editor scratch files. They live on disk for the IDE but never reach GitHub.
 
-### Companion test scripts
+### Investigations (completed and folded into the bot)
 
-- **`bot/zoom-tester.user.js`** (currently a **scan calibrator**) — standalone Tampermonkey userscript installed alongside the bot. After the wheel-zoom investigation succeeded, this script was stripped down to a focused calibration tool:
-  - **`MAX ZOOM OUT`** button — fires 40× wheel-out events (`deltaY=120`) at the canvas center to lock the map at minimum zoom, the bot's intended scanning condition.
-  - **`scan step (px)` slider + number input** (range 10–200, default 45) — represents `Config.movement.neighborStepPx` exactly, so what's drawn on screen matches what `scanNeighborRing()` will click.
-  - **SVG overlay** (`pointer-events: none`, full viewport) — draws a yellow crosshair at the canvas center plus six cyan dots/lines at the hex offsets `TR (+s/2,-h)`, `R (+s,0)`, `BR (+s/2,+h)`, `BL (-s/2,+h)`, `L (-s,0)`, `TL (-s/2,-h)` where `h = round(s * 0.86)`. Direction labels are drawn next to each dot. Refreshed via `requestAnimationFrame` plus `resize`/`scroll` listeners so the markers track the canvas during reflows.
-  - **Console API:** `window.zoomTest.zoomOutMax()`, `.setStep(n)`, `.getStep()`, `.refreshOverlay()`.
-  - Independent of the bot — installable/removable at any time without touching `bot/bot.user.js`.
-- **Calibration workflow:** click `MAX ZOOM OUT` → drag the slider until the six cyan dots sit on the centers of the six neighboring hex tiles → record the resulting step value. That number becomes the new `Config.movement.neighborStepPx`.
-- **Note on detection:** earlier versions of the tester tried to confirm zoom programmatically via canvas pixel-hash diffing. That code was removed once wheel-zoom was visually confirmed to work; the calibrator trusts the user's eye.
-
-### Investigations (state of the art so far)
-
-- ✅ **Wheel events on the map canvas zoom the camera** (visually confirmed). Means a Tampermonkey-only bot can drive zoom without external automation. Calibration of "step power" (deltaY per scroll) is in progress via the zoom tester.
-- ❓ **Ctrl+Wheel / Keyboard `+` / `-` / `=`**: not yet observed to do anything. Treat as not-supported until proven otherwise.
-- ❌ **No first-party in-game zoom UI buttons** were located by the auto-finder; expect to drive zoom via wheel only.
+- ✅ **Wheel events on the map canvas zoom the camera** (visually confirmed). Synthetic `WheelEvent`s with `deltaY=120` work without `ctrlKey`. Implemented in-bot as `ensureMapZoomedOut()` (called once at the start of each session's first `scanNeighborRing()`).
+- ✅ **Scan step calibration**: with max zoom-out applied, `step=30 px` and the existing `h = round(step * 0.86) = 26 px` formula put all six hex direction targets on real tile centers. Captured via the (now removed) standalone `zoom-tester.user.js` calibration tool.
+- ❓ **Ctrl+Wheel / Keyboard `+` / `-` / `=`**: produced no observable effect. Not used.
+- ❌ **No first-party in-game zoom UI buttons** were findable. Wheel is the only viable input.
 - 🟡 **Ancestor `transform: matrix(1.16, ...)` on `div.app-container.*`**: a global Angular/UI scaling, **not** the game zoom. Don't use it to infer zoom level.
+
+The companion test script `bot/zoom-tester.user.js` was deleted after calibration; its history is preserved in git (commits `e3800af`, `4dd9d50`, `872f0b1`) if it ever needs to come back.
 
 ---
 
