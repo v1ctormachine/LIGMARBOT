@@ -22,6 +22,34 @@
         "BOOT",
         "If you changed class/hero or action bar: ligmarBot.clearSkillsCache() then await ligmarBot.scanSkills() (auto-farm OFF)."
       );
+    } else if (Runtime.skills.lastError === "cache_bar_not_ready") {
+      // AI CHANGED: slice 16 — first inject can run before `app-battle-action-bar` mounts; retry once so a valid cache still loads.
+      Logger.log("BOOT", "Skill cache deferred: action bar not ready for fingerprint; retry in 1.5s.");
+      setTimeout(function () {
+        Runtime.skills.lastError = null;
+        if (loadSkillsFromCache()) {
+          Logger.log("BOOT", `Loaded ${Runtime.skills.slots.length} skill slots from cache (deferred)`, {
+            savedAt: Runtime.skills.scannedAt
+          });
+          Logger.log(
+            "BOOT",
+            "If you changed class/hero or action bar: ligmarBot.clearSkillsCache() then await ligmarBot.scanSkills() (auto-farm OFF)."
+          );
+        } else {
+          Logger.log(
+            "BOOT",
+            "Deferred skill cache load skipped — run `ligmarBot.scanSkills()` (auto-farm OFF) if slots stay empty or names look wrong."
+          );
+        }
+      }, 1500);
+    } else if (
+      Runtime.skills.lastError === "cache_bar_mismatch" ||
+      Runtime.skills.lastError === "cache_missing_fingerprint"
+    ) {
+      Logger.log(
+        "BOOT",
+        "Skill cache rejected (bar changed vs saved scan, or old save without fingerprint). Run `ligmarBot.scanSkills()` (auto-farm OFF)."
+      );
     } else {
       Logger.log("BOOT", "No cached skill DB. Run `ligmarBot.scanSkills()` (with auto-farm OFF) to populate it.");
     }

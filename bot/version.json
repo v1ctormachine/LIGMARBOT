@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.32",
-    "description":  "C4 slice 15 multi-ranked opener + ARCHITECTURE",
-    "builtAt":  "2026-05-09T22:21:23.4944175+03:00",
+    "version":  "0.3.33",
+    "description":  "slice 16 strict skill cache fingerprint + boot retry; two-skill queue doc",
+    "builtAt":  "2026-05-09T22:43:48.9178736+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.33",
+                        "description":  "slice 16 strict skill cache fingerprint + boot retry; two-skill queue doc",
+                        "date":  "2026-05-09T22:43:48.9178736+03:00"
+                    },
                     {
                         "version":  "0.3.32",
                         "description":  "C4 slice 15 multi-ranked opener + ARCHITECTURE",

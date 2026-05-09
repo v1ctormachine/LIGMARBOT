@@ -476,6 +476,8 @@
   }
 
   // AI CHANGED: Phase C4 slice 13 — compact signature of visible action bar (class + icon per slot) for cache validation.
+  // AI CHANGED: slice 16 — fold in lightweight DOM hints (data-test / aria-label / title) so different heroes/skill sets
+  // diverge even when class+icon hash alone matched a stale cache (e.g. another class scanned earlier).
   function readActionBarLayoutFingerprint() {
     const bar = document.querySelector(Config.selectors.actionBar);
     if (!bar) {
@@ -494,7 +496,11 @@
       const iconMatch = styleAttr.match(/url\("?([^")]+)"?\)/i);
       const iconUrl = iconMatch ? iconMatch[1] : "";
       const id = getIconHash(iconUrl) || iconUrl.slice(-32);
-      parts.push(String(i) + ":" + cls + ":" + id);
+      const dataTest = (button.getAttribute("data-test") || "").trim();
+      const aria = (button.getAttribute("aria-label") || "").trim();
+      const title = (button.getAttribute("title") || "").trim();
+      const hint = (dataTest + "@" + aria + "@" + title).replace(/\s+/g, " ").trim().slice(0, 160);
+      parts.push(String(i) + ":" + cls + ":" + id + ":" + hint);
     }
     return parts.join("|");
   }
@@ -505,7 +511,7 @@
     try {
       const fp = readActionBarLayoutFingerprint();
       const payload = {
-        version: 2,
+        version: 3, // AI CHANGED: slice 16 — bumped when fingerprint string gained per-slot DOM hints (old v2 still loads until bar mismatch).
         savedAt: Date.now(),
         actionBarFingerprint: fp || null,
         slots: slots
@@ -521,8 +527,11 @@
 
   // AI CHANGED: Try to populate Runtime.skills.slots from localStorage on boot. Returns true on
   // successful load, false otherwise. Boot logs which path we took so the user can verify.
+  // AI CHANGED: slice 16 — always require a stored fingerprint + live bar when invalidation is on;
+  // old caches without fingerprint are cleared; liveFp null skips load (BOOT may retry once).
   function loadSkillsFromCache() {
     try {
+      Runtime.skills.lastError = null;
       const raw = localStorage.getItem(Config.skills.storageKey);
       if (!raw) {
         return false;
@@ -533,27 +542,47 @@
       }
       if (Config.skills.invalidateCacheOnBarMismatch !== false) {
         const cachedFp = payload.actionBarFingerprint;
-        if (typeof cachedFp === "string" && cachedFp.length > 0) {
-          const liveFp = readActionBarLayoutFingerprint();
-          if (liveFp != null && liveFp !== cachedFp) {
-            Logger.warn("SKILLS", "Skill cache rejected: action bar layout changed vs saved scan (re-scan with auto-farm OFF)", {
-              key: Config.skills.storageKey
-            });
-            try {
-              localStorage.removeItem(Config.skills.storageKey);
-            } catch (rmErr) {
-              Logger.warn("SKILLS", "Failed to remove stale skills cache", rmErr);
-            }
-            return false;
+        if (typeof cachedFp !== "string" || cachedFp.length === 0) {
+          Logger.warn("SKILLS", "Skill cache rejected: missing actionBarFingerprint (pre-slice-13 save or corrupt) — clearing", {
+            key: Config.skills.storageKey
+          });
+          Runtime.skills.lastError = "cache_missing_fingerprint";
+          try {
+            localStorage.removeItem(Config.skills.storageKey);
+          } catch (rmErr) {
+            Logger.warn("SKILLS", "Failed to remove stale skills cache", rmErr);
           }
+          return false;
+        }
+        const liveFp = readActionBarLayoutFingerprint();
+        if (liveFp == null) {
+          Logger.warn("SKILLS", "Skill cache not loaded: action bar not available for fingerprint (will retry if BOOT schedules deferred load)", {
+            key: Config.skills.storageKey
+          });
+          Runtime.skills.lastError = "cache_bar_not_ready";
+          return false;
+        }
+        if (liveFp !== cachedFp) {
+          Logger.warn("SKILLS", "Skill cache rejected: action bar layout changed vs saved scan (re-scan with auto-farm OFF)", {
+            key: Config.skills.storageKey
+          });
+          Runtime.skills.lastError = "cache_bar_mismatch";
+          try {
+            localStorage.removeItem(Config.skills.storageKey);
+          } catch (rmErr) {
+            Logger.warn("SKILLS", "Failed to remove stale skills cache", rmErr);
+          }
+          return false;
         }
       }
       Runtime.skills.slots = payload.slots;
       Runtime.skills.cacheLoadedAt = Date.now();
       Runtime.skills.scannedAt = payload.savedAt || null;
+      Runtime.skills.lastError = null;
       return true;
     } catch (err) {
       Logger.warn("SKILLS", "Failed to load skills cache", err);
+      Runtime.skills.lastError = "cache_parse_error";
       return false;
     }
   }
