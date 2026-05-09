@@ -47,10 +47,10 @@
       channelOpenerHoldPadMs: 180,
       channelOpenerHoldMinMs: 120,
       channelOpenerHoldCapMs: 4000,
-      // AI CHANGED: slice 12b — hold must stay below scan long-press (Config.skills.holdToOpenMs) or the game opens skill tooltip instead of casting.
+      // AI CHANGED: slice 12b — when channelOpenerClampHoldToTooltipSafeMs is true, hold must stay below scan long-press (Config.skills.holdToOpenMs) or the game may open skill tooltip instead of casting.
       channelOpenerAvoidPopupMarginMs: 120,
-      // AI CHANGED: slice 17 — do not pick ranked openers whose cast/channel needs hold longer than that safe window (short click no-ops; wastes attackProgress timeout). Set false to restore old “click anyway” behavior for experiments.
-      skipRankedOpenersNeedingUnsafeBarHold: true,
+      // AI CHANGED: slice 18 — when true, cap opener hold to ~holdToOpenMs-margin and skip ranked picks that need longer holds (scan-tooltip safe). When false (default), opener uses full computed hold up to channelOpenerHoldCapMs so channels/casts actually fire; may open app-action-info — bot closes it after hold when possible.
+      channelOpenerClampHoldToTooltipSafeMs: false,
       // AI CHANGED: Phase C4 slice 15 — after first ranked opener fails verify, try up to N more ranked picks (same burst, same beforeState baseline) before basic fallback.
       openerExtraRankedSkills: 1
     },

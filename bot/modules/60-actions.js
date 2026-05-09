@@ -22,6 +22,20 @@
     return clickElementSafe(button, "map-toggle");
   }
 
+  // AI CHANGED: slice 18 — best-effort close app-action-info after a long bar-hold opener (same root as scanSkills popup).
+  function closeSkillInfoPopupQuick() {
+    const popup = document.querySelector(Config.selectors.skillPopup);
+    if (!popup) {
+      return false;
+    }
+    const closeButton = document.querySelector(Config.selectors.skillPopupClose);
+    if (closeButton) {
+      clickElementSafe(closeButton, "skill-popup-close-quick");
+      return true;
+    }
+    return false;
+  }
+
   // AI CHANGED: Added helper to close the hex coordinate popup so action buttons are not blocked.
   function closeHexPopupIfOpen() {
     const closeButton = document.querySelector(Config.selectors.hexPopupCloseButton);

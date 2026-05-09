@@ -109,6 +109,7 @@
       clickBasicAttack: clickBasicAttack,
       clickActionBarSlot: clickActionBarSlot,
       clickActionBarSlotHoldCast: clickActionBarSlotHoldCast,
+      closeSkillInfoPopupQuick: closeSkillInfoPopupQuick,
       isActionBarSlotShowingCooldown: isActionBarSlotShowingCooldown,
       isBasicAttackConfigured: isBasicAttackConfigured,
       setBasicAttackSelector: setBasicAttackSelector,

@@ -13,6 +13,8 @@
         let ok = false;
         if (holdMs > 0) {
           ok = await clickActionBarSlotHoldCast(opening.slot, holdMs);
+          // AI CHANGED: slice 18 — long combat hold can open skill info like scan; dismiss so the next click is not blocked.
+          closeSkillInfoPopupQuick();
           if (ok) {
             Logger.log("PLANNER", "Opening attack used ranked skill slot (hold-cast)", {
               slot: opening.slot,

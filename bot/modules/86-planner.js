@@ -406,9 +406,9 @@
     return Math.max(80, openMs - margin);
   }
 
-  // AI CHANGED: slice 17 — true if this skill needs a real channel/cast hold longer than the bar “safe” window (short click will not cast).
+  // AI CHANGED: slice 17+18 — true if this skill needs a real channel/cast hold longer than the bar “safe” window (only when clamp-to-tooltip mode is on).
   function plannerSkillOpenerHoldBlockedByShortPressLimit(slotRec) {
-    if (Config.planner.skipRankedOpenersNeedingUnsafeBarHold === false) {
+    if (Config.planner.channelOpenerClampHoldToTooltipSafeMs !== true) {
       return false;
     }
     const o = plannerOpenerHoldRawClampedMs(slotRec);
@@ -419,10 +419,14 @@
   }
 
   // AI CHANGED: Phase C4 slice 12 — hold duration (ms) for opener when cache says cast time or channel_gear window.
+  // AI CHANGED: slice 18 — default path uses full raw hold (capped); optional clamp matches slice-12b scan-tooltip safety.
   function plannerOpenerHoldCastMs(slotRec) {
     const o = plannerOpenerHoldRawClampedMs(slotRec);
     if (!o.needsHold) {
       return 0;
+    }
+    if (Config.planner.channelOpenerClampHoldToTooltipSafeMs !== true) {
+      return o.raw;
     }
     const maxSafeHold = plannerOpenerMaxSafeBarHoldMs();
     if (o.raw > maxSafeHold) {
@@ -505,7 +509,7 @@
           continue;
         }
       }
-      // AI CHANGED: slice 17 — skip skills that need a long bar-hold to cast; plannerOpenerHoldCastMs clamps to 0 and short-click does not start channel/cast (wastes verify window).
+      // AI CHANGED: slice 17+18 — only when channelOpenerClampHoldToTooltipSafeMs: skip skills that need a long bar-hold (else full hold is used in combat).
       if (plannerSkillOpenerHoldBlockedByShortPressLimit(s)) {
         Logger.log("PLANNER", "Skipping ranked skill opener (cast/channel needs hold longer than safe bar window)", {
           slot: idx,
