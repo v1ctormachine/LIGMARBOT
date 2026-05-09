@@ -1,0 +1,12 @@
+﻿{
+    "version":  "0.2.1",
+    "description":  "Add local-file loader workflow + GUI version display",
+    "builtAt":  "2026-05-09T13:10:05.1869417+03:00",
+    "history":  [
+                    {
+                        "version":  "0.2.1",
+                        "description":  "Add local-file loader workflow + GUI version display",
+                        "date":  "2026-05-09T13:10:05.1869417+03:00"
+                    }
+                ]
+}

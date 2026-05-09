@@ -49,11 +49,26 @@
     panel.style.color = "#dce3ff";
     panel.style.boxShadow = "0 4px 14px rgba(0,0,0,0.35)";
 
+    // AI CHANGED: Header now renders BotVersion (auto-injected by build.ps1) so the running bundle is visible at a glance.
+    const titleWrap = document.createElement("div");
+    titleWrap.style.marginBottom = "8px";
+
     const title = document.createElement("div");
-    title.textContent = "Ligmar Bot Control";
+    title.textContent = `Ligmar Bot v${BotVersion.version}`;
     title.style.fontWeight = "700";
-    title.style.marginBottom = "8px";
-    panel.appendChild(title);
+    title.style.fontSize = "13px";
+    titleWrap.appendChild(title);
+
+    const subtitle = document.createElement("div");
+    subtitle.textContent = BotVersion.description ? `“${BotVersion.description}”` : "";
+    subtitle.style.fontSize = "11px";
+    subtitle.style.opacity = "0.75";
+    subtitle.style.fontStyle = "italic";
+    subtitle.style.marginTop = "2px";
+    subtitle.style.wordBreak = "break-word";
+    titleWrap.appendChild(subtitle);
+
+    panel.appendChild(titleWrap);
 
     const buttonsWrap = document.createElement("div");
     buttonsWrap.style.display = "grid";

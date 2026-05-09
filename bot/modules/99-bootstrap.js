@@ -5,10 +5,13 @@
       return;
     }
 
-    Logger.log("BOOT", "bot loaded");
+    // AI CHANGED: Boot log now includes BotVersion so the console clearly reports which bundle is live.
+    Logger.log("BOOT", `bot loaded — v${BotVersion.version}: ${BotVersion.description}`);
     probeSelectors();
 
     window.ligmarBot = {
+      // AI CHANGED: Expose BotVersion on the debug API for quick inspection from console.
+      version: BotVersion,
       config: Config,
       logger: Logger,
       probeSelectors: probeSelectors,

@@ -50,19 +50,20 @@ Design principles:
 ### Repository layout
 
 - Git repo lives at the **project root** (`C:\Users\Victor\.cursor\projects\ligmarbot`).
-- Tracked files: `.gitignore`, `ARCHITECTURE.md`, `bot/build.ps1`, `bot/bot.user.js`, `bot/modules/*.js`.
-- `bot/bot.user.js` is the **build artifact** loaded by Tampermonkey. **Do not hand-edit it.** It is regenerated from `bot/modules/*.js` by `bot/build.ps1`.
+- Tracked files: `.gitignore`, `ARCHITECTURE.md`, `bot/build.ps1`, `bot/loader.user.js`, `bot/version.json`, `bot/bot.user.js`, `bot/modules/*.js`.
+- `bot/bot.user.js`, `bot/modules/05-version.js`, `bot/loader.user.js` (`@version` line), and `bot/version.json` are **build artifacts**. **Do not hand-edit them.** They are regenerated from `bot/modules/*.js` and the version state by `bot/build.ps1`.
 - `.gitignore` excludes Cursor tooling artifacts (`mcps/`, `terminals/`, `agent-transcripts/`) and editor scratch files. They live on disk for the IDE but never reach GitHub.
 
 ### Source modules and build pipeline
 
-The bot lives as **one IIFE in many files**. Modules under `bot/modules/` are concatenated by `bot/build.ps1` (filename-prefix order) into a single `bot/bot.user.js` that Tampermonkey loads directly. There is no module loader at runtime — every file's body executes inside a single `(function () { "use strict"; ... })();` closure, so all helpers and `const` declarations share one scope.
+The bot lives as **one IIFE in many files**. Modules under `bot/modules/` are concatenated by `bot/build.ps1` (filename-prefix order) into a single `bot/bot.user.js`. Tampermonkey loads it via a tiny loader stub (`bot/loader.user.js`) that does `@require file:///…/bot/bot.user.js`. There is no module loader at runtime — every file's body executes inside a single `(function () { "use strict"; ... })();` closure, so all helpers and `const` declarations share one scope.
 
 Filename order is the **only** thing that controls concat order. Numeric prefixes are kept in reserved blocks so new modules can slot in without renaming neighbors:
 
 | File                   | Role                                                                                       |
 | ---------------------- | ------------------------------------------------------------------------------------------ |
 | `00-header.js`         | Tampermonkey `==UserScript==` header + IIFE open + auto-generated banner.                  |
+| `05-version.js`        | **AUTO-GENERATED.** `const BotVersion = { version, description, builtAt }`. Written by `build.ps1` on every build. |
 | `10-config.js`         | `Config` (selectors, timings, thresholds).                                                 |
 | `15-logger.js`         | `Logger` (timestamped, module-tagged `console.log/warn/error`).                            |
 | `20-runtime.js`        | `Runtime` (mutable state: autoFarm, exploration, zoom flag, UI refs).                      |
@@ -73,25 +74,46 @@ Filename order is the **only** thing that controls concat order. Numeric prefixe
 | `70-verify.js`         | Click-then-wait wrappers: `waitForCondition`, `waitForLootInteractionSettled`, `waitUntilNotMoving`, `waitForTargetAcquired`, `clickFindEnemyVerified`, `clickLootOrActivateVerified`, `clickCenterMapVerified`, `ensureMapOpen`. |
 | `80-map.js`            | Map/canvas + scan/move/explore: `getMapCanvas`, `ensureMapZoomedOut`, `forceZoomOut`, `isMovementInProgress`, `moveToMapPoint`, `clickMapCenterTile`, `clickMapRelative`, `getMapCenterClientPoint`, `scanNeighborRing`, `verifyMoveByCoordinates`, `getNextExplorationPoint`, `exploreIfIdle`, `parseLootKindsFromMarkers`, `scoreScannedTile`, `chooseBestScannedNeighbor`, `exploreByScan`. |
 | `85-combat.js`         | Combat + auto-farm runner: `attackUntilProgress`, `secureTileAndLootOnce`, `prepMapForCombatCycle`, `prepareAndScanOnce`, `runPreparedSecureCycle`, `getAutoFarmStatus`, `stopAutoFarmLoop`, `startAutoFarmLoop`. |
-| `90-ui.js`             | In-page panel: `updateControlPanelStatus`, `createControlPanel`.                            |
-| `99-bootstrap.js`      | `start()`, `window.ligmarBot` debug API, IIFE close, `start()` invocation.                  |
+| `90-ui.js`             | In-page panel (header shows `BotVersion.version` + `description`): `updateControlPanelStatus`, `createControlPanel`. |
+| `99-bootstrap.js`      | `start()`, `window.ligmarBot` debug API (includes `BotVersion`), IIFE close, `start()` invocation. |
 
-**Build workflow** (Windows PowerShell, no Node toolchain required):
+### Versioning and the local-file loader
+
+The bot is delivered to Tampermonkey via a thin loader userscript that points at the local bundle on disk. This avoids copy-pasting the bundle into Tampermonkey on every change.
+
+**Pieces:**
+
+- **`bot/version.json`** — single source of truth: `version` (semver `MAJOR.MINOR.PATCH`), latest `description`, `builtAt` ISO timestamp, and a 50-entry `history` array of past bumps.
+- **`bot/loader.user.js`** — installed in Tampermonkey **once**. Contains `@require file:///C:/Users/Victor/.cursor/projects/ligmarbot/bot/bot.user.js` and a `@version` line that `build.ps1` rewrites on every bump. Tampermonkey re-fetches `@require`d files when the loader's `@version` changes; bumping every build guarantees the new bundle is picked up on the next page reload.
+- **`bot/modules/05-version.js`** — auto-generated module with `const BotVersion = { version, description, builtAt };`. Concatenated into the bundle so the runtime has authoritative version info; the GUI panel renders it in its header and `Logger.log("BOOT", ...)` includes it on startup.
+
+**Build commands:**
 
 ```powershell
-.\bot\build.ps1
-# rebuilds bot/bot.user.js from bot/modules/*.js
+.\bot\build.ps1 -Description "short summary of what changed"   # bump patch, regenerate, rebuild
+.\bot\build.ps1 -NoBump                                        # rebuild only (no version change)
 ```
 
-The script reads every module as UTF-8 (no BOM), normalizes trailing newlines, joins them in filename order, and writes UTF-8 (no BOM) to `bot/bot.user.js`. After every rebuild, reload the userscript in Tampermonkey.
+`-Description` is required for a normal build so every shipped change carries a human-readable note. The patch number auto-increments (e.g. `0.2.1 -> 0.2.2`); manual major/minor edits to `version.json` are allowed for milestone resets.
 
-**Why this layout (and not ES modules / `@require`):**
+**One-time Tampermonkey setup (Chrome, per machine):**
+
+1. `chrome://extensions/` → Tampermonkey → **Details** → enable **"Allow access to file URLs"**.
+2. Tampermonkey Dashboard → **Settings** → set Config mode to **Advanced** → Security → **"Allow scripts access to local file URIs"** = Yes.
+3. Drag-drop `bot/loader.user.js` into the Tampermonkey tab to install it (or open the file in the browser → "install").
+4. Disable or delete the legacy "Ligmar Bot" script if it was installed previously.
+5. Reload `https://ligmar.io/game/...` — the control panel header should show `Ligmar Bot v0.2.x`.
+
+**Per-change loop after that:** I edit modules → I run `.\bot\build.ps1 -Description "..."` → you press F5 on the game tab → new version is live.
+
+**Why this layout (and not ES modules / `@require` from GitHub):**
 
 - Tampermonkey's most reliable distribution shape is a single self-contained file. ES module imports inside a userscript add CSP/loader friction we don't need.
 - Function declarations are hoisted within the closure, so concat order doesn't change behavior — only readability. We keep the prefix order purely as documentation.
+- `@require` from GitHub raw URLs hits a sticky CDN cache and forces network at every game load; local file `@require` is instant and offline.
 - Build time is effectively zero (one file write); no watcher needed for a typical edit/reload cycle.
 
-**Adding a new module:** drop a new file into `bot/modules/` with a numeric prefix that places it logically (e.g. `82-pathing.js` between `80-map.js` and `85-combat.js`), then run `bot/build.ps1`. Do **not** wrap the new file in another IIFE — it is concatenated inside the existing one.
+**Adding a new module:** drop a new file into `bot/modules/` with a numeric prefix that places it logically (e.g. `82-pathing.js` between `80-map.js` and `85-combat.js`), then run `.\bot\build.ps1 -Description "add pathing module"`. Do **not** wrap the new file in another IIFE — it is concatenated inside the existing one.
 
 ### Investigations (completed and folded into the bot)
 
