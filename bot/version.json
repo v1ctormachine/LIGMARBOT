@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.33",
-    "description":  "slice 16 strict skill cache fingerprint + boot retry; two-skill queue doc",
-    "builtAt":  "2026-05-09T22:43:48.9178736+03:00",
+    "version":  "0.3.34",
+    "description":  "slice 17 skip long-hold openers that short-click no-op",
+    "builtAt":  "2026-05-09T22:52:01.9211537+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.34",
+                        "description":  "slice 17 skip long-hold openers that short-click no-op",
+                        "date":  "2026-05-09T22:52:01.9211537+03:00"
+                    },
                     {
                         "version":  "0.3.33",
                         "description":  "slice 16 strict skill cache fingerprint + boot retry; two-skill queue doc",

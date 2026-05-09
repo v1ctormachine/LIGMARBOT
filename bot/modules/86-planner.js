@@ -1,7 +1,7 @@
   // AI CHANGED: Phase C4 (slice 1) -- read-only paper combat math for console / future automation.
   // Uses Runtime.hero.combatStats + Runtime.skills.slots. **Slice 11:** opener path uses
   // isActionBarSlotShowingCooldown(). **Slice 12:** opener hold ms from cast/channel cache
-  // (plannerOpenerHoldCastMs) for clickActionBarSlotHoldCast in combat.
+  // (plannerOpenerHoldCastMs) for clickActionBarSlotHoldCast in combat. **Slice 17:** opener pick skips skills whose required hold exceeds the safe bar window (short click no-op).
   // Ground truth for real fights remains observeCombatDamage (C2) + enemy DB (C3).
 
   function estimatePaperBasicAttackDps(statsOverride) {
@@ -364,10 +364,10 @@
     return false;
   }
 
-  // AI CHANGED: Phase C4 slice 12 — hold duration (ms) for opener when cache says cast time or channel_gear window.
-  function plannerOpenerHoldCastMs(slotRec) {
+  // AI CHANGED: slice 12+17 — shared math for “how long must we hold the bar” vs scan-safe max (tooltip threshold).
+  function plannerOpenerHoldRawClampedMs(slotRec) {
     if (!slotRec || Config.planner.useHoldCastForChannelOpeners === false) {
-      return 0;
+      return { raw: 0, needsHold: false };
     }
     const pad = Number.isFinite(Config.planner.channelOpenerHoldPadMs)
       ? Config.planner.channelOpenerHoldPadMs
@@ -392,24 +392,49 @@
       }
     }
     if (needMs <= 0) {
-      return 0;
+      return { raw: 0, needsHold: false };
     }
     const raw = Math.min(Math.max(needMs, floor), cap);
+    return { raw: raw, needsHold: true };
+  }
+
+  function plannerOpenerMaxSafeBarHoldMs() {
     const openMs = Number.isFinite(Config.skills.holdToOpenMs) ? Config.skills.holdToOpenMs : 450;
     const margin = Number.isFinite(Config.planner.channelOpenerAvoidPopupMarginMs)
       ? Config.planner.channelOpenerAvoidPopupMarginMs
       : 120;
-    const maxSafeHold = Math.max(80, openMs - margin);
-    if (raw > maxSafeHold) {
+    return Math.max(80, openMs - margin);
+  }
+
+  // AI CHANGED: slice 17 — true if this skill needs a real channel/cast hold longer than the bar “safe” window (short click will not cast).
+  function plannerSkillOpenerHoldBlockedByShortPressLimit(slotRec) {
+    if (Config.planner.skipRankedOpenersNeedingUnsafeBarHold === false) {
+      return false;
+    }
+    const o = plannerOpenerHoldRawClampedMs(slotRec);
+    if (!o.needsHold) {
+      return false;
+    }
+    return o.raw > plannerOpenerMaxSafeBarHoldMs();
+  }
+
+  // AI CHANGED: Phase C4 slice 12 — hold duration (ms) for opener when cache says cast time or channel_gear window.
+  function plannerOpenerHoldCastMs(slotRec) {
+    const o = plannerOpenerHoldRawClampedMs(slotRec);
+    if (!o.needsHold) {
+      return 0;
+    }
+    const maxSafeHold = plannerOpenerMaxSafeBarHoldMs();
+    if (o.raw > maxSafeHold) {
       Logger.warn("PLANNER", "Opener hold-cast skipped (would open skill popup like scan long-press); using click", {
-        computedHoldMs: raw,
+        computedHoldMs: o.raw,
         maxSafeHoldMs: maxSafeHold,
-        holdToOpenMs: openMs,
+        holdToOpenMs: Number.isFinite(Config.skills.holdToOpenMs) ? Config.skills.holdToOpenMs : 450,
         name: slotRec.name || ""
       });
       return 0;
     }
-    return raw;
+    return o.raw;
   }
 
   // AI CHANGED: Phase C4 slice 8+12+15 — full pick { slot, record } for opener; optional excludeSlots (indices already tried this burst).
@@ -479,6 +504,15 @@
           });
           continue;
         }
+      }
+      // AI CHANGED: slice 17 — skip skills that need a long bar-hold to cast; plannerOpenerHoldCastMs clamps to 0 and short-click does not start channel/cast (wastes verify window).
+      if (plannerSkillOpenerHoldBlockedByShortPressLimit(s)) {
+        Logger.log("PLANNER", "Skipping ranked skill opener (cast/channel needs hold longer than safe bar window)", {
+          slot: idx,
+          name: s.name || "",
+          maxSafeHoldMs: plannerOpenerMaxSafeBarHoldMs()
+        });
+        continue;
       }
       if (exclude.has(idx)) {
         continue;

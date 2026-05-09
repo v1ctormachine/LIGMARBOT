@@ -174,6 +174,7 @@
       plannerPickSkillSlotToCast: plannerPickSkillSlotToCast,
       plannerPickSkillOpeningPick: plannerPickSkillOpeningPick,
       plannerOpenerHoldCastMs: plannerOpenerHoldCastMs,
+      plannerSkillOpenerHoldBlockedByShortPressLimit: plannerSkillOpenerHoldBlockedByShortPressLimit,
       plannerSkillHasDirectDamageForOpener: plannerSkillHasDirectDamageForOpener
     };
 
