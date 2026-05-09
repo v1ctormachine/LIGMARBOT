@@ -40,6 +40,9 @@
       scanSecondRingForColor: scanSecondRingForColor,
       getSecondRingOffsets: getSecondRingOffsets,
       ringHasUsefulLoot: ringHasUsefulLoot,
+      // AI CHANGED: Expose overlay control so user can manually clear / re-render from console.
+      renderSecondRingOverlay: renderSecondRingOverlay,
+      clearSecondRingOverlay: clearSecondRingOverlay,
       clickBasicAttack: clickBasicAttack,
       isBasicAttackConfigured: isBasicAttackConfigured,
       setBasicAttackSelector: setBasicAttackSelector,

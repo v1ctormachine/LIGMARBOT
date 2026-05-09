@@ -1,3 +1,145 @@
+  // AI CHANGED: SVG_NS used by the 2-ring overlay renderer (avoids createElementNS string typos).
+  const SVG_NS = "http://www.w3.org/2000/svg";
+
+  // AI CHANGED: Tear down any existing 2-ring debug overlay (DOM + auto-clear timer).
+  function clearSecondRingOverlay() {
+    if (Runtime.ui.secondRingOverlayTimer) {
+      clearTimeout(Runtime.ui.secondRingOverlayTimer);
+      Runtime.ui.secondRingOverlayTimer = null;
+    }
+    if (Runtime.ui.secondRingOverlay) {
+      try {
+        Runtime.ui.secondRingOverlay.remove();
+      } catch (err) {
+        // ignore — element may already be detached
+      }
+      Runtime.ui.secondRingOverlay = null;
+    }
+  }
+
+  // AI CHANGED: Render the 12-sample 2-ring scan as an SVG overlay so user can SEE where we sample,
+  // which positions hit/missed, and where the best-hit arrow points. pointer-events: none so it never
+  // blocks the game canvas from receiving clicks. Auto-clears after Config.debug.secondRingOverlayTtlMs.
+  function renderSecondRingOverlay(snapshot) {
+    if (!snapshot || !Array.isArray(snapshot.samples) || !snapshot.canvasRect) {
+      return;
+    }
+    clearSecondRingOverlay();
+
+    const svg = document.createElementNS(SVG_NS, "svg");
+    svg.setAttribute("id", "ligmar-bot-ring2-overlay");
+    svg.style.position = "fixed";
+    svg.style.left = "0";
+    svg.style.top = "0";
+    svg.style.width = "100vw";
+    svg.style.height = "100vh";
+    svg.style.zIndex = "999998"; // just under the control panel (999999) so panel buttons stay clickable
+    svg.style.pointerEvents = "none";
+
+    const rect = snapshot.canvasRect;
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+
+    // Center marker — small crosshair so user can verify our origin matches their character's tile.
+    const cross1 = document.createElementNS(SVG_NS, "line");
+    cross1.setAttribute("x1", centerX - 8);
+    cross1.setAttribute("y1", centerY);
+    cross1.setAttribute("x2", centerX + 8);
+    cross1.setAttribute("y2", centerY);
+    cross1.setAttribute("stroke", "#dce3ff");
+    cross1.setAttribute("stroke-width", "1.5");
+    cross1.setAttribute("opacity", "0.8");
+    svg.appendChild(cross1);
+    const cross2 = document.createElementNS(SVG_NS, "line");
+    cross2.setAttribute("x1", centerX);
+    cross2.setAttribute("y1", centerY - 8);
+    cross2.setAttribute("x2", centerX);
+    cross2.setAttribute("y2", centerY + 8);
+    cross2.setAttribute("stroke", "#dce3ff");
+    cross2.setAttribute("stroke-width", "1.5");
+    cross2.setAttribute("opacity", "0.8");
+    svg.appendChild(cross2);
+
+    // Per-sample box + label.
+    for (let i = 0; i < snapshot.samples.length; i += 1) {
+      const s = snapshot.samples[i];
+      const isBest = !!(snapshot.best && snapshot.best.key === s.key);
+      const fill = s.hit ? "rgba(75, 217, 122, 0.28)" : "rgba(0,0,0,0)";
+      const stroke = s.hit ? "#4bd97a" : (s.ratio > 0 ? "#d9a14b" : "#d96f4b");
+      const strokeWidth = isBest ? 2.4 : 1.2;
+
+      const r = document.createElementNS(SVG_NS, "rect");
+      r.setAttribute("x", s.viewportX);
+      r.setAttribute("y", s.viewportY);
+      r.setAttribute("width", s.patchW);
+      r.setAttribute("height", s.patchH);
+      r.setAttribute("fill", fill);
+      r.setAttribute("stroke", stroke);
+      r.setAttribute("stroke-width", strokeWidth);
+      svg.appendChild(r);
+
+      const label = document.createElementNS(SVG_NS, "text");
+      label.setAttribute("x", s.viewportX + s.patchW / 2);
+      label.setAttribute("y", s.viewportY - 3);
+      label.setAttribute("text-anchor", "middle");
+      label.setAttribute("font-family", "Consolas, Menlo, monospace");
+      label.setAttribute("font-size", "10");
+      label.setAttribute("fill", stroke);
+      label.setAttribute("stroke", "rgba(0,0,0,0.65)");
+      label.setAttribute("stroke-width", "0.6");
+      label.setAttribute("paint-order", "stroke");
+      const ratioPct = (s.ratio * 100).toFixed(1) + "%";
+      label.textContent = `${s.key} ${ratioPct}`;
+      svg.appendChild(label);
+    }
+
+    // Direction arrow from center to the best-hit patch (if any).
+    if (snapshot.best) {
+      const b = snapshot.best;
+      const targetX = b.viewportX + b.patchW / 2;
+      const targetY = b.viewportY + b.patchH / 2;
+      const arrow = document.createElementNS(SVG_NS, "line");
+      arrow.setAttribute("x1", centerX);
+      arrow.setAttribute("y1", centerY);
+      arrow.setAttribute("x2", targetX);
+      arrow.setAttribute("y2", targetY);
+      arrow.setAttribute("stroke", "#4bd97a");
+      arrow.setAttribute("stroke-width", "2");
+      arrow.setAttribute("opacity", "0.85");
+      svg.appendChild(arrow);
+
+      const arrowHead = document.createElementNS(SVG_NS, "circle");
+      arrowHead.setAttribute("cx", targetX);
+      arrowHead.setAttribute("cy", targetY);
+      arrowHead.setAttribute("r", "4");
+      arrowHead.setAttribute("fill", "#4bd97a");
+      svg.appendChild(arrowHead);
+    }
+
+    // Top-left mini summary (so it's clear which scan this is and when).
+    const summary = document.createElementNS(SVG_NS, "text");
+    summary.setAttribute("x", rect.left + 6);
+    summary.setAttribute("y", rect.top + 14);
+    summary.setAttribute("font-family", "Consolas, Menlo, monospace");
+    summary.setAttribute("font-size", "11");
+    summary.setAttribute("fill", "#dce3ff");
+    summary.setAttribute("stroke", "rgba(0,0,0,0.7)");
+    summary.setAttribute("stroke-width", "0.7");
+    summary.setAttribute("paint-order", "stroke");
+    const hitCount = Array.isArray(snapshot.hits) ? snapshot.hits.length : 0;
+    summary.textContent = `[ring2:${snapshot.label || "?"}] hits=${hitCount}` +
+      (snapshot.best ? ` best=${snapshot.best.key} (${(snapshot.best.ratio * 100).toFixed(1)}%) -> ${snapshot.best.dirs.join("/")}` : "");
+    svg.appendChild(summary);
+
+    document.body.appendChild(svg);
+    Runtime.ui.secondRingOverlay = svg;
+
+    const ttl = Config.debug && Config.debug.secondRingOverlayTtlMs ? Config.debug.secondRingOverlayTtlMs : 0;
+    if (ttl > 0) {
+      Runtime.ui.secondRingOverlayTimer = setTimeout(clearSecondRingOverlay, ttl);
+    }
+  }
+
   // AI CHANGED: Map a status phase tag to a color category for the GUI badge / phase line.
   function phaseColor(phase) {
     switch (phase) {

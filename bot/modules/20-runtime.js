@@ -39,6 +39,9 @@
       stopButton: null,
       phaseNode: null,
       phaseDetailNode: null,
-      phaseSinceNode: null
+      phaseSinceNode: null,
+      // AI CHANGED: 2-ring debug overlay refs (the SVG element + its auto-clear timer).
+      secondRingOverlay: null,
+      secondRingOverlayTimer: null
     }
   };

@@ -455,27 +455,28 @@
     return base + enemies * 50 - alliesPenalty;
   }
 
-  // AI CHANGED: Build the 12 second-ring tile offsets (6 corners + 6 edges) plus their nearest 1-ring direction.
-  // Edge tiles map clockwise (e.g. T2 between TL and TR -> TR). The mapping is what we use to translate a
-  // detected 2-ring marker into an actual 1-ring move target.
+  // AI CHANGED: Build the 12 second-ring tile offsets (6 corners + 6 edges) plus the 1-ring directions
+  // that bring us closer to that tile. Corner-2 tiles have one closest 1-ring direction; edge-2 tiles
+  // have TWO equally-close directions (e.g. T2 between TL and TR -> ["TL","TR"]). The caller picks
+  // among multiple candidates by min-enemies.
   function getSecondRingOffsets() {
     const step = Config.movement.neighborStepPx;
     const h = Math.round(step * 0.86);
     const halfStep = Math.round(step / 2);
     const oneAndHalf = step + halfStep;
     return [
-      { key: "TL2",  dx: -step,        dy: -2 * h, dir: "TL" },
-      { key: "T2",   dx: 0,            dy: -2 * h, dir: "TR" },
-      { key: "TR2",  dx: step,         dy: -2 * h, dir: "TR" },
-      { key: "TR-R", dx: oneAndHalf,   dy: -h,     dir: "R"  },
-      { key: "R2",   dx: 2 * step,     dy: 0,      dir: "R"  },
-      { key: "R-BR", dx: oneAndHalf,   dy: h,      dir: "BR" },
-      { key: "BR2",  dx: step,         dy: 2 * h,  dir: "BR" },
-      { key: "B2",   dx: 0,            dy: 2 * h,  dir: "BL" },
-      { key: "BL2",  dx: -step,        dy: 2 * h,  dir: "BL" },
-      { key: "BL-L", dx: -oneAndHalf,  dy: h,      dir: "L"  },
-      { key: "L2",   dx: -2 * step,    dy: 0,      dir: "L"  },
-      { key: "L-TL", dx: -oneAndHalf,  dy: -h,     dir: "TL" }
+      { key: "TL2",  dx: -step,        dy: -2 * h, dirs: ["TL"]       },
+      { key: "T2",   dx: 0,            dy: -2 * h, dirs: ["TL", "TR"] },
+      { key: "TR2",  dx: step,         dy: -2 * h, dirs: ["TR"]       },
+      { key: "TR-R", dx: oneAndHalf,   dy: -h,     dirs: ["TR", "R"]  },
+      { key: "R2",   dx: 2 * step,     dy: 0,      dirs: ["R"]        },
+      { key: "R-BR", dx: oneAndHalf,   dy: h,      dirs: ["R", "BR"]  },
+      { key: "BR2",  dx: step,         dy: 2 * h,  dirs: ["BR"]       },
+      { key: "B2",   dx: 0,            dy: 2 * h,  dirs: ["BR", "BL"] },
+      { key: "BL2",  dx: -step,        dy: 2 * h,  dirs: ["BL"]       },
+      { key: "BL-L", dx: -oneAndHalf,  dy: h,      dirs: ["BL", "L"]  },
+      { key: "L2",   dx: -2 * step,    dy: 0,      dirs: ["L"]        },
+      { key: "L-TL", dx: -oneAndHalf,  dy: -h,     dirs: ["L", "TL"]  }
     ];
   }
 
@@ -534,6 +535,9 @@
       const tile = offsets[i];
       const cssX = cssCenterX + tile.dx - halfSize;
       const cssY = cssCenterY + tile.dy - halfSize;
+      // AI CHANGED: Capture the patch's viewport-space rect so the overlay can draw it without recomputing.
+      const viewportX = rect.left + cssX;
+      const viewportY = rect.top + cssY;
       const srcX = Math.round(cssX * scaleX);
       const srcY = Math.round(cssY * scaleY);
       const srcW = Math.round(patchW * scaleX);
@@ -548,9 +552,13 @@
         drawFailures += 1;
         samples.push({
           key: tile.key,
-          dir: tile.dir,
+          dirs: tile.dirs.slice(),
           dx: tile.dx,
           dy: tile.dy,
+          viewportX: viewportX,
+          viewportY: viewportY,
+          patchW: patchW,
+          patchH: patchH,
           ok: false,
           ratio: 0,
           hit: false,
@@ -573,9 +581,13 @@
       const ratio = totalPixels > 0 ? matchCount / totalPixels : 0;
       samples.push({
         key: tile.key,
-        dir: tile.dir,
+        dirs: tile.dirs.slice(),
         dx: tile.dx,
         dy: tile.dy,
+        viewportX: viewportX,
+        viewportY: viewportY,
+        patchW: patchW,
+        patchH: patchH,
         ok: true,
         ratio: ratio,
         matchCount: matchCount,
@@ -596,6 +608,8 @@
       tolerance: tolerance,
       minMatchRatio: minMatchRatio,
       halfSize: halfSize,
+      // AI CHANGED: Carry the canvas viewport rect so the overlay can draw the center marker / direction arrow.
+      canvasRect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
       samples: samples,
       hits: hits,
       best: best,
@@ -605,10 +619,19 @@
     Logger.log(logTag, `2-ring scan for ${label} done`, {
       hits: hits.length,
       bestKey: best ? best.key : null,
-      bestDir: best ? best.dir : null,
+      bestDirs: best ? best.dirs : null,
       bestRatio: best ? Number(best.ratio.toFixed(4)) : null,
       drawFailures: drawFailures
     });
+
+    // AI CHANGED: Hook the visual overlay so every 2-ring scan (auto or manual) is visible on the page.
+    if (Config.debug && Config.debug.showSecondRingOverlay && typeof renderSecondRingOverlay === "function") {
+      try {
+        renderSecondRingOverlay(snapshot);
+      } catch (err) {
+        Logger.warn(logTag, "renderSecondRingOverlay threw", err);
+      }
+    }
 
     return snapshot;
   }
@@ -693,24 +716,46 @@
       setBotStatus("scanning", "2-ring visual scan for yellow die");
       secondRing = await scanSecondRingForDie();
       if (secondRing && secondRing.ok && secondRing.best) {
-        const dieDir = secondRing.best.dir;
-        const candidate = scan.results.find((r) => r && r.ok && r.classification === "walkable" && r.key === dieDir);
-        if (candidate) {
-          const candidateKinds = parseLootKindsFromMarkers(candidate.lootIcons || []);
-          const hostileTile = candidateKinds.includes("goblin") || candidateKinds.includes("boss");
-          if (!hostileTile) {
-            target = candidate;
-            dieGuided = true;
-            Logger.log("MOVE", `2-ring yellow die guides toward ${dieDir}`, {
-              ring2Key: secondRing.best.key,
-              ring2Ratio: Number(secondRing.best.ratio.toFixed(4)),
-              ring1Tile: candidate.key
-            });
-          } else {
-            Logger.warn("MOVE", `Die seen toward ${dieDir} but 1-ring tile is hostile (${candidateKinds.join(",")}); ignoring hint`);
+        const bestSample = secondRing.best;
+        const candidateDirs = Array.isArray(bestSample.dirs) ? bestSample.dirs : [];
+        // AI CHANGED: Resolve every candidate dir to its 1-ring scan result, drop blocked / hostile tiles.
+        const ringCandidates = [];
+        for (let i = 0; i < candidateDirs.length; i += 1) {
+          const dir = candidateDirs[i];
+          const tile = scan.results.find((r) => r && r.ok && r.classification === "walkable" && r.key === dir);
+          if (!tile) {
+            continue;
           }
+          const kinds = parseLootKindsFromMarkers(tile.lootIcons || []);
+          if (kinds.includes("goblin") || kinds.includes("boss")) {
+            continue;
+          }
+          ringCandidates.push(tile);
+        }
+        if (ringCandidates.length > 0) {
+          // AI CHANGED: Tiebreak per user spec — minimum enemies first, then minimum allies, then arbitrary.
+          ringCandidates.sort((a, b) => {
+            const ae = Number.isFinite(a.enemies) ? a.enemies : 0;
+            const be = Number.isFinite(b.enemies) ? b.enemies : 0;
+            if (ae !== be) {
+              return ae - be;
+            }
+            const aa = Number.isFinite(a.allies) ? a.allies : 0;
+            const ba = Number.isFinite(b.allies) ? b.allies : 0;
+            return aa - ba;
+          });
+          target = ringCandidates[0];
+          dieGuided = true;
+          Logger.log("MOVE", `2-ring yellow die guides toward ${target.key}`, {
+            ring2Key: bestSample.key,
+            ring2Ratio: Number(bestSample.ratio.toFixed(4)),
+            considered: candidateDirs,
+            picked: target.key,
+            pickedEnemies: target.enemies,
+            pickedAllies: target.allies
+          });
         } else {
-          Logger.warn("MOVE", `Die seen toward ${dieDir} but corresponding 1-ring tile is blocked or missing; ignoring hint`);
+          Logger.warn("MOVE", `Die seen toward dirs ${candidateDirs.join("/")} but no walkable safe candidate; ignoring hint`);
         }
       }
       // If die didn't yield a usable target, fall back to standard scoring (e.g. step into empty tile).

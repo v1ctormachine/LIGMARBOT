@@ -24,6 +24,13 @@
     logging: {
       stateSnapshots: false
     },
+    // AI CHANGED: Visual debug overlays. Toggle via console e.g. `ligmarBot.config.debug.showSecondRingOverlay = false`.
+    debug: {
+      // Show the 12 sampling boxes + best-hit arrow on the page after every 2-ring scan.
+      showSecondRingOverlay: true,
+      // How long the overlay stays before fading itself out (ms). 0 = persist until next scan.
+      secondRingOverlayTtlMs: 8000
+    },
     // AI CHANGED: Added configurable auto-farm loop controls.
     farmLoop: {
       cycleDelayMs: 900,
