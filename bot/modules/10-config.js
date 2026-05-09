@@ -176,7 +176,9 @@
       // Idle gap between slots so the game UI settles before the next mousedown.
       betweenSlotsMs: 150,
       // localStorage key for the skill DB cache. Bumped if we ever change the parsed schema.
-      storageKey: "ligmarbot.skillsDb.v1"
+      storageKey: "ligmarbot.skillsDb.v1",
+      // AI CHANGED: Phase C4 slice 13 — on boot, discard cache if live bar fingerprint != saved (class switch).
+      invalidateCacheOnBarMismatch: true
     },
     selectors: {
       // AI CHANGED: Relaxed HP selector to avoid brittle container path mismatches.

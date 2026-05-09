@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.29",
-    "description":  "Fix opener hold: cap below long-press; boot hint after class change",
-    "builtAt":  "2026-05-09T22:00:00.0213521+03:00",
+    "version":  "0.3.30",
+    "description":  "C4 slice 13: skills cache invalidates on action bar layout change",
+    "builtAt":  "2026-05-09T22:08:09.6840964+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.30",
+                        "description":  "C4 slice 13: skills cache invalidates on action bar layout change",
+                        "date":  "2026-05-09T22:08:09.6840964+03:00"
+                    },
                     {
                         "version":  "0.3.29",
                         "description":  "Fix opener hold: cap below long-press; boot hint after class change",

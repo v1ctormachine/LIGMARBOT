@@ -475,13 +475,39 @@
     };
   }
 
+  // AI CHANGED: Phase C4 slice 13 — compact signature of visible action bar (class + icon per slot) for cache validation.
+  function readActionBarLayoutFingerprint() {
+    const bar = document.querySelector(Config.selectors.actionBar);
+    if (!bar) {
+      return null;
+    }
+    const buttons = bar.querySelectorAll("app-action-button");
+    if (!buttons || buttons.length === 0) {
+      return null;
+    }
+    const parts = [];
+    for (let i = 0; i < buttons.length; i += 1) {
+      const button = buttons[i];
+      const cls = (button.className || "").toString().trim().replace(/\s+/g, " ");
+      const imgNode = button.querySelector(".action-image");
+      const styleAttr = imgNode ? (imgNode.getAttribute("style") || "") : "";
+      const iconMatch = styleAttr.match(/url\("?([^")]+)"?\)/i);
+      const iconUrl = iconMatch ? iconMatch[1] : "";
+      const id = getIconHash(iconUrl) || iconUrl.slice(-32);
+      parts.push(String(i) + ":" + cls + ":" + id);
+    }
+    return parts.join("|");
+  }
+
   // AI CHANGED: Persist the parsed slot array to localStorage so subsequent page reloads can skip
   // the rescan. Versioned key (Config.skills.storageKey) so a parser-schema change forces fresh scan.
   function saveSkillsToCache(slots) {
     try {
+      const fp = readActionBarLayoutFingerprint();
       const payload = {
         version: 2,
         savedAt: Date.now(),
+        actionBarFingerprint: fp || null,
         slots: slots
       };
       localStorage.setItem(Config.skills.storageKey, JSON.stringify(payload));
@@ -504,6 +530,23 @@
       const payload = JSON.parse(raw);
       if (!payload || !Array.isArray(payload.slots)) {
         return false;
+      }
+      if (Config.skills.invalidateCacheOnBarMismatch !== false) {
+        const cachedFp = payload.actionBarFingerprint;
+        if (typeof cachedFp === "string" && cachedFp.length > 0) {
+          const liveFp = readActionBarLayoutFingerprint();
+          if (liveFp != null && liveFp !== cachedFp) {
+            Logger.warn("SKILLS", "Skill cache rejected: action bar layout changed vs saved scan (re-scan with auto-farm OFF)", {
+              key: Config.skills.storageKey
+            });
+            try {
+              localStorage.removeItem(Config.skills.storageKey);
+            } catch (rmErr) {
+              Logger.warn("SKILLS", "Failed to remove stale skills cache", rmErr);
+            }
+            return false;
+          }
+        }
       }
       Runtime.skills.slots = payload.slots;
       Runtime.skills.cacheLoadedAt = Date.now();

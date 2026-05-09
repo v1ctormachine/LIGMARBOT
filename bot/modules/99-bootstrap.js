@@ -106,6 +106,7 @@
         };
       },
       clearSkillsCache: clearSkillsCache,
+      readActionBarLayoutFingerprint: readActionBarLayoutFingerprint,
       parseSkillEffects: parseSkillEffects,
       // AI CHANGED: Phase C1 -- hero stats + passive regen (console-first).
       readHeroCombatStats: readHeroCombatStats,
