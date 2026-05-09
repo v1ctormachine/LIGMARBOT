@@ -1,27 +1,46 @@
 // ==UserScript==
 // @name         Ligmar Zoom Tester
 // @namespace    http://tampermonkey.net/
-// @version      0.2.0
-// @description  Standalone probe: try multiple programmatic zoom approaches on the ligmar.io map and calibrate per-step intensity.
+// @version      0.3.0
+// @description  Minimal calibration tool: max-zoom-out button + scan-distance slider with hex-ring overlay.
 // @author       Victor
 // @match        https://ligmar.io/game/*
 // @grant        none
 // @run-at       document-idle
 // ==/UserScript==
 
-// AI CHANGED: v0.2.0 — calibration inputs (delta, count), preset bursts, canvas pixel-hash detector, self-detection fix.
+// AI CHANGED: v0.3.0 — stripped to MAX ZOOM OUT + step slider + hex-ring SVG overlay (everything else removed).
 
 (function () {
   "use strict";
 
   const PANEL_ID = "zoomTestPanel";
+  const OVERLAY_ID = "zoomTestOverlay";
+  const SLIDER_ID = "zoomTestStepSlider";
+  const NUMBER_ID = "zoomTestStepNumber";
   const PREFIX = "[ZOOM]";
+
+  // AI CHANGED: Mirror the bot's scan defaults so the slider starts where Config.movement.neighborStepPx is today.
+  const DEFAULT_STEP = 45;
+  const STEP_MIN = 10;
+  const STEP_MAX = 200;
+  // AI CHANGED: Vertical hex factor matches scanNeighborRing()'s h = round(step * 0.86).
+  const HEX_V = 0.86;
+  // AI CHANGED: 6 hex directions in the same order as scanNeighborRing() in bot.user.js.
+  const HEX_DIRS = [
+    { key: "TR", sx: +0.5, sy: -HEX_V },
+    { key: "R",  sx: +1.0, sy:  0     },
+    { key: "BR", sx: +0.5, sy: +HEX_V },
+    { key: "BL", sx: -0.5, sy: +HEX_V },
+    { key: "L",  sx: -1.0, sy:  0     },
+    { key: "TL", sx: -0.5, sy: -HEX_V }
+  ];
+
   const log = (...args) => console.log(PREFIX, ...args);
   const warn = (...args) => console.warn(PREFIX, ...args);
 
-  // ---------- DOM / canvas helpers ----------
+  // ---------- canvas ----------
   function getGameCanvas() {
-    // AI CHANGED: Prefer the explicit map canvas observed in production DOM (canvas.map).
     return (
       document.querySelector("app-game canvas.map") ||
       document.querySelector("app-game canvas") ||
@@ -30,129 +49,19 @@
     );
   }
 
-  function elementCenter(el) {
-    if (!el) return null;
-    const r = el.getBoundingClientRect();
-    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-  }
-
-  function isVisible(el) {
-    if (!el) return false;
-    const r = el.getBoundingClientRect();
-    if (r.width <= 0 || r.height <= 0) return false;
-    const s = getComputedStyle(el);
-    return (
-      s.visibility !== "hidden" &&
-      s.display !== "none" &&
-      s.opacity !== "0"
-    );
-  }
-
-  function classListString(el) {
-    if (!el) return "";
-    if (typeof el.className === "string") return el.className;
-    if (el.className && typeof el.className.baseVal === "string") return el.className.baseVal;
-    return "";
-  }
-
-  function simpleSelector(el) {
-    if (!el) return "";
-    const tag = el.tagName ? el.tagName.toLowerCase() : "";
-    const cls = classListString(el).trim().split(/\s+/).filter(Boolean).slice(0, 2).join(".");
-    return cls ? `${tag}.${cls}` : tag;
-  }
-
-  // AI CHANGED: Skip anything that lives inside the zoom-tester panel itself to avoid false self-matches.
-  function isInsideTesterPanel(el) {
-    if (!el || !el.closest) return false;
-    return !!el.closest(`#${PANEL_ID}`);
-  }
-
-  // ---------- canvas pixel-hash detector (the real signal) ----------
-  // AI CHANGED: Sample a sparse pixel grid from the canvas and produce a short string hash;
-  // if it changes after we dispatch input, the game actually re-rendered (likely due to zoom).
-  function canvasPixelHash() {
-    const c = getGameCanvas();
-    if (!c) return null;
-    try {
-      const ctx = c.getContext("2d");
-      if (!ctx) return null;
-      const w = c.width;
-      const h = c.height;
-      if (!w || !h) return null;
-      const stepX = Math.max(1, Math.floor(w / 8));
-      const stepY = Math.max(1, Math.floor(h / 8));
-      let hash = 0;
-      for (let y = stepY; y < h; y += stepY) {
-        for (let x = stepX; x < w; x += stepX) {
-          let d;
-          try {
-            d = ctx.getImageData(x, y, 1, 1).data;
-          } catch (_) {
-            return "tainted"; // cross-origin canvas
-          }
-          // simple rolling hash over RGB
-          hash = ((hash << 5) - hash + d[0]) | 0;
-          hash = ((hash << 5) - hash + d[1]) | 0;
-          hash = ((hash << 5) - hash + d[2]) | 0;
-        }
-      }
-      return String(hash);
-    } catch (e) {
-      return null;
-    }
-  }
-
-  function snapshotCanvasMeta() {
+  function canvasCenterViewport() {
     const c = getGameCanvas();
     if (!c) return null;
     const r = c.getBoundingClientRect();
-    const s = getComputedStyle(c);
-    const ancestors = [];
-    let cur = c.parentElement;
-    while (cur && cur !== document.body) {
-      const t = getComputedStyle(cur).transform;
-      if (t && t !== "none") ancestors.push({ sel: simpleSelector(cur), transform: t });
-      cur = cur.parentElement;
-    }
     return {
-      attrW: c.width,
-      attrH: c.height,
-      cssW: Math.round(r.width),
-      cssH: Math.round(r.height),
-      transform: s.transform,
-      ancestors: ancestors,
-      pixelHash: canvasPixelHash()
+      x: r.left + r.width / 2,
+      y: r.top + r.height / 2,
+      w: r.width,
+      h: r.height
     };
   }
 
-  function diffSnapshots(before, after) {
-    if (!before || !after) return { changed: false, reason: "missing snapshot" };
-    const fields = ["attrW", "attrH", "cssW", "cssH", "transform", "pixelHash"];
-    const changes = [];
-    for (const f of fields) {
-      if (before[f] !== after[f]) changes.push({ field: f, before: before[f], after: after[f] });
-    }
-    const beforeAnc = JSON.stringify(before.ancestors);
-    const afterAnc = JSON.stringify(after.ancestors);
-    if (beforeAnc !== afterAnc) changes.push({ field: "ancestors", before: before.ancestors, after: after.ancestors });
-    return { changed: changes.length > 0, changes };
-  }
-
-  // ---------- calibration state from panel inputs ----------
-  function getCalibration() {
-    const deltaInput = document.getElementById("zoomTestDelta");
-    const countInput = document.getElementById("zoomTestCount");
-    const delta = deltaInput && Number(deltaInput.value) ? Number(deltaInput.value) : 120;
-    const count = countInput && Number(countInput.value) ? Number(countInput.value) : 1;
-    return {
-      // AI CHANGED: Clamp to safe ranges so user typos don't fire 100k events.
-      deltaY: Math.max(1, Math.min(2000, Math.abs(delta))),
-      count: Math.max(1, Math.min(200, Math.floor(count)))
-    };
-  }
-
-  // ---------- wheel approaches ----------
+  // ---------- max zoom out ----------
   function dispatchWheel(target, opts) {
     const ev = new WheelEvent("wheel", Object.assign({
       bubbles: true,
@@ -165,226 +74,167 @@
     return target.dispatchEvent(ev);
   }
 
-  async function tryWheel(direction, count, ctrl, deltaMagnitude) {
-    const dir = direction === "out" ? "out" : "in";
-    const cal = getCalibration();
-    const n = typeof count === "number" && count > 0 ? count : cal.count;
-    const dY = (typeof deltaMagnitude === "number" && deltaMagnitude > 0 ? deltaMagnitude : cal.deltaY) * (dir === "in" ? -1 : 1);
-    const useCtrl = !!ctrl;
+  function zoomOutMax(steps) {
+    const n = typeof steps === "number" && steps > 0 ? steps : 40;
     const canvas = getGameCanvas();
     if (!canvas) {
-      warn("wheel: no canvas found");
-      return { ok: false, reason: "no_canvas" };
+      warn("zoomOutMax: no canvas");
+      return false;
     }
-    const center = elementCenter(canvas);
-    const before = snapshotCanvasMeta();
-    log(`wheel${useCtrl ? "+ctrl" : ""}: ${dir} count=${n} deltaY=${dY} at (${Math.round(center.x)}, ${Math.round(center.y)})`);
+    const center = canvasCenterViewport();
+    log(`zoomOutMax: dispatching wheel out x${n} at`, center);
     for (let i = 0; i < n; i++) {
       dispatchWheel(canvas, {
-        deltaY: dY,
+        deltaY: 120,
         clientX: center.x,
         clientY: center.y,
-        ctrlKey: useCtrl
+        ctrlKey: false
       });
     }
-    return await waitAndDiff("wheel", before);
+    return true;
   }
 
-  // ---------- keyboard approach ----------
-  function keyToCode(k) {
-    const map = {
-      "+": "Equal",
-      "=": "Equal",
-      "-": "Minus",
-      _: "Minus"
-    };
-    return map[k] || (k.length === 1 ? `Key${k.toUpperCase()}` : k);
+  // ---------- step state ----------
+  let currentStep = DEFAULT_STEP;
+  function clampStep(v) {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return currentStep;
+    return Math.max(STEP_MIN, Math.min(STEP_MAX, Math.round(n)));
+  }
+  function setStep(v) {
+    currentStep = clampStep(v);
+    const slider = document.getElementById(SLIDER_ID);
+    const number = document.getElementById(NUMBER_ID);
+    if (slider) slider.value = String(currentStep);
+    if (number) number.value = String(currentStep);
+    updateOverlay();
+    return currentStep;
   }
 
-  async function tryKey(key, count) {
-    const cal = getCalibration();
-    const n = typeof count === "number" && count > 0 ? count : cal.count;
-    const before = snapshotCanvasMeta();
-    log(`key: "${key}" count=${n}`);
-    for (let i = 0; i < n; i++) {
-      const init = {
-        bubbles: true,
-        cancelable: true,
-        key: key,
-        code: keyToCode(key)
-      };
-      const down = new KeyboardEvent("keydown", init);
-      const up = new KeyboardEvent("keyup", init);
-      document.dispatchEvent(down);
-      window.dispatchEvent(down);
-      const canvas = getGameCanvas();
-      if (canvas) canvas.dispatchEvent(down);
-      document.dispatchEvent(up);
-      window.dispatchEvent(up);
-      if (canvas) canvas.dispatchEvent(up);
-    }
-    return await waitAndDiff("key", before);
-  }
+  // ---------- SVG overlay ----------
+  function ensureOverlay() {
+    let svg = document.getElementById(OVERLAY_ID);
+    if (svg) return svg;
 
-  // ---------- in-game zoom button discovery ----------
-  function findZoomButtons() {
-    const candidates = [];
-    const all = Array.from(document.querySelectorAll(
-      "app-icon, app-button-icon, button, [role='button'], div, span"
-    ));
-    for (const el of all) {
-      if (!el || !el.tagName) continue;
-      // AI CHANGED: Hard skip any element belonging to our own tester panel.
-      if (isInsideTesterPanel(el)) continue;
-
-      const cls = classListString(el);
-      const text = (el.textContent || "").trim();
-      const titleAttr = el.getAttribute && el.getAttribute("title");
-      const ariaLabel = el.getAttribute && el.getAttribute("aria-label");
-      let iconStyle = "";
-      try {
-        const tuiIcon = el.querySelector ? el.querySelector("tui-icon[data-icon]") : null;
-        if (tuiIcon) iconStyle = tuiIcon.style.cssText || "";
-      } catch (_) {}
-      const hay = `${cls} ${text} ${titleAttr || ""} ${ariaLabel || ""} ${iconStyle}`.toLowerCase();
-
-      const looksZoom = (
-        hay.includes("zoom") ||
-        hay.includes("magnify") ||
-        hay.includes("scale-up") ||
-        hay.includes("scale-down") ||
-        hay.includes("plus") ||
-        hay.includes("minus") ||
-        hay.includes("camera-up") ||
-        hay.includes("camera-down")
-      );
-      if (!looksZoom) continue;
-
-      const r = el.getBoundingClientRect();
-      candidates.push({
-        tag: el.tagName.toLowerCase(),
-        cls: cls,
-        text: text.slice(0, 60),
-        title: titleAttr || "",
-        aria: ariaLabel || "",
-        icon: iconStyle.slice(0, 80),
-        x: Math.round(r.x),
-        y: Math.round(r.y),
-        w: Math.round(r.width),
-        h: Math.round(r.height),
-        visible: isVisible(el),
-        el: el
-      });
-    }
-    log(`zoom-button candidates: ${candidates.length}`);
-    if (candidates.length) {
-      console.table(candidates.map((c) => ({
-        tag: c.tag,
-        cls: c.cls,
-        text: c.text,
-        title: c.title,
-        aria: c.aria,
-        icon: c.icon,
-        x: c.x, y: c.y, w: c.w, h: c.h,
-        visible: c.visible
-      })));
-    }
-    return candidates;
-  }
-
-  async function clickFirstMatching(predicate, label) {
-    const list = findZoomButtons().filter((c) => c.visible).filter(predicate);
-    if (!list.length) {
-      warn(`${label}: no visible button matched`);
-      return { ok: false, reason: "no_match" };
-    }
-    const before = snapshotCanvasMeta();
-    log(`${label}: clicking`, {
-      tag: list[0].tag, cls: list[0].cls, text: list[0].text, x: list[0].x, y: list[0].y
+    svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.id = OVERLAY_ID;
+    Object.assign(svg.style, {
+      position: "fixed",
+      left: "0",
+      top: "0",
+      width: "100vw",
+      height: "100vh",
+      zIndex: "999998",
+      pointerEvents: "none"
     });
-    list[0].el.click();
-    return await waitAndDiff(label, before);
+    svg.setAttribute("width", String(window.innerWidth));
+    svg.setAttribute("height", String(window.innerHeight));
+    svg.setAttribute("viewBox", `0 0 ${window.innerWidth} ${window.innerHeight}`);
+
+    // Crosshair group + ring group are filled in by updateOverlay()
+    const center = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    center.id = "zoomTestCenter";
+    svg.appendChild(center);
+
+    const ring = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    ring.id = "zoomTestRing";
+    svg.appendChild(ring);
+
+    document.body.appendChild(svg);
+    return svg;
   }
 
-  function clickInGameZoomIn() {
-    return clickFirstMatching(
-      (c) => /(zoom.*in|plus|scale-up|magnify\+|camera-up)/i.test(`${c.cls} ${c.text} ${c.title} ${c.aria} ${c.icon}`),
-      "ui-zoom-in"
-    );
-  }
-  function clickInGameZoomOut() {
-    return clickFirstMatching(
-      (c) => /(zoom.*out|minus|scale-down|magnify-|camera-down)/i.test(`${c.cls} ${c.text} ${c.title} ${c.aria} ${c.icon}`),
-      "ui-zoom-out"
-    );
+  function clearGroup(g) {
+    while (g.firstChild) g.removeChild(g.firstChild);
   }
 
-  // ---------- canvas / transform inspection ----------
-  function inspectCanvas() {
-    const c = getGameCanvas();
-    if (!c) {
-      warn("no canvas");
-      return null;
+  function lineEl(x1, y1, x2, y2, color) {
+    const l = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    l.setAttribute("x1", String(x1));
+    l.setAttribute("y1", String(y1));
+    l.setAttribute("x2", String(x2));
+    l.setAttribute("y2", String(y2));
+    l.setAttribute("stroke", color);
+    l.setAttribute("stroke-width", "2");
+    l.setAttribute("stroke-linecap", "round");
+    return l;
+  }
+
+  function circleEl(cx, cy, r, fill) {
+    const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    c.setAttribute("cx", String(cx));
+    c.setAttribute("cy", String(cy));
+    c.setAttribute("r", String(r));
+    c.setAttribute("fill", fill);
+    c.setAttribute("stroke", "#000");
+    c.setAttribute("stroke-width", "1");
+    return c;
+  }
+
+  function textEl(x, y, str, color) {
+    const t = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    t.setAttribute("x", String(x));
+    t.setAttribute("y", String(y));
+    t.setAttribute("fill", color);
+    t.setAttribute("font-family", "monospace");
+    t.setAttribute("font-size", "12");
+    t.setAttribute("font-weight", "bold");
+    t.setAttribute("paint-order", "stroke");
+    t.setAttribute("stroke", "#000");
+    t.setAttribute("stroke-width", "3");
+    t.textContent = str;
+    return t;
+  }
+
+  function updateOverlay() {
+    const svg = ensureOverlay();
+    svg.setAttribute("width", String(window.innerWidth));
+    svg.setAttribute("height", String(window.innerHeight));
+    svg.setAttribute("viewBox", `0 0 ${window.innerWidth} ${window.innerHeight}`);
+
+    const centerG = svg.querySelector("#zoomTestCenter");
+    const ringG = svg.querySelector("#zoomTestRing");
+    if (!centerG || !ringG) return;
+    clearGroup(centerG);
+    clearGroup(ringG);
+
+    const center = canvasCenterViewport();
+    if (!center) return;
+
+    // Crosshair at canvas center.
+    centerG.appendChild(lineEl(center.x - 8, center.y, center.x + 8, center.y, "#ffea00"));
+    centerG.appendChild(lineEl(center.x, center.y - 8, center.x, center.y + 8, "#ffea00"));
+    centerG.appendChild(circleEl(center.x, center.y, 3, "#ffea00"));
+
+    // Hex ring.
+    const step = currentStep;
+    const h = Math.round(step * HEX_V);
+    for (let i = 0; i < HEX_DIRS.length; i++) {
+      const d = HEX_DIRS[i];
+      const dx = Math.round(d.sx * step);
+      // AI CHANGED: Use the same vertical magnitude as the bot (round(step * 0.86)) so the visual matches click targets.
+      const dy = d.sy === 0 ? 0 : (d.sy > 0 ? +h : -h);
+      const x = center.x + dx;
+      const y = center.y + dy;
+
+      ringG.appendChild(lineEl(center.x, center.y, x, y, "#00e0ff"));
+      ringG.appendChild(circleEl(x, y, 6, "#00e0ff"));
+      // Label slightly outward from the dot.
+      const lx = x + (d.sx >= 0 ? 8 : -8);
+      const ly = y + (d.sy >= 0 ? 14 : -8);
+      const anchor = d.sx >= 0 ? "start" : "end";
+      const label = textEl(lx, ly, d.key, "#ffffff");
+      label.setAttribute("text-anchor", anchor);
+      ringG.appendChild(label);
     }
-    const snap = snapshotCanvasMeta();
-    const r = c.getBoundingClientRect();
-    const info = {
-      element: c,
-      attrSize: { w: c.width, h: c.height },
-      cssSize: { w: Math.round(r.width), h: Math.round(r.height) },
-      pxRatio: window.devicePixelRatio,
-      transform: snap.transform,
-      ancestorTransforms: snap.ancestors,
-      pixelHash: snap.pixelHash
-    };
-    log("canvas inspect:", info);
-    if (info.ancestorTransforms.length) console.table(info.ancestorTransforms);
-    return info;
+
+    // Step readout near the crosshair.
+    const readout = textEl(center.x + 12, center.y - 12, `step=${step}px h=${h}px`, "#ffea00");
+    readout.setAttribute("text-anchor", "start");
+    centerG.appendChild(readout);
   }
 
-  // ---------- async diff helper ----------
-  function waitAndDiff(label, beforeSnap, waitMs) {
-    const ms = typeof waitMs === "number" ? waitMs : 250;
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        const after = snapshotCanvasMeta();
-        const diff = diffSnapshots(beforeSnap, after);
-        // AI CHANGED: Pixel-hash change is the real signal; DOM-only diff doesn't apply to canvas-rendered zoom.
-        const pixelChanged = pixelHashChanged(beforeSnap, after);
-        if (diff.changed) {
-          log(`${label}: change detected`, diff.changes.map((c) => c.field));
-        } else if (pixelChanged) {
-          log(`${label}: canvas pixels changed (likely zoom/redraw)`);
-        } else {
-          log(`${label}: dispatched, no detectable diff (visual confirmation needed)`);
-        }
-        resolve({ ok: true, label: label, changed: diff.changed || pixelChanged, changes: diff.changes, after: after });
-      }, ms);
-    });
-  }
-  // AI CHANGED: Pixel-hash compare helper kept separate so waitAndDiff stays readable.
-  function pixelHashChanged(b, a) {
-    return !!(b && a && b.pixelHash !== a.pixelHash && b.pixelHash !== "tainted" && a.pixelHash !== "tainted");
-  }
-
-  // ---------- preset bursts ----------
-  async function zoomOutMax(steps) {
-    const n = typeof steps === "number" && steps > 0 ? steps : 40;
-    log(`preset: zoomOutMax x${n}`);
-    return await tryWheel("out", n, false, 120);
-  }
-  async function zoomInMax(steps) {
-    const n = typeof steps === "number" && steps > 0 ? steps : 40;
-    log(`preset: zoomInMax x${n}`);
-    return await tryWheel("in", n, false, 120);
-  }
-  async function singleStep(direction) {
-    const dir = direction === "out" ? "out" : "in";
-    log(`preset: singleStep ${dir} (using current calibration)`);
-    return await tryWheel(dir, 1, false);
-  }
-
-  // ---------- floating panel ----------
+  // ---------- panel ----------
   function makePanel() {
     if (document.getElementById(PANEL_ID)) return;
 
@@ -401,123 +251,86 @@
       font: "12px monospace",
       borderRadius: "6px",
       border: "1px solid #555",
-      maxWidth: "280px",
-      pointerEvents: "auto"
+      maxWidth: "260px"
     });
 
     p.innerHTML = `
-      <div style="font-weight:bold;margin-bottom:6px;color:#9cf">Zoom Tester v0.2</div>
-      <div style="margin-bottom:4px">
-        <label>Δ deltaY <input id="zoomTestDelta" type="number" value="120" min="1" max="2000" style="width:60px"></label>
-        <label>count <input id="zoomTestCount" type="number" value="1" min="1" max="200" style="width:50px"></label>
+      <div style="font-weight:bold;margin-bottom:6px;color:#9cf">Scan Calibrator v0.3</div>
+      <button id="zoomTestMaxOut" style="
+        margin:2px 0;
+        padding:6px 10px;
+        background:#222;
+        color:#fff;
+        border:1px solid #555;
+        border-radius:3px;
+        cursor:pointer;
+        font:11px monospace;
+        width:100%;
+      ">MAX ZOOM OUT</button>
+      <div style="margin-top:8px">
+        <div style="margin-bottom:2px">scan step (px)</div>
+        <input id="${SLIDER_ID}" type="range" min="${STEP_MIN}" max="${STEP_MAX}" value="${DEFAULT_STEP}" style="width:170px;vertical-align:middle">
+        <input id="${NUMBER_ID}" type="number" min="${STEP_MIN}" max="${STEP_MAX}" value="${DEFAULT_STEP}" style="width:55px;margin-left:4px">
       </div>
-      <div>
-        <button data-act="single-in">Single In</button>
-        <button data-act="single-out">Single Out</button>
-      </div>
-      <div>
-        <button data-act="wheel-in">Wheel In (×count)</button>
-        <button data-act="wheel-out">Wheel Out (×count)</button>
-      </div>
-      <div>
-        <button data-act="wheel-ctrl-in">Ctrl+Wheel In</button>
-        <button data-act="wheel-ctrl-out">Ctrl+Wheel Out</button>
-      </div>
-      <div>
-        <button data-act="key-plus">Key +</button>
-        <button data-act="key-minus">Key -</button>
-        <button data-act="key-equal">Key =</button>
-      </div>
-      <div>
-        <button data-act="ui-plus">UI +</button>
-        <button data-act="ui-minus">UI -</button>
-      </div>
-      <div style="margin-top:4px;border-top:1px solid #444;padding-top:4px">
-        <button data-act="preset-out">Zoom Out 40×</button>
-        <button data-act="preset-in">Zoom In 40×</button>
-      </div>
-      <div>
-        <button data-act="find">Find buttons</button>
-        <button data-act="canvas">Canvas info</button>
-      </div>
-      <div id="zoomTestStatus" style="margin-top:6px;font-size:11px;color:#9cf;min-height:14px"></div>
+      <div style="margin-top:6px;font-size:11px;color:#9cf" id="zoomTestStatus">step=${DEFAULT_STEP}, h=${Math.round(DEFAULT_STEP * HEX_V)}</div>
     `;
 
-    Array.from(p.querySelectorAll("button")).forEach((b) => {
-      Object.assign(b.style, {
-        margin: "2px 2px",
-        padding: "3px 6px",
-        background: "#222",
-        color: "#fff",
-        border: "1px solid #555",
-        borderRadius: "3px",
-        cursor: "pointer",
-        font: "11px monospace"
-      });
+    document.body.appendChild(p);
+
+    document.getElementById("zoomTestMaxOut").addEventListener("click", () => {
+      zoomOutMax();
+      // AI CHANGED: Refresh overlay shortly after; the canvas rect can shift if the engine rescales the visible viewport.
+      setTimeout(updateOverlay, 300);
     });
 
-    function setStatus(txt) {
-      const s = document.getElementById("zoomTestStatus");
-      if (s) s.textContent = txt;
+    const slider = document.getElementById(SLIDER_ID);
+    const number = document.getElementById(NUMBER_ID);
+    const status = document.getElementById("zoomTestStatus");
+
+    function reflect() {
+      const h = Math.round(currentStep * HEX_V);
+      if (status) status.textContent = `step=${currentStep}, h=${h}`;
     }
 
-    p.addEventListener("click", async (e) => {
-      const t = e.target;
-      if (!(t instanceof HTMLButtonElement)) return;
-      const act = t.dataset.act;
-      let res = null;
-      try {
-        switch (act) {
-          case "single-in":      res = await singleStep("in"); break;
-          case "single-out":     res = await singleStep("out"); break;
-          case "wheel-in":       res = await tryWheel("in", undefined, false); break;
-          case "wheel-out":      res = await tryWheel("out", undefined, false); break;
-          case "wheel-ctrl-in":  res = await tryWheel("in", undefined, true); break;
-          case "wheel-ctrl-out": res = await tryWheel("out", undefined, true); break;
-          case "key-plus":       res = await tryKey("+"); break;
-          case "key-minus":      res = await tryKey("-"); break;
-          case "key-equal":      res = await tryKey("="); break;
-          case "ui-plus":        res = await clickInGameZoomIn(); break;
-          case "ui-minus":       res = await clickInGameZoomOut(); break;
-          case "preset-out":     res = await zoomOutMax(); break;
-          case "preset-in":      res = await zoomInMax(); break;
-          case "find":           findZoomButtons(); res = { changed: false, label: "find" }; break;
-          case "canvas":         inspectCanvas(); res = { changed: false, label: "canvas" }; break;
-        }
-        if (res && typeof res.changed === "boolean") {
-          setStatus(`${act}: ${res.changed ? "CHANGED" : "dispatched"}`);
-        } else {
-          setStatus(`${act}: see console`);
-        }
-      } catch (err) {
-        warn("button error", err);
-        setStatus(`${act}: error (see console)`);
-      }
+    slider.addEventListener("input", () => {
+      setStep(slider.value);
+      reflect();
+    });
+    number.addEventListener("input", () => {
+      setStep(number.value);
+      reflect();
     });
 
-    document.body.appendChild(p);
-    log("panel attached at top-right (v0.2)");
+    log("panel attached");
+  }
+
+  // ---------- continuous overlay refresh ----------
+  function startOverlayLoop() {
+    function tick() {
+      updateOverlay();
+      requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+    window.addEventListener("resize", updateOverlay);
+    window.addEventListener("scroll", updateOverlay, true);
   }
 
   // ---------- public API ----------
   window.zoomTest = {
-    wheel: (dir, count, deltaMagnitude) => tryWheel(dir, count, false, deltaMagnitude),
-    wheelCtrl: (dir, count, deltaMagnitude) => tryWheel(dir, count, true, deltaMagnitude),
-    key: tryKey,
-    singleStep: singleStep,
     zoomOutMax: zoomOutMax,
-    zoomInMax: zoomInMax,
-    findZoomButtons: findZoomButtons,
-    clickInGameZoomIn: clickInGameZoomIn,
-    clickInGameZoomOut: clickInGameZoomOut,
-    inspectCanvas: inspectCanvas,
-    snapshot: snapshotCanvasMeta,
-    pixelHash: canvasPixelHash
+    setStep: setStep,
+    getStep: () => currentStep,
+    refreshOverlay: updateOverlay
   };
 
   function start() {
-    log("zoom tester v0.2 loaded. Use the panel (top-right) or window.zoomTest.* in console.");
-    setTimeout(makePanel, 1500);
+    log("scan calibrator v0.3 loaded. Use the panel (top-right). API: window.zoomTest.{zoomOutMax,setStep,getStep,refreshOverlay}.");
+    setTimeout(() => {
+      makePanel();
+      ensureOverlay();
+      updateOverlay();
+      startOverlayLoop();
+    }, 1500);
   }
 
   if (document.readyState === "loading") {

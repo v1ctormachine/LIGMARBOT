@@ -54,8 +54,14 @@ Design principles:
 
 ### Companion test scripts
 
-- **`bot/zoom-tester.user.js`** — standalone Tampermonkey userscript installed alongside the bot to probe programmatic zoom on the in-game map. Has its own floating panel (top-right) with calibration inputs (`Δ deltaY`, `count`), single-step buttons, preset bursts (`Zoom Out 40×`, `Zoom In 40×`), keyboard tries, and an in-game zoom button auto-finder. Exposes a `window.zoomTest.*` console API. Independent of the bot — installable/removable at any time without touching `bot/bot.user.js`.
-- **Detection note**: the game renders zoom by repainting the map **canvas pixels**, not by changing CSS transforms. The tester's `waitAndDiff` therefore relies on a **canvas pixel hash** sampled before/after each input rather than on DOM-level diffing.
+- **`bot/zoom-tester.user.js`** (currently a **scan calibrator**) — standalone Tampermonkey userscript installed alongside the bot. After the wheel-zoom investigation succeeded, this script was stripped down to a focused calibration tool:
+  - **`MAX ZOOM OUT`** button — fires 40× wheel-out events (`deltaY=120`) at the canvas center to lock the map at minimum zoom, the bot's intended scanning condition.
+  - **`scan step (px)` slider + number input** (range 10–200, default 45) — represents `Config.movement.neighborStepPx` exactly, so what's drawn on screen matches what `scanNeighborRing()` will click.
+  - **SVG overlay** (`pointer-events: none`, full viewport) — draws a yellow crosshair at the canvas center plus six cyan dots/lines at the hex offsets `TR (+s/2,-h)`, `R (+s,0)`, `BR (+s/2,+h)`, `BL (-s/2,+h)`, `L (-s,0)`, `TL (-s/2,-h)` where `h = round(s * 0.86)`. Direction labels are drawn next to each dot. Refreshed via `requestAnimationFrame` plus `resize`/`scroll` listeners so the markers track the canvas during reflows.
+  - **Console API:** `window.zoomTest.zoomOutMax()`, `.setStep(n)`, `.getStep()`, `.refreshOverlay()`.
+  - Independent of the bot — installable/removable at any time without touching `bot/bot.user.js`.
+- **Calibration workflow:** click `MAX ZOOM OUT` → drag the slider until the six cyan dots sit on the centers of the six neighboring hex tiles → record the resulting step value. That number becomes the new `Config.movement.neighborStepPx`.
+- **Note on detection:** earlier versions of the tester tried to confirm zoom programmatically via canvas pixel-hash diffing. That code was removed once wheel-zoom was visually confirmed to work; the calibrator trusts the user's eye.
 
 ### Investigations (state of the art so far)
 
