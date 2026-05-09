@@ -48,6 +48,74 @@
     return clickElementSafe(buttons[slotIndex], "action-slot-" + slotIndex);
   }
 
+  // AI CHANGED: Phase C4 slice 11 — best-effort live cooldown read for planner (tooltip CD alone is not enough).
+  function isActionBarSlotShowingCooldown(slotIndex) {
+    const bar = document.querySelector(Config.selectors.actionBar);
+    if (!bar) {
+      return false;
+    }
+    const buttons = bar.querySelectorAll("app-action-button");
+    const n = buttons ? buttons.length : 0;
+    if (typeof slotIndex !== "number" || slotIndex < 0 || slotIndex >= n) {
+      return false;
+    }
+    const el = buttons[slotIndex];
+    if (!el) {
+      return false;
+    }
+    if (el.hasAttribute("disabled")) {
+      return true;
+    }
+    const aria = (el.getAttribute("aria-disabled") || "").toLowerCase();
+    if (aria === "true") {
+      return true;
+    }
+    const clsFull = (el.className || "").toString().toLowerCase();
+    for (let i = 0; i < el.classList.length; i += 1) {
+      const token = el.classList[i].toLowerCase();
+      if (
+        token === "disabled" ||
+        token.indexOf("cooldown") >= 0 ||
+        token.indexOf("inactive") >= 0 ||
+        token.indexOf("not-ready") >= 0 ||
+        token.indexOf("notready") >= 0 ||
+        token.indexOf("locked") >= 0 ||
+        token.indexOf("unavailable") >= 0
+      ) {
+        return true;
+      }
+    }
+    if (clsFull.includes("type-skill")) {
+      try {
+        const st = window.getComputedStyle(el);
+        if (st.pointerEvents === "none") {
+          return true;
+        }
+      } catch (err) {
+        // ignore
+      }
+    }
+    const nested = el.querySelector(
+      ".cooldown-progress, .skill-cooldown, [class*='cooldown'], [class*='cd-'], .action-blocked"
+    );
+    if (nested && isElementVisible(nested)) {
+      const nc = (nested.className || "").toString().toLowerCase();
+      if (nc.indexOf("cooldown") >= 0 || nc.indexOf("cd") >= 0 || nc.indexOf("blocked") >= 0) {
+        return true;
+      }
+    }
+    const rawText = (el.textContent || "").replace(/\s+/g, " ").trim();
+    if (rawText.length >= 1 && rawText.length <= 8) {
+      if (/^\d{1,3}(\.\d)?s$/i.test(rawText)) {
+        return true;
+      }
+      if (/^\d{1,2}:\d{2}$/.test(rawText)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   // AI CHANGED: Added adaptive basic-attack clicker using optional selector and fallback text search.
   function clickBasicAttack() {
     if (Config.selectors.basicAttackButton) {

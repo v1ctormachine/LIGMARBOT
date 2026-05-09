@@ -1,5 +1,6 @@
   // AI CHANGED: Phase C4 (slice 1) -- read-only paper combat math for console / future automation.
-  // Uses Runtime.hero.combatStats + Runtime.skills.slots only. Does not read live cooldowns from DOM.
+  // Uses Runtime.hero.combatStats + Runtime.skills.slots. **Slice 11:** opener path also uses
+  // isActionBarSlotShowingCooldown() so we do not click a bar slot the UI marks as on cooldown.
   // Ground truth for real fights remains observeCombatDamage (C2) + enemy DB (C3).
 
   function estimatePaperBasicAttackDps(statsOverride) {
@@ -259,7 +260,7 @@
       enemyKeyUsed: enemyKey,
       mobFactorApplied: mobFactor,
       note:
-        "Heuristic rank only — weights are guesses; live cooldowns not read from DOM. Pass enemyKey to nudge basic_proc skills using calibration ratio."
+        "Heuristic rank only — weights are guesses; opener picks also skip slots when isActionBarSlotShowingCooldown(slot) is true. Pass enemyKey to nudge basic_proc skills using calibration ratio."
     };
   }
 
@@ -406,6 +407,15 @@
           continue;
         }
         if (mpCur < mc + reserve) {
+          continue;
+        }
+      }
+      if (Config.planner.skipOpenerWhenActionBarShowsCooldown !== false) {
+        if (typeof isActionBarSlotShowingCooldown === "function" && isActionBarSlotShowingCooldown(idx)) {
+          Logger.log("PLANNER", "Skipping ranked skill slot (live cooldown / blocked hint on action bar)", {
+            slot: idx,
+            name: s.name || ""
+          });
           continue;
         }
       }

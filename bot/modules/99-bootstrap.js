@@ -75,6 +75,7 @@
       clearSecondRingOverlay: clearSecondRingOverlay,
       clickBasicAttack: clickBasicAttack,
       clickActionBarSlot: clickActionBarSlot,
+      isActionBarSlotShowingCooldown: isActionBarSlotShowingCooldown,
       isBasicAttackConfigured: isBasicAttackConfigured,
       setBasicAttackSelector: setBasicAttackSelector,
       secureTileAndLootOnce: secureTileAndLootOnce,
