@@ -17,6 +17,8 @@
       Logger.warn("ZOOM", "ensureMapZoomedOut: map canvas not visible; skipping");
       return { ok: false, reason: "no_canvas" };
     }
+    // AI CHANGED: Surface zoom-out as live status so the GUI shows what the bot is doing.
+    setBotStatus("zooming", `max zoom-out (${Config.movement.maxZoomOutBursts} bursts)`);
     const rect = canvas.getBoundingClientRect();
     const cx = rect.left + rect.width / 2;
     const cy = rect.top + rect.height / 2;
@@ -119,6 +121,8 @@
 
   // AI CHANGED: Added clockwise 1-ring scan (TR -> TL) using popup counters/icons instead of visual guessing.
   async function scanNeighborRing() {
+    // AI CHANGED: Surface scan as live status for the GUI.
+    setBotStatus("scanning", "ring scan: 6 neighbor tiles");
     // AI CHANGED: Prevent scan start while avatar is still moving.
     await waitUntilNotMoving("scan-start");
     const opened = await ensureMapOpen();
@@ -479,6 +483,8 @@
       return { ok: false, skipped: true, reason: "no_walkable_neighbor", scan: scan };
     }
     const center = getMapCenterClientPoint();
+    // AI CHANGED: Surface move as live status for the GUI.
+    setBotStatus("moving", `to ${target.key} (enemies=${target.enemies}, allies=${target.allies})`);
     // AI CHANGED: Move to selected scan target using double-click movement, not single scan click.
     const moved = center ? moveToMapPoint(center.x + target.dx, center.y + target.dy) : false;
     if (!moved) {
@@ -488,6 +494,8 @@
     await sleep(Config.movement.settleAfterMoveMs);
     // AI CHANGED: Keep a single post-move gate before verification; loop entry has its own movement guard.
     await waitUntilNotMoving("post-move");
+    // AI CHANGED: Surface verify as live status.
+    setBotStatus("verifying", `coords change after move to ${target.key}`);
     let verify = await verifyMoveByCoordinates();
     // AI CHANGED: If verify just initialized baseline, run one immediate follow-up verify before deciding.
     if (verify.initialized) {

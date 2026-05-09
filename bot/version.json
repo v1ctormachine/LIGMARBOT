@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.2.1",
-    "description":  "Add local-file loader workflow + GUI version display",
-    "builtAt":  "2026-05-09T13:10:05.1869417+03:00",
+    "version":  "0.2.2",
+    "description":  "Cleaner GUI: ON/OFF only + live activity phase indicator",
+    "builtAt":  "2026-05-09T13:29:54.5130086+03:00",
     "history":  [
+                    {
+                        "version":  "0.2.2",
+                        "description":  "Cleaner GUI: ON/OFF only + live activity phase indicator",
+                        "date":  "2026-05-09T13:29:54.5130086+03:00"
+                    },
                     {
                         "version":  "0.2.1",
                         "description":  "Add local-file loader workflow + GUI version display",

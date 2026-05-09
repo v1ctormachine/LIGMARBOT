@@ -125,6 +125,17 @@
     canvas.dispatchEvent(event);
   }
 
+  // AI CHANGED: Single funnel for bot phase changes. Updates Runtime.status and emits a structured log.
+  // Call from action-path boundaries (start/stop of major operations), not from inner atoms.
+  function setBotStatus(phase, detail) {
+    const safePhase = typeof phase === "string" && phase.trim() ? phase.trim() : "idle";
+    const safeDetail = typeof detail === "string" ? detail : "";
+    Runtime.status.phase = safePhase;
+    Runtime.status.detail = safeDetail;
+    Runtime.status.since = Date.now();
+    Logger.log("STATUS", `${safePhase}${safeDetail ? " — " + safeDetail : ""}`);
+  }
+
   // AI CHANGED: Added parser for coordinate popup text like "[2;2]".
   function parseCoordsText(text) {
     if (typeof text !== "string") {

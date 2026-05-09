@@ -49,6 +49,8 @@
       return { ok: false, stage: "precheck", reason: "enemy_count_unavailable" };
     }
 
+    // AI CHANGED: Surface secure-tile preparation as live status.
+    setBotStatus("preparing", `secure-tile cycle (enemies=${startState.combat.enemyCount})`);
     Logger.log("LOOP", "Secure-tile cycle started", { enemyCount: startState.combat.enemyCount });
     // AI CHANGED: Ensure popup is closed before combat/find actions so attack control is not obscured.
     closeHexPopupIfOpen();
@@ -59,6 +61,8 @@
     let findAttempts = 0;
     while (current.combat.enemyCount > 0 && findAttempts < Config.combat.maxFindEnemyAttempts) {
       findAttempts += 1;
+      // AI CHANGED: Surface find-enemy as live status.
+      setBotStatus("finding", `attempt ${findAttempts}/${Config.combat.maxFindEnemyAttempts} (enemies=${current.combat.enemyCount})`);
       Logger.log("LOOP", "Find-enemy attempt", { attempt: findAttempts, enemyCount: current.combat.enemyCount });
 
       const findResult = await clickFindEnemyVerified();
@@ -81,6 +85,8 @@
         break;
       }
 
+      // AI CHANGED: Surface attack as live status.
+      setBotStatus("attacking", `engaging target (remaining=${current.combat.enemyCount})`);
       const beforeAttack = readBasicState();
       const attackProgressed = await attackUntilProgress(beforeAttack);
       if (!attackProgressed) {
@@ -102,6 +108,8 @@
       return { ok: false, stage: "combat", enemyCount: current.combat.enemyCount, attempts: findAttempts };
     }
 
+    // AI CHANGED: Surface loot as live status (clickLootOrActivateVerified internally handles "no loot" no-op).
+    setBotStatus("looting", "collecting loot / activating event");
     const lootResult = await clickLootOrActivateVerified();
     if (!lootResult.ok) {
       Logger.warn("LOOP", "Loot verification failed", lootResult);
@@ -186,12 +194,16 @@
     Runtime.autoFarm.lastResult = null;
     Runtime.autoFarm.startedAt = Date.now();
 
+    // AI CHANGED: Surface loop start as live status.
+    setBotStatus("starting", `auto-farm loop (delay=${Config.farmLoop.cycleDelayMs}ms)`);
     Logger.log("AUTO", "Auto-farm loop started", {
       cycleDelayMs: Config.farmLoop.cycleDelayMs,
       maxConsecutiveFailures: Config.farmLoop.maxConsecutiveFailures
     });
 
     while (Runtime.autoFarm.running && !Runtime.autoFarm.stopRequested) {
+      // AI CHANGED: Surface waiting-for-settle as live status.
+      setBotStatus("waiting", "movement settle gate");
       // AI CHANGED: Block new cycle start until movement bar clears to avoid scan-vs-move overlap.
       await waitUntilNotMoving("auto-loop");
       const cycleResult = await runPreparedSecureCycle();
@@ -217,6 +229,8 @@
         Logger.warn("AUTO", "Auto-farm loop stopped after repeated failures", {
           consecutiveFailures: Runtime.autoFarm.consecutiveFailures
         });
+        // AI CHANGED: Surface halt-on-failures as live status.
+        setBotStatus("halted", `${Runtime.autoFarm.consecutiveFailures} consecutive failures`);
         Runtime.autoFarm.stopRequested = true;
         break;
       }
@@ -242,6 +256,8 @@
             await sleep(Config.farmLoop.cycleDelayMs);
             continue;
           }
+          // AI CHANGED: Surface idle-backoff as live status.
+          setBotStatus("idle", `no walkable neighbor (${moveResult.reason}); backing off`);
           Logger.log("AUTO", "Idle backoff delay applied", {
             delayMs: Config.farmLoop.idleNoEnemyDelayMs,
             reason: moveResult.reason
@@ -254,6 +270,10 @@
     }
 
     Runtime.autoFarm.running = false;
+    // AI CHANGED: Only set "stopped" if we weren't already halted by failures.
+    if (Runtime.status.phase !== "halted") {
+      setBotStatus("stopped", `${Runtime.autoFarm.cyclesCompleted} cycles completed`);
+    }
     const finalStatus = getAutoFarmStatus();
     Logger.log("AUTO", "Auto-farm loop exited", finalStatus);
     return { ok: true, status: finalStatus };
