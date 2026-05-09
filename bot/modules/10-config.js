@@ -92,6 +92,9 @@
       // AI CHANGED: Faster poll cadence 95 -> 40 ms so walkable tiles are confirmed on the first/second
       // poll instead of waiting one full 95ms tick. Cheap; runs only during the 6-tile ring scan.
       pollMs: 40,
+      // AI CHANGED: Phase C4 slice 14 — if coord change times out, re-click same neighbor once after short settle (slow popup).
+      tileCoordVerifyRetries: 1,
+      tileRetrySettleMs: 90,
       // AI CHANGED: 2-ring visual scan settings — used by scanSecondRingForColor / yellow-die detection.
       // Yellow die marks a tile with unknown loot 2 hops away. We sample a hex-shaped patch at each of 12
       // 2-ring tile centers and count pixels matching the die's signature color #f0b80c.

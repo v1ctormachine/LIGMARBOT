@@ -180,7 +180,7 @@
         continue;
       }
       // AI CHANGED: Wait for coordinate change from previously selected tile, not just popup visibility.
-      const coordsChangedInTime = await waitForCondition(
+      let coordsChangedInTime = await waitForCondition(
         `scan ${point.key} coords change`,
         () => {
           const c = readCurrentCoordsFromPopup();
@@ -189,6 +189,29 @@
         // AI CHANGED: Use faster polling/timeout for quicker ring scan.
         { timeoutMs: Config.scan.tileTimeoutMs, pollMs: Config.scan.pollMs }
       );
+      // AI CHANGED: slice 14 — occasional slow popup misses 220ms window; one re-click + re-wait before marking blocked.
+      const coordRetries = Number.isFinite(Config.scan.tileCoordVerifyRetries)
+        ? Config.scan.tileCoordVerifyRetries
+        : 0;
+      if (!coordsChangedInTime && coordRetries > 0) {
+        const settle = Number.isFinite(Config.scan.tileRetrySettleMs) ? Config.scan.tileRetrySettleMs : 90;
+        for (let r = 0; r < coordRetries; r += 1) {
+          await sleep(settle);
+          Logger.log("SCAN", `scan ${point.key} coords change retry`, { attempt: r + 1, max: coordRetries });
+          clickMapRelative(point.dx, point.dy);
+          coordsChangedInTime = await waitForCondition(
+            `scan ${point.key} coords change`,
+            () => {
+              const c = readCurrentCoordsFromPopup();
+              return !!(c && (c.x !== lastObservedCoords.x || c.y !== lastObservedCoords.y));
+            },
+            { timeoutMs: Config.scan.tileTimeoutMs, pollMs: Config.scan.pollMs }
+          );
+          if (coordsChangedInTime) {
+            break;
+          }
+        }
+      }
       // AI CHANGED: Classify tiles by coordinate change only, independent of popup detail parsing.
       const currentCoords = readCurrentCoordsFromPopup() || lastObservedCoords;
       const details = readTilePopupDetails();
