@@ -60,7 +60,9 @@
     cross2.setAttribute("opacity", "0.8");
     svg.appendChild(cross2);
 
-    // Per-sample box + label.
+    // AI CHANGED: Per-sample shape + label. When the scan used a hex mask we draw a hex polygon (the
+    // actual sampled area); otherwise we keep the legacy rectangle. The hex matches the in-game tile
+    // shape so the user can see exactly what we measured.
     for (let i = 0; i < snapshot.samples.length; i += 1) {
       const s = snapshot.samples[i];
       const isBest = !!(snapshot.best && snapshot.best.key === s.key);
@@ -68,19 +70,45 @@
       const stroke = s.hit ? "#4bd97a" : (s.ratio > 0 ? "#d9a14b" : "#d96f4b");
       const strokeWidth = isBest ? 2.4 : 1.2;
 
-      const r = document.createElementNS(SVG_NS, "rect");
-      r.setAttribute("x", s.viewportX);
-      r.setAttribute("y", s.viewportY);
-      r.setAttribute("width", s.patchW);
-      r.setAttribute("height", s.patchH);
-      r.setAttribute("fill", fill);
-      r.setAttribute("stroke", stroke);
-      r.setAttribute("stroke-width", strokeWidth);
-      svg.appendChild(r);
+      // AI CHANGED: Center of the patch in viewport coords -- shared by both shape and label placement.
+      const patchCenterX = s.viewportX + s.patchW / 2;
+      const patchCenterY = s.viewportY + s.patchH / 2;
+
+      let shapeNode;
+      if (s.maskShape === "hex" && Number.isFinite(s.hexRadius) && s.hexRadius > 0) {
+        // Pointy-top hex polygon: 6 vertices around the patch center.
+        const r = s.hexRadius;
+        const hx = r * (Math.sqrt(3) / 2); // half-width at flat sides
+        const points = [
+          [patchCenterX, patchCenterY - r],
+          [patchCenterX + hx, patchCenterY - r / 2],
+          [patchCenterX + hx, patchCenterY + r / 2],
+          [patchCenterX, patchCenterY + r],
+          [patchCenterX - hx, patchCenterY + r / 2],
+          [patchCenterX - hx, patchCenterY - r / 2]
+        ];
+        shapeNode = document.createElementNS(SVG_NS, "polygon");
+        shapeNode.setAttribute("points", points.map((p) => `${p[0].toFixed(2)},${p[1].toFixed(2)}`).join(" "));
+      } else {
+        shapeNode = document.createElementNS(SVG_NS, "rect");
+        shapeNode.setAttribute("x", s.viewportX);
+        shapeNode.setAttribute("y", s.viewportY);
+        shapeNode.setAttribute("width", s.patchW);
+        shapeNode.setAttribute("height", s.patchH);
+      }
+      shapeNode.setAttribute("fill", fill);
+      shapeNode.setAttribute("stroke", stroke);
+      shapeNode.setAttribute("stroke-width", strokeWidth);
+      svg.appendChild(shapeNode);
 
       const label = document.createElementNS(SVG_NS, "text");
-      label.setAttribute("x", s.viewportX + s.patchW / 2);
-      label.setAttribute("y", s.viewportY - 3);
+      label.setAttribute("x", patchCenterX);
+      // AI CHANGED: For hex shapes the top is taller than the bounding box top, so anchor the label
+      // above the hex's top vertex (patchCenterY - hexRadius - 3). Square fallback keeps original offset.
+      const labelY = (s.maskShape === "hex" && Number.isFinite(s.hexRadius))
+        ? patchCenterY - s.hexRadius - 3
+        : s.viewportY - 3;
+      label.setAttribute("y", labelY);
       label.setAttribute("text-anchor", "middle");
       label.setAttribute("font-family", "Consolas, Menlo, monospace");
       label.setAttribute("font-size", "10");

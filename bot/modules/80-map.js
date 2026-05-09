@@ -449,10 +449,14 @@
     }
 
     // AI CHANGED: If purple chest exists, do not penalize allies (steal attempt policy).
-    const alliesPenalty = lootKinds.includes("purple_chest") ? 0 : allies * 400;
+    // AI CHANGED: Ally penalty bumped 400 -> 2000 so 1 ally is "worth ~10 enemies" worth of avoidance.
+    // This stops the bot from preferring an ally-only tile over a mob-only tile when both are
+    // empty-tier walkables, and it dominates within the same loot tier (mob+ally < mob-only).
+    const alliesPenalty = lootKinds.includes("purple_chest") ? 0 : allies * 2000;
 
-    // AI CHANGED: Keep same priority tier, but prefer more mobs and fewer allies unless purple is present.
-    return base + enemies * 50 - alliesPenalty;
+    // AI CHANGED: Per-enemy bonus bumped 50 -> 200 so mob count is a meaningful tiebreak between
+    // walkable tiles in the same loot tier (e.g. 2 mobs > 1 mob > 0 mobs).
+    return base + enemies * 200 - alliesPenalty;
   }
 
   // AI CHANGED: Build the 12 second-ring tile offsets (6 corners + 6 edges) plus the 1-ring directions
@@ -529,6 +533,19 @@
     const targetB = targetColor.b;
     const tolSq = tolerance * tolerance;
 
+    // AI CHANGED: Hex-mask precomputation. The actual game tile is a pointy-top hex with circumradius
+    // r = step / sqrt(3) (~17.32 px at step=30). When useHexMask is on we test each pixel against the
+    // hex inequality and only count pixels inside the tile's hex footprint -- this stops corner pixels
+    // from leaking into neighbor tiles and gives a cleaner ratio. INV_SQRT3 and SQRT3_HALF are
+    // precomputed to avoid trig per pixel; the inequality system is:
+    //   |dy| <= r              (top/bottom point cap)
+    //   |dx| <= r * sqrt(3)/2  (left/right flat-side cap)
+    //   |dx|/sqrt(3) + |dy| <= r (slanted edges)
+    const useHexMask = cfg && cfg.useHexMask !== false;
+    const hexRadius = Config.movement.neighborStepPx / Math.sqrt(3);
+    const SQRT3_HALF = Math.sqrt(3) / 2;
+    const INV_SQRT3 = 1 / Math.sqrt(3);
+
     const samples = [];
     let drawFailures = 0;
     for (let i = 0; i < offsets.length; i += 1) {
@@ -562,20 +579,47 @@
           ok: false,
           ratio: 0,
           hit: false,
+          maskShape: useHexMask ? "hex" : "square",
           error: err && err.message ? err.message : String(err)
         });
         continue;
       }
 
+      // AI CHANGED: Walk the temp canvas pixel-by-pixel so we can skip pixels outside the hex when
+      // useHexMask is on. The temp canvas dimensions are (patchW * scaleX) x (patchH * scaleY); we
+      // convert each pixel back to CSS-space offset from the patch center and apply the hex test.
       let matchCount = 0;
-      const totalPixels = pixels.length / 4;
-      for (let p = 0; p < pixels.length; p += 4) {
-        const dr = pixels[p] - targetR;
-        const dg = pixels[p + 1] - targetG;
-        const db = pixels[p + 2] - targetB;
-        const distSq = dr * dr + dg * dg + db * db;
-        if (distSq <= tolSq) {
-          matchCount += 1;
+      let totalPixels = 0;
+      const tempW = tempCanvas.width;
+      const tempH = tempCanvas.height;
+      for (let ty = 0; ty < tempH; ty += 1) {
+        // CSS-space dy (offset from tile center, in CSS px).
+        const cssDy = ((ty + 0.5) / scaleY) - halfSize;
+        const ay = Math.abs(cssDy);
+        if (useHexMask && ay > hexRadius) {
+          // Whole row is outside the hex -- skip without touching pixel data.
+          continue;
+        }
+        for (let tx = 0; tx < tempW; tx += 1) {
+          const cssDx = ((tx + 0.5) / scaleX) - halfSize;
+          if (useHexMask) {
+            const ax = Math.abs(cssDx);
+            if (ax > hexRadius * SQRT3_HALF) {
+              continue;
+            }
+            if (ax * INV_SQRT3 + ay > hexRadius) {
+              continue;
+            }
+          }
+          const p = (ty * tempW + tx) * 4;
+          const dr = pixels[p] - targetR;
+          const dg = pixels[p + 1] - targetG;
+          const db = pixels[p + 2] - targetB;
+          const distSq = dr * dr + dg * dg + db * db;
+          if (distSq <= tolSq) {
+            matchCount += 1;
+          }
+          totalPixels += 1;
         }
       }
       const ratio = totalPixels > 0 ? matchCount / totalPixels : 0;
@@ -592,6 +636,9 @@
         ratio: ratio,
         matchCount: matchCount,
         totalPixels: totalPixels,
+        // AI CHANGED: Carry the mask shape so the overlay can draw a hex outline instead of a square.
+        maskShape: useHexMask ? "hex" : "square",
+        hexRadius: useHexMask ? hexRadius : null,
         hit: ratio >= minMatchRatio
       });
     }
@@ -733,17 +780,12 @@
           ringCandidates.push(tile);
         }
         if (ringCandidates.length > 0) {
-          // AI CHANGED: Tiebreak per user spec — minimum enemies first, then minimum allies, then arbitrary.
-          ringCandidates.sort((a, b) => {
-            const ae = Number.isFinite(a.enemies) ? a.enemies : 0;
-            const be = Number.isFinite(b.enemies) ? b.enemies : 0;
-            if (ae !== be) {
-              return ae - be;
-            }
-            const aa = Number.isFinite(a.allies) ? a.allies : 0;
-            const ba = Number.isFinite(b.allies) ? b.allies : 0;
-            return aa - ba;
-          });
+          // AI CHANGED: Use the same scoreScannedTile() ranking that the non-die path uses so allies
+          // are heavily penalized and enemies are mildly preferred. The previous "min enemies first"
+          // tiebreak treated mobs as obstacles, causing the bot to walk through a player-only tile
+          // toward a die instead of through a mob tile that led to the same die. Now both branches
+          // use the same farming-aware policy.
+          ringCandidates.sort((a, b) => scoreScannedTile(b) - scoreScannedTile(a));
           target = ringCandidates[0];
           dieGuided = true;
           Logger.log("MOVE", `2-ring yellow die guides toward ${target.key}`, {
@@ -752,7 +794,9 @@
             considered: candidateDirs,
             picked: target.key,
             pickedEnemies: target.enemies,
-            pickedAllies: target.allies
+            pickedAllies: target.allies,
+            // AI CHANGED: Surface the score so we can see in logs why a candidate beat its peers.
+            pickedScore: scoreScannedTile(target)
           });
         } else {
           Logger.warn("MOVE", `Die seen toward dirs ${candidateDirs.join("/")} but no walkable safe candidate; ignoring hint`);
