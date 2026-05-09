@@ -1,12 +1,13 @@
   // AI CHANGED: Phase C4 slice 8 — first swing: ranked attack skill (if enabled + pick), else basic attack.
   // AI CHANGED: slice 9 — optional opts.useRankedSkillOpener === false forces basic-only (follow-up bursts).
   // AI CHANGED: slice 12 — channel / non-instant cast uses hold-cast on bar when plannerOpenerHoldCastMs > 0.
-  async function clickPlannerOpeningAttack(opts) {
+  // AI CHANGED: slice 15 — excludeSlots skips bar indices already used this burst (alternate ranked openers).
+  async function clickPlannerOpeningAttack(opts, excludeSlots) {
     const useSkill =
       Config.planner.useRankedAttackSkillsInCombat &&
       (!opts || opts.useRankedSkillOpener !== false);
     if (useSkill) {
-      const opening = plannerPickSkillOpeningPick();
+      const opening = plannerPickSkillOpeningPick({ excludeSlots: excludeSlots || [] });
       if (opening != null) {
         const holdMs = plannerOpenerHoldCastMs(opening.record);
         let ok = false;
@@ -64,7 +65,7 @@
       ? Config.combat.attackProgressPollMs
       : 140;
 
-    const open = await clickPlannerOpeningAttack(opts);
+    const open = await clickPlannerOpeningAttack(opts, []);
     if (!open.ok) {
       Logger.warn("LOOP", "Attack loop aborted: no attack click succeeded");
       return false;
@@ -79,9 +80,38 @@
       return true;
     }
 
-    if (open.skillSlot != null) {
-      Logger.warn("PLANNER", "Skill opener had no verified progress; trying basic attack", {
-        slot: open.skillSlot
+    // AI CHANGED: slice 15 — try next ranked opener(s) before basic if first skill had no verified effect.
+    const extra = Number.isFinite(Config.planner.openerExtraRankedSkills)
+      ? Config.planner.openerExtraRankedSkills
+      : 0;
+    const triedSlots =
+      open.skillSlot != null && typeof open.skillSlot === "number" ? [open.skillSlot] : [];
+    for (let alt = 0; alt < extra; alt += 1) {
+      if (triedSlots.length === 0) {
+        break;
+      }
+      const open2 = await clickPlannerOpeningAttack(opts, triedSlots.slice());
+      if (!open2.ok || open2.skillSlot == null) {
+        break;
+      }
+      Logger.log("PLANNER", "Alternate ranked opener after no progress", {
+        slot: open2.skillSlot,
+        attempt: alt + 1
+      });
+      progressed = await waitForCondition(
+        "attack progress",
+        hasCombatProgressSince(beforeState),
+        { timeoutMs: timeoutMs, pollMs: pollMs }
+      );
+      if (progressed) {
+        return true;
+      }
+      triedSlots.push(open2.skillSlot);
+    }
+
+    if (triedSlots.length > 0) {
+      Logger.warn("PLANNER", "Ranked opener(s) had no verified progress; trying basic attack", {
+        triedSlots: triedSlots
       });
       const baselineAfterSkill = readBasicState();
       if (!clickBasicAttack()) {

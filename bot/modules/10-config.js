@@ -48,7 +48,9 @@
       channelOpenerHoldMinMs: 120,
       channelOpenerHoldCapMs: 4000,
       // AI CHANGED: slice 12b — hold must stay below scan long-press (Config.skills.holdToOpenMs) or the game opens skill tooltip instead of casting.
-      channelOpenerAvoidPopupMarginMs: 120
+      channelOpenerAvoidPopupMarginMs: 120,
+      // AI CHANGED: Phase C4 slice 15 — after first ranked opener fails verify, try up to N more ranked picks (same burst, same beforeState baseline) before basic fallback.
+      openerExtraRankedSkills: 1
     },
     // AI CHANGED: Added runtime logging flags so noisy snapshot logs can be disabled quickly.
     logging: {

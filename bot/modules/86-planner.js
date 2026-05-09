@@ -412,8 +412,20 @@
     return raw;
   }
 
-  // AI CHANGED: Phase C4 slice 8+12 — full pick { slot, record } for opener (hold vs click uses record).
-  function plannerPickSkillOpeningPick() {
+  // AI CHANGED: Phase C4 slice 8+12+15 — full pick { slot, record } for opener; optional excludeSlots (indices already tried this burst).
+  function plannerPickSkillOpeningPick(userOpts) {
+    const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
+    let exclude = new Set();
+    if (opts.excludeSlots instanceof Set) {
+      exclude = opts.excludeSlots;
+    } else if (Array.isArray(opts.excludeSlots)) {
+      for (let ex = 0; ex < opts.excludeSlots.length; ex += 1) {
+        const v = opts.excludeSlots[ex];
+        if (typeof v === "number" && v >= 0) {
+          exclude.add(v);
+        }
+      }
+    }
     if (!Config.planner.useRankedAttackSkillsInCombat) {
       return null;
     }
@@ -468,6 +480,9 @@
           continue;
         }
       }
+      if (exclude.has(idx)) {
+        continue;
+      }
       return { slot: idx, record: s };
     }
     return null;
@@ -475,7 +490,7 @@
 
   // AI CHANGED: Phase C4 slice 8 — pick action-bar index for opening attack, or null to use basic-only path.
   function plannerPickSkillSlotToCast() {
-    const p = plannerPickSkillOpeningPick();
+    const p = plannerPickSkillOpeningPick(null);
     return p ? p.slot : null;
   }
 
