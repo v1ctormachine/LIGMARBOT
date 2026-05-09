@@ -1,27 +1,31 @@
 // ==UserScript==
 // @name         Ligmar Zoom Tester
 // @namespace    http://tampermonkey.net/
-// @version      0.1.0
-// @description  Standalone probe: try multiple programmatic zoom approaches on the ligmar.io map and report what works.
+// @version      0.2.0
+// @description  Standalone probe: try multiple programmatic zoom approaches on the ligmar.io map and calibrate per-step intensity.
 // @author       Victor
 // @match        https://ligmar.io/game/*
 // @grant        none
 // @run-at       document-idle
 // ==/UserScript==
 
-// AI CHANGED: New standalone test harness — runs alongside the main bot without touching it.
+// AI CHANGED: v0.2.0 — calibration inputs (delta, count), preset bursts, canvas pixel-hash detector, self-detection fix.
 
 (function () {
   "use strict";
 
+  const PANEL_ID = "zoomTestPanel";
   const PREFIX = "[ZOOM]";
   const log = (...args) => console.log(PREFIX, ...args);
   const warn = (...args) => console.warn(PREFIX, ...args);
 
   // ---------- DOM / canvas helpers ----------
   function getGameCanvas() {
+    // AI CHANGED: Prefer the explicit map canvas observed in production DOM (canvas.map).
     return (
+      document.querySelector("app-game canvas.map") ||
       document.querySelector("app-game canvas") ||
+      document.querySelector("canvas.map") ||
       document.querySelector("canvas")
     );
   }
@@ -58,8 +62,48 @@
     return cls ? `${tag}.${cls}` : tag;
   }
 
-  // ---------- snapshot helpers (so we can detect "did anything change?") ----------
-  function snapshotCanvasTransform() {
+  // AI CHANGED: Skip anything that lives inside the zoom-tester panel itself to avoid false self-matches.
+  function isInsideTesterPanel(el) {
+    if (!el || !el.closest) return false;
+    return !!el.closest(`#${PANEL_ID}`);
+  }
+
+  // ---------- canvas pixel-hash detector (the real signal) ----------
+  // AI CHANGED: Sample a sparse pixel grid from the canvas and produce a short string hash;
+  // if it changes after we dispatch input, the game actually re-rendered (likely due to zoom).
+  function canvasPixelHash() {
+    const c = getGameCanvas();
+    if (!c) return null;
+    try {
+      const ctx = c.getContext("2d");
+      if (!ctx) return null;
+      const w = c.width;
+      const h = c.height;
+      if (!w || !h) return null;
+      const stepX = Math.max(1, Math.floor(w / 8));
+      const stepY = Math.max(1, Math.floor(h / 8));
+      let hash = 0;
+      for (let y = stepY; y < h; y += stepY) {
+        for (let x = stepX; x < w; x += stepX) {
+          let d;
+          try {
+            d = ctx.getImageData(x, y, 1, 1).data;
+          } catch (_) {
+            return "tainted"; // cross-origin canvas
+          }
+          // simple rolling hash over RGB
+          hash = ((hash << 5) - hash + d[0]) | 0;
+          hash = ((hash << 5) - hash + d[1]) | 0;
+          hash = ((hash << 5) - hash + d[2]) | 0;
+        }
+      }
+      return String(hash);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function snapshotCanvasMeta() {
     const c = getGameCanvas();
     if (!c) return null;
     const r = c.getBoundingClientRect();
@@ -77,13 +121,14 @@
       cssW: Math.round(r.width),
       cssH: Math.round(r.height),
       transform: s.transform,
-      ancestors: ancestors
+      ancestors: ancestors,
+      pixelHash: canvasPixelHash()
     };
   }
 
   function diffSnapshots(before, after) {
     if (!before || !after) return { changed: false, reason: "missing snapshot" };
-    const fields = ["attrW", "attrH", "cssW", "cssH", "transform"];
+    const fields = ["attrW", "attrH", "cssW", "cssH", "transform", "pixelHash"];
     const changes = [];
     for (const f of fields) {
       if (before[f] !== after[f]) changes.push({ field: f, before: before[f], after: after[f] });
@@ -92,6 +137,19 @@
     const afterAnc = JSON.stringify(after.ancestors);
     if (beforeAnc !== afterAnc) changes.push({ field: "ancestors", before: before.ancestors, after: after.ancestors });
     return { changed: changes.length > 0, changes };
+  }
+
+  // ---------- calibration state from panel inputs ----------
+  function getCalibration() {
+    const deltaInput = document.getElementById("zoomTestDelta");
+    const countInput = document.getElementById("zoomTestCount");
+    const delta = deltaInput && Number(deltaInput.value) ? Number(deltaInput.value) : 120;
+    const count = countInput && Number(countInput.value) ? Number(countInput.value) : 1;
+    return {
+      // AI CHANGED: Clamp to safe ranges so user typos don't fire 100k events.
+      deltaY: Math.max(1, Math.min(2000, Math.abs(delta))),
+      count: Math.max(1, Math.min(200, Math.floor(count)))
+    };
   }
 
   // ---------- wheel approaches ----------
@@ -107,9 +165,11 @@
     return target.dispatchEvent(ev);
   }
 
-  function tryWheel(direction, count, ctrl) {
+  async function tryWheel(direction, count, ctrl, deltaMagnitude) {
     const dir = direction === "out" ? "out" : "in";
-    const n = typeof count === "number" && count > 0 ? count : 3;
+    const cal = getCalibration();
+    const n = typeof count === "number" && count > 0 ? count : cal.count;
+    const dY = (typeof deltaMagnitude === "number" && deltaMagnitude > 0 ? deltaMagnitude : cal.deltaY) * (dir === "in" ? -1 : 1);
     const useCtrl = !!ctrl;
     const canvas = getGameCanvas();
     if (!canvas) {
@@ -117,18 +177,17 @@
       return { ok: false, reason: "no_canvas" };
     }
     const center = elementCenter(canvas);
-    const deltaY = dir === "in" ? -120 : 120;
-    const before = snapshotCanvasTransform();
-    log(`wheel${useCtrl ? "+ctrl" : ""}: ${dir} x${n} at`, center);
+    const before = snapshotCanvasMeta();
+    log(`wheel${useCtrl ? "+ctrl" : ""}: ${dir} count=${n} deltaY=${dY} at (${Math.round(center.x)}, ${Math.round(center.y)})`);
     for (let i = 0; i < n; i++) {
       dispatchWheel(canvas, {
-        deltaY: deltaY,
+        deltaY: dY,
         clientX: center.x,
         clientY: center.y,
         ctrlKey: useCtrl
       });
     }
-    return waitAndDiff("wheel", before);
+    return await waitAndDiff("wheel", before);
   }
 
   // ---------- keyboard approach ----------
@@ -142,10 +201,11 @@
     return map[k] || (k.length === 1 ? `Key${k.toUpperCase()}` : k);
   }
 
-  function tryKey(key, count) {
-    const n = typeof count === "number" && count > 0 ? count : 3;
-    const before = snapshotCanvasTransform();
-    log(`key: "${key}" x${n}`);
+  async function tryKey(key, count) {
+    const cal = getCalibration();
+    const n = typeof count === "number" && count > 0 ? count : cal.count;
+    const before = snapshotCanvasMeta();
+    log(`key: "${key}" count=${n}`);
     for (let i = 0; i < n; i++) {
       const init = {
         bubbles: true,
@@ -163,7 +223,7 @@
       window.dispatchEvent(up);
       if (canvas) canvas.dispatchEvent(up);
     }
-    return waitAndDiff("key", before);
+    return await waitAndDiff("key", before);
   }
 
   // ---------- in-game zoom button discovery ----------
@@ -174,6 +234,9 @@
     ));
     for (const el of all) {
       if (!el || !el.tagName) continue;
+      // AI CHANGED: Hard skip any element belonging to our own tester panel.
+      if (isInsideTesterPanel(el)) continue;
+
       const cls = classListString(el);
       const text = (el.textContent || "").trim();
       const titleAttr = el.getAttribute && el.getAttribute("title");
@@ -229,18 +292,18 @@
     return candidates;
   }
 
-  function clickFirstMatching(predicate, label) {
+  async function clickFirstMatching(predicate, label) {
     const list = findZoomButtons().filter((c) => c.visible).filter(predicate);
     if (!list.length) {
       warn(`${label}: no visible button matched`);
       return { ok: false, reason: "no_match" };
     }
-    const before = snapshotCanvasTransform();
+    const before = snapshotCanvasMeta();
     log(`${label}: clicking`, {
       tag: list[0].tag, cls: list[0].cls, text: list[0].text, x: list[0].x, y: list[0].y
     });
     list[0].el.click();
-    return waitAndDiff(label, before);
+    return await waitAndDiff(label, before);
   }
 
   function clickInGameZoomIn() {
@@ -263,7 +326,7 @@
       warn("no canvas");
       return null;
     }
-    const snap = snapshotCanvasTransform();
+    const snap = snapshotCanvasMeta();
     const r = c.getBoundingClientRect();
     const info = {
       element: c,
@@ -271,10 +334,11 @@
       cssSize: { w: Math.round(r.width), h: Math.round(r.height) },
       pxRatio: window.devicePixelRatio,
       transform: snap.transform,
-      ancestorTransforms: snap.ancestors
+      ancestorTransforms: snap.ancestors,
+      pixelHash: snap.pixelHash
     };
     log("canvas inspect:", info);
-    console.table(info.ancestorTransforms);
+    if (info.ancestorTransforms.length) console.table(info.ancestorTransforms);
     return info;
   }
 
@@ -283,24 +347,49 @@
     const ms = typeof waitMs === "number" ? waitMs : 250;
     return new Promise((resolve) => {
       setTimeout(() => {
-        const after = snapshotCanvasTransform();
+        const after = snapshotCanvasMeta();
         const diff = diffSnapshots(beforeSnap, after);
+        // AI CHANGED: Pixel-hash change is the real signal; DOM-only diff doesn't apply to canvas-rendered zoom.
+        const pixelChanged = pixelHashChanged(beforeSnap, after);
         if (diff.changed) {
-          log(`${label}: CHANGE detected`, diff.changes);
+          log(`${label}: change detected`, diff.changes.map((c) => c.field));
+        } else if (pixelChanged) {
+          log(`${label}: canvas pixels changed (likely zoom/redraw)`);
         } else {
-          warn(`${label}: no visible change after ${ms}ms`);
+          log(`${label}: dispatched, no detectable diff (visual confirmation needed)`);
         }
-        resolve({ ok: true, label: label, changed: diff.changed, changes: diff.changes, after: after });
+        resolve({ ok: true, label: label, changed: diff.changed || pixelChanged, changes: diff.changes, after: after });
       }, ms);
     });
+  }
+  // AI CHANGED: Pixel-hash compare helper kept separate so waitAndDiff stays readable.
+  function pixelHashChanged(b, a) {
+    return !!(b && a && b.pixelHash !== a.pixelHash && b.pixelHash !== "tainted" && a.pixelHash !== "tainted");
+  }
+
+  // ---------- preset bursts ----------
+  async function zoomOutMax(steps) {
+    const n = typeof steps === "number" && steps > 0 ? steps : 40;
+    log(`preset: zoomOutMax x${n}`);
+    return await tryWheel("out", n, false, 120);
+  }
+  async function zoomInMax(steps) {
+    const n = typeof steps === "number" && steps > 0 ? steps : 40;
+    log(`preset: zoomInMax x${n}`);
+    return await tryWheel("in", n, false, 120);
+  }
+  async function singleStep(direction) {
+    const dir = direction === "out" ? "out" : "in";
+    log(`preset: singleStep ${dir} (using current calibration)`);
+    return await tryWheel(dir, 1, false);
   }
 
   // ---------- floating panel ----------
   function makePanel() {
-    if (document.getElementById("zoomTestPanel")) return;
+    if (document.getElementById(PANEL_ID)) return;
 
     const p = document.createElement("div");
-    p.id = "zoomTestPanel";
+    p.id = PANEL_ID;
     Object.assign(p.style, {
       position: "fixed",
       top: "10px",
@@ -312,15 +401,23 @@
       font: "12px monospace",
       borderRadius: "6px",
       border: "1px solid #555",
-      maxWidth: "260px",
+      maxWidth: "280px",
       pointerEvents: "auto"
     });
 
     p.innerHTML = `
-      <div style="font-weight:bold;margin-bottom:6px;color:#9cf">Zoom Tester</div>
+      <div style="font-weight:bold;margin-bottom:6px;color:#9cf">Zoom Tester v0.2</div>
+      <div style="margin-bottom:4px">
+        <label>Δ deltaY <input id="zoomTestDelta" type="number" value="120" min="1" max="2000" style="width:60px"></label>
+        <label>count <input id="zoomTestCount" type="number" value="1" min="1" max="200" style="width:50px"></label>
+      </div>
       <div>
-        <button data-act="wheel-in">Wheel In</button>
-        <button data-act="wheel-out">Wheel Out</button>
+        <button data-act="single-in">Single In</button>
+        <button data-act="single-out">Single Out</button>
+      </div>
+      <div>
+        <button data-act="wheel-in">Wheel In (×count)</button>
+        <button data-act="wheel-out">Wheel Out (×count)</button>
       </div>
       <div>
         <button data-act="wheel-ctrl-in">Ctrl+Wheel In</button>
@@ -334,6 +431,10 @@
       <div>
         <button data-act="ui-plus">UI +</button>
         <button data-act="ui-minus">UI -</button>
+      </div>
+      <div style="margin-top:4px;border-top:1px solid #444;padding-top:4px">
+        <button data-act="preset-out">Zoom Out 40×</button>
+        <button data-act="preset-in">Zoom In 40×</button>
       </div>
       <div>
         <button data-act="find">Find buttons</button>
@@ -367,20 +468,24 @@
       let res = null;
       try {
         switch (act) {
-          case "wheel-in":        res = await tryWheel("in", 3, false); break;
-          case "wheel-out":       res = await tryWheel("out", 3, false); break;
-          case "wheel-ctrl-in":   res = await tryWheel("in", 3, true); break;
-          case "wheel-ctrl-out":  res = await tryWheel("out", 3, true); break;
-          case "key-plus":        res = await tryKey("+", 3); break;
-          case "key-minus":       res = await tryKey("-", 3); break;
-          case "key-equal":       res = await tryKey("=", 3); break;
-          case "ui-plus":         res = await clickInGameZoomIn(); break;
-          case "ui-minus":        res = await clickInGameZoomOut(); break;
-          case "find":            findZoomButtons(); res = { changed: false, label: "find" }; break;
-          case "canvas":          inspectCanvas(); res = { changed: false, label: "canvas" }; break;
+          case "single-in":      res = await singleStep("in"); break;
+          case "single-out":     res = await singleStep("out"); break;
+          case "wheel-in":       res = await tryWheel("in", undefined, false); break;
+          case "wheel-out":      res = await tryWheel("out", undefined, false); break;
+          case "wheel-ctrl-in":  res = await tryWheel("in", undefined, true); break;
+          case "wheel-ctrl-out": res = await tryWheel("out", undefined, true); break;
+          case "key-plus":       res = await tryKey("+"); break;
+          case "key-minus":      res = await tryKey("-"); break;
+          case "key-equal":      res = await tryKey("="); break;
+          case "ui-plus":        res = await clickInGameZoomIn(); break;
+          case "ui-minus":       res = await clickInGameZoomOut(); break;
+          case "preset-out":     res = await zoomOutMax(); break;
+          case "preset-in":      res = await zoomInMax(); break;
+          case "find":           findZoomButtons(); res = { changed: false, label: "find" }; break;
+          case "canvas":         inspectCanvas(); res = { changed: false, label: "canvas" }; break;
         }
         if (res && typeof res.changed === "boolean") {
-          setStatus(`${act}: ${res.changed ? "CHANGED" : "no change"}`);
+          setStatus(`${act}: ${res.changed ? "CHANGED" : "dispatched"}`);
         } else {
           setStatus(`${act}: see console`);
         }
@@ -391,23 +496,27 @@
     });
 
     document.body.appendChild(p);
-    log("panel attached at top-right");
+    log("panel attached at top-right (v0.2)");
   }
 
   // ---------- public API ----------
   window.zoomTest = {
-    wheel: (dir, count) => tryWheel(dir, count, false),
-    wheelCtrl: (dir, count) => tryWheel(dir, count, true),
+    wheel: (dir, count, deltaMagnitude) => tryWheel(dir, count, false, deltaMagnitude),
+    wheelCtrl: (dir, count, deltaMagnitude) => tryWheel(dir, count, true, deltaMagnitude),
     key: tryKey,
+    singleStep: singleStep,
+    zoomOutMax: zoomOutMax,
+    zoomInMax: zoomInMax,
     findZoomButtons: findZoomButtons,
     clickInGameZoomIn: clickInGameZoomIn,
     clickInGameZoomOut: clickInGameZoomOut,
     inspectCanvas: inspectCanvas,
-    snapshot: snapshotCanvasTransform
+    snapshot: snapshotCanvasMeta,
+    pixelHash: canvasPixelHash
   };
 
   function start() {
-    log("zoom tester loaded. Use the panel (top-right) or window.zoomTest.* in console.");
+    log("zoom tester v0.2 loaded. Use the panel (top-right) or window.zoomTest.* in console.");
     setTimeout(makePanel, 1500);
   }
 

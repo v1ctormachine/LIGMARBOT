@@ -44,6 +44,25 @@ Design principles:
 - **Start of each farm cycle**: `prepMapForCombatCycle()` only ensures the map is open (`ensureMapOpen`). There is no tactical ring scan here; neighbor scanning is **`scanNeighborRing()`** inside **`exploreByScan()`** after idle/no-loot.
 - **Find enemy verification**: success when **target HP** becomes valid (red condition bar text parsed as `cur / max`); enemy count is **not** used as a pre-attack signal. HP strings may include **thousands separators** (e.g. `1,399 / 1,399`); `parseFractionText` normalizes commas before parsing so verification is not stuck at `valid: false` while the bar is visible.
 - **Loot, when a loot button exists**: click loot → **`ensureMapOpen()`** → **`clickCenterMapVerified()`** → click **current map center tile** → wait until **`div.battle-event-button.highlight` stays absent** and the visible **`app-battle-status-bar span.value`** text is **not** a known busy label (`opening`, `activating`; extend via `Config.verification.lootInteractionBusySubstrings`) for a **stable window** (`Config.verification.lootSettleStableMs`, default ~400ms). This avoids treating post-click DOM flicker or mid-animation gaps as “done”.
+- **Movement gate**: actions that depend on a settled position wait until the moving-state UI bar (`Config.selectors.movingBarValue`) clears, so scan/ring code never sees mid-step state.
+
+### Repository layout
+
+- Git repo lives at the **project root** (`C:\Users\Victor\.cursor\projects\ligmarbot`).
+- Tracked files: `.gitignore`, `ARCHITECTURE.md`, `bot/bot.user.js`, `bot/zoom-tester.user.js`.
+- `.gitignore` excludes Cursor tooling artifacts (`mcps/`, `terminals/`, `agent-transcripts/`) and editor scratch files. They live on disk for the IDE but never reach GitHub.
+
+### Companion test scripts
+
+- **`bot/zoom-tester.user.js`** — standalone Tampermonkey userscript installed alongside the bot to probe programmatic zoom on the in-game map. Has its own floating panel (top-right) with calibration inputs (`Δ deltaY`, `count`), single-step buttons, preset bursts (`Zoom Out 40×`, `Zoom In 40×`), keyboard tries, and an in-game zoom button auto-finder. Exposes a `window.zoomTest.*` console API. Independent of the bot — installable/removable at any time without touching `bot/bot.user.js`.
+- **Detection note**: the game renders zoom by repainting the map **canvas pixels**, not by changing CSS transforms. The tester's `waitAndDiff` therefore relies on a **canvas pixel hash** sampled before/after each input rather than on DOM-level diffing.
+
+### Investigations (state of the art so far)
+
+- ✅ **Wheel events on the map canvas zoom the camera** (visually confirmed). Means a Tampermonkey-only bot can drive zoom without external automation. Calibration of "step power" (deltaY per scroll) is in progress via the zoom tester.
+- ❓ **Ctrl+Wheel / Keyboard `+` / `-` / `=`**: not yet observed to do anything. Treat as not-supported until proven otherwise.
+- ❌ **No first-party in-game zoom UI buttons** were located by the auto-finder; expect to drive zoom via wheel only.
+- 🟡 **Ancestor `transform: matrix(1.16, ...)` on `div.app-container.*`**: a global Angular/UI scaling, **not** the game zoom. Don't use it to infer zoom level.
 
 ---
 
