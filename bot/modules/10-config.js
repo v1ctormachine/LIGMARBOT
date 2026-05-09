@@ -24,10 +24,13 @@
     logging: {
       stateSnapshots: false
     },
-    // AI CHANGED: Visual debug overlays. Toggle via console e.g. `ligmarBot.config.debug.showSecondRingOverlay = false`.
+    // AI CHANGED: Visual debug overlays. Toggle via console e.g. `ligmarBot.Config.debug.showSecondRingOverlay = true`.
     debug: {
-      // Show the 12 sampling boxes + best-hit arrow on the page after every 2-ring scan.
-      showSecondRingOverlay: true,
+      // AI CHANGED: Auto-overlay disabled now that 2-ring detection is calibrated -- the boxes were a
+      // calibration aid, not part of normal play. Re-enable from console for future debugging:
+      //   ligmarBot.Config.debug.showSecondRingOverlay = true;
+      //   ligmarBot.scanSecondRingForDie();
+      showSecondRingOverlay: false,
       // How long the overlay stays before fading itself out (ms). 0 = persist until next scan.
       secondRingOverlayTtlMs: 8000
     },
@@ -52,22 +55,38 @@
     },
     // AI CHANGED: Added scan timing config for faster tile probing.
     scan: {
-      // AI CHANGED: Slightly relaxed scan timing to reduce false blocked reads.
-      tileTimeoutMs: 760,
-      // AI CHANGED: Slower polling cadence for more stable UI state transitions.
-      pollMs: 95,
+      // AI CHANGED: Tightened wall timeout 760 -> 220 ms (v0.2.7). Local popup updates typically resolve
+      // in ~30-80ms; 220ms gives ~3x safety margin while making all-walls scans ~3.5x faster
+      // (4.56s -> 1.32s). If false walls appear in play, raise this back toward 350-450ms.
+      tileTimeoutMs: 220,
+      // AI CHANGED: Faster poll cadence 95 -> 40 ms so walkable tiles are confirmed on the first/second
+      // poll instead of waiting one full 95ms tick. Cheap; runs only during the 6-tile ring scan.
+      pollMs: 40,
       // AI CHANGED: 2-ring visual scan settings — used by scanSecondRingForColor / yellow-die detection.
-      // Yellow die marks a tile with unknown loot 2 hops away. We sample a small patch at each of 12
+      // Yellow die marks a tile with unknown loot 2 hops away. We sample a hex-shaped patch at each of 12
       // 2-ring tile centers and count pixels matching the die's signature color #f0b80c.
       secondRing: {
-        // Half side of the sampled square (so 28x28 total at default).
-        sampleHalfSizePx: 14,
+        // AI CHANGED: Half side of the sampled square bounding box. 18 -> 36x36 box that fully contains
+        // the actual game hex tile (circumradius r = step/sqrt(3) ~= 17.32 px with step=30). The hex mask
+        // applied below restricts pixel counting to the tile's hex footprint, eliminating leakage into
+        // neighboring tiles that the previous 28x28 square caused at the corners.
+        sampleHalfSizePx: 18,
+        // AI CHANGED: When true, only pixels inside the actual hex tile (centered on the patch) contribute
+        // to matchCount/totalPixels. False reverts to the old square sampling -- kept as an emergency
+        // fallback / debug toggle.
+        useHexMask: true,
         // Target marker color: #f0b80c — the yellow die.
         yellowDieColor: { r: 240, g: 184, b: 12 },
-        // Euclidean RGB distance threshold per pixel (0..441). 35 is generous enough for compression artifacts.
-        yellowDieTolerance: 35,
-        // Fraction of sampled pixels that must match before a tile is flagged as containing a die.
-        minMatchRatio: 0.04
+        // AI CHANGED: Tolerance bumped 35 -> 75 to catch the die's full yellow gradient including
+        // anti-aliased edges. Distances from #f0b80c: orange ~27, gold ~37, bright yellow ~74,
+        // khaki ~136, brown ~183, red ~185, green ~250, blue ~317. So at 75 we catch every shade of
+        // yellow but no greens/reds/browns/blues. Verified math in chat -- don't loosen past ~100.
+        yellowDieTolerance: 75,
+        // AI CHANGED: Threshold tuned from real measurement (Victor observed 0.4-1.2% range at tol=35).
+        // Keeping 0.005 (0.5%) -- with looser tolerance + hex mask, real-die ratios should rise
+        // comfortably above this. False-positive risk stays low because reaching 0.5% needs ~4-5
+        // yellow-ish pixels clustered in the hex (random terrain almost never does that).
+        minMatchRatio: 0.005
       }
     },
     selectors: {

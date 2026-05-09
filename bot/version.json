@@ -1,8 +1,23 @@
 ﻿{
-    "version":  "0.2.4",
-    "description":  "2-ring overlay + multi-candidate dirs (min-enemies tiebreak)",
-    "builtAt":  "2026-05-09T14:05:00.2088840+03:00",
+    "version":  "0.2.7",
+    "description":  "Disable 2-ring overlay by default + speed up 1-ring scan (220ms wall timeout, 40ms poll)",
+    "builtAt":  "2026-05-09T14:49:27.6002205+03:00",
     "history":  [
+                    {
+                        "version":  "0.2.7",
+                        "description":  "Disable 2-ring overlay by default + speed up 1-ring scan (220ms wall timeout, 40ms poll)",
+                        "date":  "2026-05-09T14:49:27.6002205+03:00"
+                    },
+                    {
+                        "version":  "0.2.6",
+                        "description":  "Fix die-guided ally bias + hex sampling + tolerance 75 + ally penalty 5x",
+                        "date":  "2026-05-09T14:38:26.1740557+03:00"
+                    },
+                    {
+                        "version":  "0.2.5",
+                        "description":  "Lower 2-ring yellow-die threshold 4% -\u003e 0.5% (match real signal at ~1.1%)",
+                        "date":  "2026-05-09T14:18:51.4229524+03:00"
+                    },
                     {
                         "version":  "0.2.4",
                         "description":  "2-ring overlay + multi-candidate dirs (min-enemies tiebreak)",
