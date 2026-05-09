@@ -48,7 +48,20 @@
       // AI CHANGED: Slightly relaxed scan timing to reduce false blocked reads.
       tileTimeoutMs: 760,
       // AI CHANGED: Slower polling cadence for more stable UI state transitions.
-      pollMs: 95
+      pollMs: 95,
+      // AI CHANGED: 2-ring visual scan settings — used by scanSecondRingForColor / yellow-die detection.
+      // Yellow die marks a tile with unknown loot 2 hops away. We sample a small patch at each of 12
+      // 2-ring tile centers and count pixels matching the die's signature color #f0b80c.
+      secondRing: {
+        // Half side of the sampled square (so 28x28 total at default).
+        sampleHalfSizePx: 14,
+        // Target marker color: #f0b80c — the yellow die.
+        yellowDieColor: { r: 240, g: 184, b: 12 },
+        // Euclidean RGB distance threshold per pixel (0..441). 35 is generous enough for compression artifacts.
+        yellowDieTolerance: 35,
+        // Fraction of sampled pixels that must match before a tile is flagged as containing a die.
+        minMatchRatio: 0.04
+      }
     },
     selectors: {
       // AI CHANGED: Relaxed HP selector to avoid brittle container path mismatches.

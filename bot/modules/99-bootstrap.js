@@ -35,6 +35,11 @@
       moveToMapPoint: moveToMapPoint,
       exploreIfIdle: exploreIfIdle,
       scanNeighborRing: scanNeighborRing,
+      // AI CHANGED: Expose 2-ring visual scanners so the user can manually probe yellow-die / other colors from the console.
+      scanSecondRingForDie: scanSecondRingForDie,
+      scanSecondRingForColor: scanSecondRingForColor,
+      getSecondRingOffsets: getSecondRingOffsets,
+      ringHasUsefulLoot: ringHasUsefulLoot,
       clickBasicAttack: clickBasicAttack,
       isBasicAttackConfigured: isBasicAttackConfigured,
       setBasicAttackSelector: setBasicAttackSelector,

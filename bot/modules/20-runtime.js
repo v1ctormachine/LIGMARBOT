@@ -13,8 +13,10 @@
       directionIndex: 0,
       // AI CHANGED: Stores last known tile coordinates for movement verification.
       lastKnownCoords: null,
-      // AI CHANGED: Stores latest ring scan snapshot for GUI/debug use.
-      lastRingScan: null
+      // AI CHANGED: Stores latest 1-ring scan snapshot for GUI/debug use.
+      lastRingScan: null,
+      // AI CHANGED: Stores latest 2-ring visual scan snapshot (yellow-die detection) for GUI/debug use.
+      lastSecondRingScan: null
     },
     // AI CHANGED: Track whether we've already zoomed the map to minimum so scans use calibrated step distances.
     zoom: {

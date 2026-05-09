@@ -455,6 +455,201 @@
     return base + enemies * 50 - alliesPenalty;
   }
 
+  // AI CHANGED: Build the 12 second-ring tile offsets (6 corners + 6 edges) plus their nearest 1-ring direction.
+  // Edge tiles map clockwise (e.g. T2 between TL and TR -> TR). The mapping is what we use to translate a
+  // detected 2-ring marker into an actual 1-ring move target.
+  function getSecondRingOffsets() {
+    const step = Config.movement.neighborStepPx;
+    const h = Math.round(step * 0.86);
+    const halfStep = Math.round(step / 2);
+    const oneAndHalf = step + halfStep;
+    return [
+      { key: "TL2",  dx: -step,        dy: -2 * h, dir: "TL" },
+      { key: "T2",   dx: 0,            dy: -2 * h, dir: "TR" },
+      { key: "TR2",  dx: step,         dy: -2 * h, dir: "TR" },
+      { key: "TR-R", dx: oneAndHalf,   dy: -h,     dir: "R"  },
+      { key: "R2",   dx: 2 * step,     dy: 0,      dir: "R"  },
+      { key: "R-BR", dx: oneAndHalf,   dy: h,      dir: "BR" },
+      { key: "BR2",  dx: step,         dy: 2 * h,  dir: "BR" },
+      { key: "B2",   dx: 0,            dy: 2 * h,  dir: "BL" },
+      { key: "BL2",  dx: -step,        dy: 2 * h,  dir: "BL" },
+      { key: "BL-L", dx: -oneAndHalf,  dy: h,      dir: "L"  },
+      { key: "L2",   dx: -2 * step,    dy: 0,      dir: "L"  },
+      { key: "L-TL", dx: -oneAndHalf,  dy: -h,     dir: "TL" }
+    ];
+  }
+
+  // AI CHANGED: Generic 2-ring visual scanner — samples a small patch at each 2-ring tile center and counts
+  // pixels matching `targetColor` within Euclidean RGB distance `options.tolerance`. Returns per-tile match
+  // ratios plus the highest-ratio "hit". Used by scanSecondRingForDie; built generic so we can reuse it
+  // later for purple chest / goblin / etc. The map must already be open and zoomed out (caller's job).
+  async function scanSecondRingForColor(targetColor, options) {
+    const opts = options || {};
+    const cfg = Config.scan.secondRing;
+    const tolerance = typeof opts.tolerance === "number" ? opts.tolerance : cfg.yellowDieTolerance;
+    const minMatchRatio = typeof opts.minMatchRatio === "number" ? opts.minMatchRatio : cfg.minMatchRatio;
+    const halfSize = typeof opts.halfSize === "number" ? opts.halfSize : cfg.sampleHalfSizePx;
+    const label = typeof opts.label === "string" ? opts.label : "color";
+    const logTag = "SCAN2";
+
+    const canvas = getMapCanvas();
+    if (!canvas) {
+      Logger.warn(logTag, "scanSecondRingForColor: map canvas not visible");
+      return { ok: false, reason: "no_canvas" };
+    }
+
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) {
+      Logger.warn(logTag, "scanSecondRingForColor: canvas has zero CSS size");
+      return { ok: false, reason: "zero_canvas_size" };
+    }
+
+    // Account for device pixel ratio — drawImage's source coords are in source-pixel space, not CSS space.
+    const scaleX = (canvas.width || rect.width) / rect.width;
+    const scaleY = (canvas.height || rect.height) / rect.height;
+
+    const cssCenterX = rect.width / 2;
+    const cssCenterY = rect.height / 2;
+
+    const patchW = halfSize * 2;
+    const patchH = halfSize * 2;
+    const tempCanvas = document.createElement("canvas");
+    tempCanvas.width = Math.max(1, Math.round(patchW * scaleX));
+    tempCanvas.height = Math.max(1, Math.round(patchH * scaleY));
+    const tempCtx = tempCanvas.getContext("2d");
+    if (!tempCtx) {
+      Logger.warn(logTag, "scanSecondRingForColor: temp canvas 2d context not available");
+      return { ok: false, reason: "no_temp_ctx" };
+    }
+
+    const offsets = getSecondRingOffsets();
+    const targetR = targetColor.r;
+    const targetG = targetColor.g;
+    const targetB = targetColor.b;
+    const tolSq = tolerance * tolerance;
+
+    const samples = [];
+    let drawFailures = 0;
+    for (let i = 0; i < offsets.length; i += 1) {
+      const tile = offsets[i];
+      const cssX = cssCenterX + tile.dx - halfSize;
+      const cssY = cssCenterY + tile.dy - halfSize;
+      const srcX = Math.round(cssX * scaleX);
+      const srcY = Math.round(cssY * scaleY);
+      const srcW = Math.round(patchW * scaleX);
+      const srcH = Math.round(patchH * scaleY);
+
+      let pixels = null;
+      try {
+        tempCtx.clearRect(0, 0, tempCanvas.width, tempCanvas.height);
+        tempCtx.drawImage(canvas, srcX, srcY, srcW, srcH, 0, 0, tempCanvas.width, tempCanvas.height);
+        pixels = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height).data;
+      } catch (err) {
+        drawFailures += 1;
+        samples.push({
+          key: tile.key,
+          dir: tile.dir,
+          dx: tile.dx,
+          dy: tile.dy,
+          ok: false,
+          ratio: 0,
+          hit: false,
+          error: err && err.message ? err.message : String(err)
+        });
+        continue;
+      }
+
+      let matchCount = 0;
+      const totalPixels = pixels.length / 4;
+      for (let p = 0; p < pixels.length; p += 4) {
+        const dr = pixels[p] - targetR;
+        const dg = pixels[p + 1] - targetG;
+        const db = pixels[p + 2] - targetB;
+        const distSq = dr * dr + dg * dg + db * db;
+        if (distSq <= tolSq) {
+          matchCount += 1;
+        }
+      }
+      const ratio = totalPixels > 0 ? matchCount / totalPixels : 0;
+      samples.push({
+        key: tile.key,
+        dir: tile.dir,
+        dx: tile.dx,
+        dy: tile.dy,
+        ok: true,
+        ratio: ratio,
+        matchCount: matchCount,
+        totalPixels: totalPixels,
+        hit: ratio >= minMatchRatio
+      });
+    }
+
+    const hits = samples.filter((s) => s.hit);
+    hits.sort((a, b) => b.ratio - a.ratio);
+    const best = hits.length > 0 ? hits[0] : null;
+
+    const snapshot = {
+      ok: true,
+      scannedAt: Date.now(),
+      label: label,
+      target: targetColor,
+      tolerance: tolerance,
+      minMatchRatio: minMatchRatio,
+      halfSize: halfSize,
+      samples: samples,
+      hits: hits,
+      best: best,
+      drawFailures: drawFailures
+    };
+
+    Logger.log(logTag, `2-ring scan for ${label} done`, {
+      hits: hits.length,
+      bestKey: best ? best.key : null,
+      bestDir: best ? best.dir : null,
+      bestRatio: best ? Number(best.ratio.toFixed(4)) : null,
+      drawFailures: drawFailures
+    });
+
+    return snapshot;
+  }
+
+  // AI CHANGED: Specific wrapper — scans the 2-ring for the yellow die marker (#f0b80c).
+  // Returns the same shape as scanSecondRingForColor; caller looks at `best.dir` for the move target.
+  async function scanSecondRingForDie() {
+    const cfg = Config.scan.secondRing;
+    const result = await scanSecondRingForColor(cfg.yellowDieColor, {
+      tolerance: cfg.yellowDieTolerance,
+      minMatchRatio: cfg.minMatchRatio,
+      halfSize: cfg.sampleHalfSizePx,
+      label: "yellow_die"
+    });
+    Runtime.exploration.lastSecondRingScan = result;
+    return result;
+  }
+
+  // AI CHANGED: Helper — does a 1-ring scan have any USEFUL loot? Useful = at least one walkable tile
+  // with non-empty loot icons that aren't goblin/boss (those are hard-avoided).
+  function ringHasUsefulLoot(scanSnapshot) {
+    if (!scanSnapshot || !scanSnapshot.ok || !Array.isArray(scanSnapshot.results)) {
+      return false;
+    }
+    for (let i = 0; i < scanSnapshot.results.length; i += 1) {
+      const r = scanSnapshot.results[i];
+      if (!r || !r.ok || r.classification !== "walkable") {
+        continue;
+      }
+      const kinds = parseLootKindsFromMarkers(r.lootIcons || []);
+      if (kinds.length === 0) {
+        continue;
+      }
+      if (kinds.includes("goblin") || kinds.includes("boss")) {
+        continue;
+      }
+      return true;
+    }
+    return false;
+  }
+
   // AI CHANGED: Pick best walkable tile from ring scan.
   function chooseBestScannedNeighbor(scanSnapshot) {
     if (!scanSnapshot || !scanSnapshot.ok || !Array.isArray(scanSnapshot.results)) {
@@ -469,6 +664,13 @@
   }
 
   // AI CHANGED: Move by scan result first, fallback to old exploration if needed.
+  // Order:
+  //   1. Run 1-ring scan (popup-based, gives explicit loot icons + ally/enemy counts).
+  //   2. If 1-ring has any useful (non-goblin/boss) loot -> pick it via existing scoring.
+  //   3. Else -> run 2-ring visual scan for yellow-die markers (loot 2 tiles away).
+  //      If a die is found, override target to the 1-ring tile in that direction
+  //      (only if that 1-ring tile is walkable and not goblin/boss).
+  //   4. Else -> fall back to existing scoring (covers empty-but-walkable tiles, allies-stacking, etc.).
   async function exploreByScan() {
     const now = readBasicState();
     if (typeof now.combat.enemyCount !== "number" || now.combat.enemyCount !== 0) {
@@ -478,9 +680,47 @@
     if (!scan.ok) {
       return { ok: false, skipped: true, reason: scan.reason || "scan_failed", scan: scan };
     }
-    const target = chooseBestScannedNeighbor(scan);
+
+    let target = null;
+    let dieGuided = false;
+    let secondRing = null;
+
+    // AI CHANGED: When the 1-ring already shows useful loot, use it directly — no point doing the 2-ring scan.
+    if (ringHasUsefulLoot(scan)) {
+      target = chooseBestScannedNeighbor(scan);
+    } else {
+      // AI CHANGED: 1-ring is empty (or only goblin/boss). Visually probe the 2-ring for a yellow die hint.
+      setBotStatus("scanning", "2-ring visual scan for yellow die");
+      secondRing = await scanSecondRingForDie();
+      if (secondRing && secondRing.ok && secondRing.best) {
+        const dieDir = secondRing.best.dir;
+        const candidate = scan.results.find((r) => r && r.ok && r.classification === "walkable" && r.key === dieDir);
+        if (candidate) {
+          const candidateKinds = parseLootKindsFromMarkers(candidate.lootIcons || []);
+          const hostileTile = candidateKinds.includes("goblin") || candidateKinds.includes("boss");
+          if (!hostileTile) {
+            target = candidate;
+            dieGuided = true;
+            Logger.log("MOVE", `2-ring yellow die guides toward ${dieDir}`, {
+              ring2Key: secondRing.best.key,
+              ring2Ratio: Number(secondRing.best.ratio.toFixed(4)),
+              ring1Tile: candidate.key
+            });
+          } else {
+            Logger.warn("MOVE", `Die seen toward ${dieDir} but 1-ring tile is hostile (${candidateKinds.join(",")}); ignoring hint`);
+          }
+        } else {
+          Logger.warn("MOVE", `Die seen toward ${dieDir} but corresponding 1-ring tile is blocked or missing; ignoring hint`);
+        }
+      }
+      // If die didn't yield a usable target, fall back to standard scoring (e.g. step into empty tile).
+      if (!target) {
+        target = chooseBestScannedNeighbor(scan);
+      }
+    }
+
     if (!target) {
-      return { ok: false, skipped: true, reason: "no_walkable_neighbor", scan: scan };
+      return { ok: false, skipped: true, reason: "no_walkable_neighbor", scan: scan, secondRing: secondRing };
     }
     const center = getMapCenterClientPoint();
     // AI CHANGED: Surface move as live status for the GUI.
@@ -512,7 +752,9 @@
       enemies: target.enemies,
       allies: target.allies,
       lootIcons: target.lootIcons,
-      coords: verify.coords
+      coords: verify.coords,
+      // AI CHANGED: Mark whether this move was driven by a 2-ring yellow-die hint (vs. normal scoring).
+      dieGuided: dieGuided
     });
-    return { ok: true, moved: true, target: target, verify: verify, scan: scan };
+    return { ok: true, moved: true, target: target, verify: verify, scan: scan, secondRing: secondRing, dieGuided: dieGuided };
   }
