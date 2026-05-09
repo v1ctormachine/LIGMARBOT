@@ -1,6 +1,0 @@
----
-pid: 1948
-cwd: |
-  C:\Users\Victor
----
-PS C:\Users\Victor>

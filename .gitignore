@@ -1,0 +1,18 @@
+# Cursor / agent tooling artifacts (host-machine state, not project source)
+mcps/
+terminals/
+agent-transcripts/
+
+# Local scratch
+test_shell.txt
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Tampermonkey local backups (just in case)
+*.user.js.bak
