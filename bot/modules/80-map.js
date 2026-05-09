@@ -403,6 +403,21 @@
         kinds.push("grey_chest");
         continue;
       }
+      // AI CHANGED: Live recon — some grey/silver chest builds use a different fill or filename than #a5abb5.
+      if (
+        marker.includes("grey-chest") ||
+        marker.includes("greychest") ||
+        marker.includes("gray-chest") ||
+        marker.includes("silver-chest") ||
+        marker.includes("icon-src-chest") ||
+        (marker.includes("chest") &&
+          !marker.includes("purple") &&
+          !marker.includes("7b2dda") &&
+          !marker.includes("2d53da"))
+      ) {
+        kinds.push("grey_chest");
+        continue;
+      }
       kinds.push("other_loot");
     }
     return kinds;
@@ -423,7 +438,7 @@
     }
 
     // AI CHANGED: Apply exact loot ranking:
-    // purple chest > blue chest > broken cargo > altar > grey chest > contract > only mobs > empty/allies.
+    // purple chest > blue chest > broken cargo > altar > grey chest > unknown icon > contract > only mobs > empty/allies.
     let base = 0;
     if (lootKinds.includes("purple_chest")) {
       base = 900000;
@@ -435,6 +450,11 @@
       base = 600000;
     } else if (lootKinds.includes("grey_chest")) {
       base = 500000;
+    } else if (lootKinds.includes("other_loot")) {
+      // AI CHANGED: Icons we do not classify used to fall through to "mobs or empty" base — chest-only tiles
+      // often became 100000 while a 2-mob neighbor scored 300400, so the bot skipped real loot visually
+      // marked on the map. Tier sits below grey_chest (known hex) but above contract.
+      base = 450000;
     } else if (lootKinds.includes("contract")) {
       base = 400000;
     } else if (enemies > 0) {
