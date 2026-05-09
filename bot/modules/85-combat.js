@@ -1,44 +1,127 @@
-  // AI CHANGED: Added helper to verify attack effect by enemy count drop or target HP change.
-  async function attackUntilProgress(beforeState) {
-    let previous = beforeState;
-    let missingAttackControl = false;
-    for (let i = 0; i < Config.combat.maxAttackAttempts; i += 1) {
-      // AI CHANGED: Click attack once per found enemy, then wait only for enemyCount drop.
-      if (i === 0) {
-        const attackClicked = clickBasicAttack();
-        if (!attackClicked) {
-          missingAttackControl = true;
-          break;
+  // AI CHANGED: Phase C4 slice 8 — first swing: ranked attack skill (if enabled + pick), else basic attack.
+  // AI CHANGED: slice 9 — optional opts.useRankedSkillOpener === false forces basic-only (follow-up bursts).
+  function clickPlannerOpeningAttack(opts) {
+    const useSkill =
+      Config.planner.useRankedAttackSkillsInCombat &&
+      (!opts || opts.useRankedSkillOpener !== false);
+    if (useSkill) {
+      const pick = plannerPickSkillSlotToCast();
+      if (pick != null) {
+        const ok = clickActionBarSlot(pick);
+        if (ok) {
+          Logger.log("PLANNER", "Opening attack used ranked skill slot", { slot: pick });
+          return { ok: true, skillSlot: pick };
         }
+        Logger.warn("PLANNER", "Ranked skill slot click failed; falling back to basic attack", { slot: pick });
       }
-      const enemyDropped = await waitForCondition(
-        "attack progress",
-        () => {
-          const now = readBasicState();
-          const dropped =
-            typeof previous.combat.enemyCount === "number" &&
-            typeof now.combat.enemyCount === "number" &&
-            now.combat.enemyCount < previous.combat.enemyCount;
-          if (dropped) {
-            previous = now;
-            return true;
-          }
-          return false;
-        },
-        { timeoutMs: 4500, pollMs: 140 }
-      );
-      if (enemyDropped) {
+    }
+    const basicOk = clickBasicAttack();
+    return { ok: basicOk, skillSlot: null };
+  }
+
+  // AI CHANGED: slice 8b — true if enemy died (count) or target red bar dropped (same max HP baseline).
+  function hasCombatProgressSince(baselineState) {
+    return function () {
+      const now = readBasicState();
+      if (
+        typeof baselineState.combat.enemyCount === "number" &&
+        typeof now.combat.enemyCount === "number" &&
+        now.combat.enemyCount < baselineState.combat.enemyCount
+      ) {
         return true;
       }
-      if (i === 0) {
-        Logger.warn("LOOP", "Enemy count did not drop after single attack click");
+      const b = baselineState.combat.targetHp;
+      const t = now.combat.targetHp;
+      if (b && b.valid && t && t.valid && b.max === t.max && t.cur < b.cur) {
+        return true;
+      }
+      return false;
+    };
+  }
+
+  // AI CHANGED: Added helper to verify attack effect by enemy count drop or target HP change.
+  // AI CHANGED: slice 9 — opts.useRankedSkillOpener (default true) gates ranked opener vs basic-only burst.
+  async function attackUntilProgress(beforeState, opts) {
+    const timeoutMs = Number.isFinite(Config.combat.attackProgressTimeoutMs)
+      ? Config.combat.attackProgressTimeoutMs
+      : 4500;
+    const pollMs = Number.isFinite(Config.combat.attackProgressPollMs)
+      ? Config.combat.attackProgressPollMs
+      : 140;
+
+    const open = clickPlannerOpeningAttack(opts);
+    if (!open.ok) {
+      Logger.warn("LOOP", "Attack loop aborted: no attack click succeeded");
+      return false;
+    }
+
+    let progressed = await waitForCondition(
+      "attack progress",
+      hasCombatProgressSince(beforeState),
+      { timeoutMs: timeoutMs, pollMs: pollMs }
+    );
+    if (progressed) {
+      return true;
+    }
+
+    if (open.skillSlot != null) {
+      Logger.warn("PLANNER", "Skill opener had no verified progress; trying basic attack", {
+        slot: open.skillSlot
+      });
+      const baselineAfterSkill = readBasicState();
+      if (!clickBasicAttack()) {
+        Logger.warn("LOOP", "Basic attack click failed after skill opener");
         return false;
       }
+      progressed = await waitForCondition(
+        "attack progress",
+        hasCombatProgressSince(baselineAfterSkill),
+        { timeoutMs: timeoutMs, pollMs: pollMs }
+      );
+      if (progressed) {
+        return true;
+      }
     }
-    if (missingAttackControl) {
-      Logger.warn("LOOP", "Attack loop aborted: missing attack control selector");
-    }
+
+    Logger.warn("LOOP", "No attack progress detected (enemy count + target HP unchanged for baseline)");
     return false;
+  }
+
+  // AI CHANGED: Phase C4 -- optional enemy DB refresh during auto-farm (Config.planner.recordEnemyDbBeforeAttack).
+  function plannerMaybeRecordEnemyBeforeAttack() {
+    if (!Config.planner.recordEnemyDbBeforeAttack) {
+      return null;
+    }
+    try {
+      const rec = recordTargetToEnemyDb();
+      if (rec) {
+        Logger.log("PLANNER", "Enemy DB row refreshed before attack", { key: rec.key });
+      }
+      return rec;
+    } catch (err) {
+      Logger.warn("PLANNER", "recordTargetToEnemyDb failed", err);
+      return null;
+    }
+  }
+
+  // AI CHANGED: Phase C4 -- one-line hint after combat clears (Config.planner.logPlannerAfterSecureTile).
+  function plannerMaybeLogAfterSecureCombat() {
+    if (!Config.planner.logPlannerAfterSecureTile) {
+      return;
+    }
+    const key = Runtime.enemy.lastFoughtKey;
+    let calibrated = false;
+    if (key && Runtime.enemy.db && Runtime.enemy.db.length) {
+      const row = Runtime.enemy.db.find((r) => r.key === key);
+      calibrated = !!(row && row.observeCalAgg && row.observeCalAgg.hpDropSamples > 0);
+    }
+    Logger.log("PLANNER", "Combat cleared — planner snapshot", {
+      lastFoughtKey: key,
+      hasHpDropCalibration: calibrated,
+      hint: calibrated
+        ? null
+        : "For hp_drop merge: await ligmarBot.quickCalibrationSession() while attacking a target."
+    });
   }
 
   // AI CHANGED: Added first autonomous secure-current-tile-and-loot cycle with bounded retries.
@@ -85,19 +168,86 @@
         break;
       }
 
-      // AI CHANGED: Surface attack as live status.
-      setBotStatus("attacking", `engaging target (remaining=${current.combat.enemyCount})`);
-      const beforeAttack = readBasicState();
-      const attackProgressed = await attackUntilProgress(beforeAttack);
-      if (!attackProgressed) {
-        Logger.warn("LOOP", "No attack progress detected in current cycle");
-      }
+      const maxBursts = Number.isFinite(Config.combat.maxCombatAttackBurstsPerFind)
+        ? Config.combat.maxCombatAttackBurstsPerFind
+        : 24;
+      let attackBursts = 0;
+      while (
+        typeof current.combat.enemyCount === "number" &&
+        current.combat.enemyCount > 0 &&
+        attackBursts < maxBursts
+      ) {
+        attackBursts += 1;
+        plannerMaybeRecordEnemyBeforeAttack();
 
-      current = readBasicState();
-      Logger.log("LOOP", "Combat state after cycle", {
-        enemyCount: current.combat.enemyCount,
-        targetHp: current.combat.targetHp
-      });
+        const useRankedBurst =
+          Config.planner.useRankedAttackSkillsInCombat &&
+          (!Config.planner.useRankedSkillOnlyFirstBurstAfterFind || attackBursts === 1);
+
+        // AI CHANGED: Surface attack as live status (slice 9 — burst index for multi-mob pulls).
+        setBotStatus(
+          "attacking",
+          `engaging target (remaining=${current.combat.enemyCount}, burst=${attackBursts}/${maxBursts}, find=${findAttempts})`
+        );
+        const beforeAttack = readBasicState();
+        const attackProgressed = await attackUntilProgress(beforeAttack, {
+          useRankedSkillOpener: useRankedBurst
+        });
+        if (!attackProgressed) {
+          Logger.warn("LOOP", "No attack progress detected in burst", { attackBursts, findAttempts });
+          break;
+        }
+
+        current = readBasicState();
+        const countBeforeBurst =
+          typeof beforeAttack.combat.enemyCount === "number" ? beforeAttack.combat.enemyCount : null;
+        const countAfterBurst =
+          typeof current.combat.enemyCount === "number" ? current.combat.enemyCount : null;
+        const killedOnThisBurst =
+          countBeforeBurst != null &&
+          countAfterBurst != null &&
+          countAfterBurst < countBeforeBurst;
+
+        Logger.log("LOOP", "Combat state after burst", {
+          enemyCount: current.combat.enemyCount,
+          targetHp: current.combat.targetHp,
+          attackBursts,
+          findAttempts,
+          killedOnThisBurst
+        });
+
+        // AI CHANGED: slice 9 fix — inner bursts skipped find-enemy between kills; next target/red bar often only updates after find, so attackUntilProgress timed out (~attackProgressTimeoutMs) then outer loop spammed find. Re-acquire only when count dropped but pull not clear.
+        if (
+          killedOnThisBurst &&
+          countAfterBurst != null &&
+          countAfterBurst > 0 &&
+          attackBursts < maxBursts
+        ) {
+          setBotStatus(
+            "finding",
+            `re-target after kill (enemies=${countAfterBurst}, burst=${attackBursts}/${maxBursts}, findPass=${findAttempts})`
+          );
+          Logger.log("LOOP", "Re-find-enemy after kill in multi-mob pull", {
+            countBeforeBurst,
+            countAfterBurst,
+            attackBursts
+          });
+          const refindOk = await clickFindEnemyVerified();
+          if (!refindOk.ok) {
+            Logger.warn("LOOP", "Re-find-enemy after burst failed", refindOk);
+            break;
+          }
+          const reAcquired = await waitForTargetAcquired();
+          if (!reAcquired) {
+            Logger.warn("LOOP", "Target HP not detected after re-find; continuing by enemy-count logic");
+          }
+          current = readBasicState();
+          if (typeof current.combat.enemyCount === "number" && current.combat.enemyCount <= 0) {
+            Logger.log("LOOP", "Enemies cleared during re-find after kill");
+            break;
+          }
+        }
+      }
     }
 
     if (current.combat.enemyCount > 0) {
@@ -107,6 +257,8 @@
       });
       return { ok: false, stage: "combat", enemyCount: current.combat.enemyCount, attempts: findAttempts };
     }
+
+    plannerMaybeLogAfterSecureCombat();
 
     // AI CHANGED: Surface loot as live status (clickLootOrActivateVerified internally handles "no loot" no-op).
     setBotStatus("looting", "collecting loot / activating event");

@@ -213,10 +213,57 @@
     return `${hr}h ${restMin}m`;
   }
 
+  // AI CHANGED: Persist planner hook toggles from the control panel across reloads.
+  function loadPlannerUiPrefs() {
+    try {
+      const raw = window.localStorage.getItem("ligmarbot.plannerUi.v1");
+      if (!raw) {
+        return;
+      }
+      const p = JSON.parse(raw);
+      if (typeof p.recordEnemyDbBeforeAttack === "boolean") {
+        Config.planner.recordEnemyDbBeforeAttack = p.recordEnemyDbBeforeAttack;
+      }
+      if (typeof p.logPlannerAfterSecureTile === "boolean") {
+        Config.planner.logPlannerAfterSecureTile = p.logPlannerAfterSecureTile;
+      }
+      if (typeof p.useRankedAttackSkillsInCombat === "boolean") {
+        Config.planner.useRankedAttackSkillsInCombat = p.useRankedAttackSkillsInCombat;
+      }
+    } catch (err) {
+      // AI CHANGED: Ignore corrupt prefs.
+    }
+  }
+
+  function savePlannerUiPrefs() {
+    try {
+      window.localStorage.setItem(
+        "ligmarbot.plannerUi.v1",
+        JSON.stringify({
+          recordEnemyDbBeforeAttack: !!Config.planner.recordEnemyDbBeforeAttack,
+          logPlannerAfterSecureTile: !!Config.planner.logPlannerAfterSecureTile,
+          useRankedAttackSkillsInCombat: !!Config.planner.useRankedAttackSkillsInCombat
+        })
+      );
+    } catch (err) {
+      // AI CHANGED: Non-fatal.
+    }
+  }
+
   // AI CHANGED: Live GUI refresher — phase block, button enabled-state, and compact stats line.
   function updateControlPanelStatus() {
     if (!Runtime.ui.statusNode) {
       return;
+    }
+
+    if (Runtime.ui.plannerRecordCheck && Runtime.ui.plannerRecordCheck.checked !== !!Config.planner.recordEnemyDbBeforeAttack) {
+      Runtime.ui.plannerRecordCheck.checked = !!Config.planner.recordEnemyDbBeforeAttack;
+    }
+    if (Runtime.ui.plannerLogCheck && Runtime.ui.plannerLogCheck.checked !== !!Config.planner.logPlannerAfterSecureTile) {
+      Runtime.ui.plannerLogCheck.checked = !!Config.planner.logPlannerAfterSecureTile;
+    }
+    if (Runtime.ui.plannerSkillsCheck && Runtime.ui.plannerSkillsCheck.checked !== !!Config.planner.useRankedAttackSkillsInCombat) {
+      Runtime.ui.plannerSkillsCheck.checked = !!Config.planner.useRankedAttackSkillsInCombat;
     }
 
     // Update Start/Stop button enabled-state so the GUI shows which action is currently meaningful.
@@ -275,6 +322,8 @@
     if (Runtime.ui.panel) {
       return Runtime.ui.panel;
     }
+
+    loadPlannerUiPrefs();
 
     const panel = document.createElement("div");
     panel.id = "ligmar-bot-panel";
@@ -367,6 +416,67 @@
     buttonsWrap.appendChild(stopButton);
     panel.appendChild(buttonsWrap);
 
+    // ---- Planner hooks (C4 slice 7) ------------------------------------
+    const plannerWrap = document.createElement("div");
+    plannerWrap.style.marginBottom = "10px";
+    plannerWrap.style.padding = "8px 10px";
+    plannerWrap.style.background = "rgba(0,0,0,0.22)";
+    plannerWrap.style.borderRadius = "6px";
+    plannerWrap.style.border = "1px solid rgba(115, 138, 255, 0.2)";
+
+    const plannerTitle = document.createElement("div");
+    plannerTitle.textContent = "Planner (auto-farm)";
+    plannerTitle.style.fontSize = "10.5px";
+    plannerTitle.style.fontWeight = "700";
+    plannerTitle.style.opacity = "0.75";
+    plannerTitle.style.marginBottom = "6px";
+    plannerTitle.style.letterSpacing = "0.4px";
+    plannerWrap.appendChild(plannerTitle);
+
+    function makePlannerRow(labelText, checkedInitial) {
+      const row = document.createElement("label");
+      row.style.display = "flex";
+      row.style.alignItems = "center";
+      row.style.gap = "8px";
+      row.style.cursor = "pointer";
+      row.style.fontSize = "11px";
+      row.style.marginBottom = "4px";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = !!checkedInitial;
+      cb.style.cursor = "pointer";
+      const span = document.createElement("span");
+      span.textContent = labelText;
+      span.style.opacity = "0.9";
+      span.style.lineHeight = "1.35";
+      row.appendChild(cb);
+      row.appendChild(span);
+      return { row: row, check: cb };
+    }
+
+    const pr = makePlannerRow("Record enemy row before attack", Config.planner.recordEnemyDbBeforeAttack);
+    pr.check.addEventListener("change", () => {
+      Config.planner.recordEnemyDbBeforeAttack = pr.check.checked;
+      savePlannerUiPrefs();
+      Logger.log("UI", "planner.recordEnemyDbBeforeAttack", Config.planner.recordEnemyDbBeforeAttack);
+    });
+    const pl = makePlannerRow("Log planner hint after combat", Config.planner.logPlannerAfterSecureTile);
+    pl.check.addEventListener("change", () => {
+      Config.planner.logPlannerAfterSecureTile = pl.check.checked;
+      savePlannerUiPrefs();
+      Logger.log("UI", "planner.logPlannerAfterSecureTile", Config.planner.logPlannerAfterSecureTile);
+    });
+    const ps = makePlannerRow("Use ranked attack skill (opening hit)", Config.planner.useRankedAttackSkillsInCombat);
+    ps.check.addEventListener("change", () => {
+      Config.planner.useRankedAttackSkillsInCombat = ps.check.checked;
+      savePlannerUiPrefs();
+      Logger.log("UI", "planner.useRankedAttackSkillsInCombat", Config.planner.useRankedAttackSkillsInCombat);
+    });
+    plannerWrap.appendChild(pr.row);
+    plannerWrap.appendChild(pl.row);
+    plannerWrap.appendChild(ps.row);
+    panel.appendChild(plannerWrap);
+
     // ---- Phase block (the "what is the bot doing right now" area) ------
     const phaseWrap = document.createElement("div");
     phaseWrap.style.padding = "10px";
@@ -428,6 +538,9 @@
     Runtime.ui.phaseNode = phaseNode;
     Runtime.ui.phaseDetailNode = phaseDetailNode;
     Runtime.ui.phaseSinceNode = phaseSinceNode;
+    Runtime.ui.plannerRecordCheck = pr.check;
+    Runtime.ui.plannerLogCheck = pl.check;
+    Runtime.ui.plannerSkillsCheck = ps.check;
 
     updateControlPanelStatus();
 

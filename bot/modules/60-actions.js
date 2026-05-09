@@ -32,6 +32,22 @@
     return { ok: closed, closed: closed, reason: closed ? "closed" : "close_click_failed" };
   }
 
+  // AI CHANGED: Phase C4 slice 8 — click one battle-bar slot by index (same ordering as scanSkills / app-action-button list).
+  function clickActionBarSlot(slotIndex) {
+    const bar = document.querySelector(Config.selectors.actionBar);
+    if (!bar) {
+      Logger.warn("ACTION", "action-bar slot click skipped: no action bar");
+      return false;
+    }
+    const buttons = bar.querySelectorAll("app-action-button");
+    const n = buttons ? buttons.length : 0;
+    if (!buttons || typeof slotIndex !== "number" || slotIndex < 0 || slotIndex >= n) {
+      Logger.warn("ACTION", "action-bar slot click skipped: bad index", { slotIndex: slotIndex, count: n });
+      return false;
+    }
+    return clickElementSafe(buttons[slotIndex], "action-slot-" + slotIndex);
+  }
+
   // AI CHANGED: Added adaptive basic-attack clicker using optional selector and fallback text search.
   function clickBasicAttack() {
     if (Config.selectors.basicAttackButton) {
