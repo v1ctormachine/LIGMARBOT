@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.54",
-    "description":  "slice 32: default ranked opener grace 200ms",
-    "builtAt":  "2026-05-10T17:28:55.3144209+03:00",
+    "version":  "0.3.55",
+    "description":  "slice 33: TEST hint — cancel smoke ends channel by design",
+    "builtAt":  "2026-05-10T18:30:06.7484762+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.55",
+                        "description":  "slice 33: TEST hint — cancel smoke ends channel by design",
+                        "date":  "2026-05-10T18:30:06.7484762+03:00"
+                    },
                     {
                         "version":  "0.3.54",
                         "description":  "slice 32: default ranked opener grace 200ms",
@@ -247,11 +252,6 @@
                         "version":  "0.3.6",
                         "description":  "Damage observer: count lethal 0 HP as hp_drop not suspicious",
                         "date":  "2026-05-09T18:30:08.2545879+03:00"
-                    },
-                    {
-                        "version":  "0.3.5",
-                        "description":  "Phase C2 damage observer: HP deltas + floating text scan",
-                        "date":  "2026-05-09T18:24:42.3147217+03:00"
                     }
                 ]
 }

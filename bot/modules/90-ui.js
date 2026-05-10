@@ -644,12 +644,12 @@
     testButton.style.marginBottom = "6px";
     panel.appendChild(testButton);
 
-    // AI CHANGED: Static hint — when to press TEST + what it does (see ARCHITECTURE.md).
+    // AI CHANGED: slice 33 — hint: mid-channel TEST taps cancel on purpose when hint visible; see ARCHITECTURE.md.
     const testHint = document.createElement("div");
     testHint.textContent =
       "When to press TEST:\n" +
       "• Calibration (~10s): in combat — target name + red HP bar visible, then press and keep attacking until it ends (idle/town = weak merge).\n" +
-      "• Cancel check: mid-charge only — skill shows cancel hint; otherwise that step skips.\n" +
+      "• Cancel check: if cancel hint is visible when TEST reaches this step, the bot taps cancel (your channel ends) — on purpose. Avoid: press TEST when not charging, or ligmarBot.runUiTestBundle({ fireChargeCancelIfHint: false }).\n" +
       "• Probes/planner logs: any time.\n" +
       "If auto-farm was ON, TEST stops it for the run then restarts the loop when done (console: resumeAutoFarm: false to stay stopped).\n" +
       "Lighter: ligmarBot.runUiTestBundle({ runQuickCalibration: false }).";

@@ -1,6 +1,6 @@
 # Ligmarbot roadmap
 
-Short plan after **v0.3.54** / **slice 32** (default **Grace 200 ms** on ranked opener; early cancel still **0**).
+Short plan after **v0.3.55** / **slice 33** (TEST text: mid-channel = **intentional** cancel smoke).
 
 ## Done recently
 
@@ -11,6 +11,7 @@ Short plan after **v0.3.54** / **slice 32** (default **Grace 200 ms** on ranked 
 - **TEST** — press **in combat** for calibration (target bar visible, then keep hitting); **mid-charge** if you want cancel smoke; see panel hint / **`ARCHITECTURE.md`**.
 - **TEST + farm** — if auto-farm was **ON**, TEST stops it for the bundle, then **starts the loop again** (stay off: `ligmarBot.runUiTestBundle({ resumeAutoFarm: false })`).
 - **Opener Grace** — new installs default **200 ms**; existing **`combatUi.v1`** saves keep your old values until you change the panel.
+- **TEST mid-channel** — cancel hint visible → bot **will** tap cancel (smoke); DB merge from the follow-on observe is still a successful run.
 
 ## Next (pick order)
 
