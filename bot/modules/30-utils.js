@@ -69,13 +69,16 @@
 
   // AI CHANGED: Added shared async sleep helper for paced loop execution.
   // AI CHANGED: slice 21 — chunk sleeps so Runtime.autoFarm.stopRequested can release long holds quickly.
-  function sleep(ms) {
+  // AI CHANGED: optional opts.bypassStop — TEST wait-for-farm-idle must not spin when stopRequested (90-ui.js).
+  function sleep(ms, opts) {
+    const o = opts && typeof opts === "object" ? opts : {};
+    const bypassStop = o.bypassStop === true;
     const total = Math.max(0, Number(ms) || 0);
     const stepMs = 80;
     return new Promise((resolve) => {
       let elapsed = 0;
       const tick = () => {
-        if (Runtime.autoFarm.stopRequested) {
+        if (!bypassStop && Runtime.autoFarm.stopRequested) {
           resolve();
           return;
         }

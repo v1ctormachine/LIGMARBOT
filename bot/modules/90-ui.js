@@ -451,8 +451,9 @@
       stopAutoFarmLoop();
       const maxWaitMs = 120000;
       const t0 = Date.now();
+      // AI CHANGED: sleep must use bypassStop — plain sleep() returns immediately while stopRequested, causing a CPU spin freeze.
       while (Runtime.autoFarm.running && Date.now() - t0 < maxWaitMs) {
-        await sleep(80);
+        await sleep(80, { bypassStop: true });
       }
       if (Runtime.autoFarm.running) {
         Logger.warn("TEST", "auto-farm still running after wait — continuing TEST anyway", getAutoFarmStatus());

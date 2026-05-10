@@ -17,6 +17,7 @@ Emergency **hotfix** (crash / wrong click): ship immediately, even if tiny.
 
 ## Done recently
 
+- **Hotfix v0.3.62** — **ON → TEST** tab freeze: **`sleep()`** was **0 ms** while **`stopRequested`**, so TEST’s farm-idle wait spun the main thread; **`sleep(80, { bypassStop: true })`** in **`runUiTestBundle`**.
 - **TEST (full auto)** — **`runUiTestBundle`** runs **scanSkills** (when needed), **readHeroCombatStats**, planner opener dry-run + diagnostics, probes, cancel smoke, calibration; console **`[TEST] SUMMARY`** + panel **Last TEST** line; opts **`forceSkillScan`**, **`strictCalibration`**, etc.
 - **Pack A — planner / empty or gated skills**: **`Runtime.planner`** records every ranked-opener pick (`empty_cache`, `no_attack_skills_for_ranker`, `all_candidates_filtered` + skip **breakdown**, or **`picked`**); throttled **`[PLANNER]`** logs when combat falls back to basic; **`Config.planner.logOpeningPickFailures`** / **`openingPickFailureLogThrottleMs`**; **`ligmarBot.getPlannerOpeningPickDiagnostics()`**.
 - Stuck ranked opener → cancel charge (hint visible) so cooldown can start; map button / canvas gap click first.
