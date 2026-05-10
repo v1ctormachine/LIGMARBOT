@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.46",
-    "description":  "slice 24d: TEST cancel smoke checkbox + testUi.v1 persistence",
-    "builtAt":  "2026-05-10T16:08:22.6548763+03:00",
+    "version":  "0.3.47",
+    "description":  "slice 25: charge grace + early cancel-if-hint on ranked opener",
+    "builtAt":  "2026-05-10T16:14:24.4053304+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.47",
+                        "description":  "slice 25: charge grace + early cancel-if-hint on ranked opener",
+                        "date":  "2026-05-10T16:14:24.4053304+03:00"
+                    },
                     {
                         "version":  "0.3.46",
                         "description":  "slice 24d: TEST cancel smoke checkbox + testUi.v1 persistence",
@@ -247,11 +252,6 @@
                         "version":  "0.2.6",
                         "description":  "Fix die-guided ally bias + hex sampling + tolerance 75 + ally penalty 5x",
                         "date":  "2026-05-09T14:38:26.1740557+03:00"
-                    },
-                    {
-                        "version":  "0.2.5",
-                        "description":  "Lower 2-ring yellow-die threshold 4% -\u003e 0.5% (match real signal at ~1.1%)",
-                        "date":  "2026-05-09T14:18:51.4229524+03:00"
                     }
                 ]
 }

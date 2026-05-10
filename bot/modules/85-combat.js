@@ -70,6 +70,18 @@
       await sleep(settleRanked);
     }
 
+    // AI CHANGED: slice 25 — optional grace so slow-starting charge skills register before HP polling.
+    const chargeGraceRaw = Config.combat.rankedOpenerChargeGraceMs;
+    const chargeGraceMs =
+      open.skillSlot != null && Number.isFinite(chargeGraceRaw) && chargeGraceRaw > 0 ? chargeGraceRaw : 0;
+    if (chargeGraceMs > 0) {
+      await sleep(chargeGraceMs);
+    }
+    if (Runtime.autoFarm.stopRequested) {
+      Logger.log("LOOP", "attackUntilProgress: stop requested after charge grace; skipping follow-up");
+      return false;
+    }
+
     const firstWaitTimeoutMs =
       open.skillSlot != null ? firstRankedTimeoutMs : fullTimeoutMs; // AI CHANGED: slice 23 — fast fallback when first ranked pick does nothing observable
     if (open.skillSlot != null && firstWaitTimeoutMs < fullTimeoutMs) {
@@ -80,14 +92,76 @@
       });
     }
 
-    let progressed = await waitForCondition(
-      "attack progress",
-      hasCombatProgressSince(beforeState),
-      { timeoutMs: firstWaitTimeoutMs, pollMs: pollMs }
-    );
-    if (progressed) {
-      return true;
+    const earlyCancelRaw = Config.combat.rankedOpenerEarlyCancelIfHintAfterMs;
+    const earlyCancelMs =
+      open.skillSlot != null &&
+      Number.isFinite(earlyCancelRaw) &&
+      earlyCancelRaw > 0 &&
+      earlyCancelRaw < firstWaitTimeoutMs
+        ? earlyCancelRaw
+        : 0;
+
+    let chargeCancelAttempted = false;
+    let progressed = false;
+
+    if (earlyCancelMs > 0) {
+      progressed = await waitForCondition(
+        "attack progress (early window)",
+        hasCombatProgressSince(beforeState),
+        { timeoutMs: earlyCancelMs, pollMs: pollMs }
+      );
+      if (progressed) {
+        return true;
+      }
+      if (Runtime.autoFarm.stopRequested) {
+        Logger.log("LOOP", "attackUntilProgress: stop requested after early opener wait");
+        return false;
+      }
+      if (
+        Config.combat.rankedOpenerClickCancelUiIfChargeStuck !== false &&
+        isChargingSkillCancelHintVisible()
+      ) {
+        Logger.log("LOOP", "ranked opener early charge cancel (hint after partial wait)", {
+          earlyCancelMs: earlyCancelMs,
+          slot: open.skillSlot
+        });
+        clickChargingSkillCancelUi();
+        chargeCancelAttempted = true;
+        if (settleRanked > 0) {
+          await sleep(settleRanked);
+        }
+        if (Runtime.autoFarm.stopRequested) {
+          return false;
+        }
+        progressed = await waitForCondition(
+          "attack progress after early charge cancel",
+          hasCombatProgressSince(beforeState),
+          { timeoutMs: fullTimeoutMs, pollMs: pollMs }
+        );
+        if (progressed) {
+          return true;
+        }
+      } else {
+        progressed = await waitForCondition(
+          "attack progress (late window)",
+          hasCombatProgressSince(beforeState),
+          { timeoutMs: firstWaitTimeoutMs - earlyCancelMs, pollMs: pollMs }
+        );
+        if (progressed) {
+          return true;
+        }
+      }
+    } else {
+      progressed = await waitForCondition(
+        "attack progress",
+        hasCombatProgressSince(beforeState),
+        { timeoutMs: firstWaitTimeoutMs, pollMs: pollMs }
+      );
+      if (progressed) {
+        return true;
+      }
     }
+
     // AI CHANGED: slice 21b — stop-aborted wait must not fall through to more clicks (alternate opener / basic).
     if (Runtime.autoFarm.stopRequested) {
       Logger.log("LOOP", "attackUntilProgress: stop requested after opener wait; skipping follow-up attacks");
@@ -96,6 +170,7 @@
 
     // AI CHANGED: slice 24b — charge skill stuck: first wait saw no HP/count (CD not running until cancel or full shot). Tap cancel UI only when needed, not a second bar click.
     if (
+      !chargeCancelAttempted &&
       open.skillSlot != null &&
       Config.combat.rankedOpenerClickCancelUiIfChargeStuck !== false &&
       isChargingSkillCancelHintVisible()

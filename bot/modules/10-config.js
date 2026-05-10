@@ -35,6 +35,10 @@
       rankedOpenerFirstProgressTimeoutMs: 4200,
       // AI CHANGED: slice 23 — brief pause after bar skill click before polling HP/count (reduces one-frame false “no progress”).
       postRankedSkillClickSettleMs: 120,
+      // AI CHANGED: slice 25 — extra ms after settle before first progress wait (channel/charge wind-up); 0 = off.
+      rankedOpenerChargeGraceMs: 0,
+      // AI CHANGED: slice 25 — if > 0 and < rankedOpenerFirstProgressTimeoutMs: after this many ms with no progress, cancel charge when hint visible (else keep waiting until full first wait). 0 = legacy (cancel only after full first wait).
+      rankedOpenerEarlyCancelIfHintAfterMs: 0,
       // AI CHANGED: slice 24b — charge skills (e.g. Sniper Shot): CD does not start until cancel UI tap or full charge fires. Only if first progress wait fails, click the cancel control (not the bar slot).
       rankedOpenerClickCancelUiIfChargeStuck: true,
       // AI CHANGED: Prefer click in the gap between map toggle and map canvas (reliable charge cancel); false = DOM cancel only.
