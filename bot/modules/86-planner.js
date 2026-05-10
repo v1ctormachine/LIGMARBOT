@@ -1,7 +1,7 @@
   // AI CHANGED: Phase C4 (slice 1) -- read-only paper combat math for console / future automation.
   // Uses Runtime.hero.combatStats + Runtime.skills.slots. **Slice 11:** opener path uses
-  // isActionBarSlotShowingCooldown(). **Slice 12:** opener hold ms from cast/channel cache
-  // (plannerOpenerHoldCastMs) for clickActionBarSlotHoldCast in combat. **Slice 17:** opener pick skips skills whose required hold exceeds the safe bar window (short click no-op).
+  // isActionBarSlotShowingCooldown(). **Slice 22:** combat ranked opener is tap-only (clickActionBarSlot);
+  // plannerOpenerHoldCastMs kept for API compat, always 0 — no bar hold-cast in combat.
   // Ground truth for real fights remains observeCombatDamage (C2) + enemy DB (C3).
 
   function estimatePaperBasicAttackDps(statsOverride) {
@@ -364,81 +364,10 @@
     return false;
   }
 
-  // AI CHANGED: slice 12+17 — shared math for “how long must we hold the bar” vs scan-safe max (tooltip threshold).
-  function plannerOpenerHoldRawClampedMs(slotRec) {
-    if (!slotRec || Config.planner.useHoldCastForChannelOpeners === false) {
-      return { raw: 0, needsHold: false };
-    }
-    const pad = Number.isFinite(Config.planner.channelOpenerHoldPadMs)
-      ? Config.planner.channelOpenerHoldPadMs
-      : 180;
-    const cap = Number.isFinite(Config.planner.channelOpenerHoldCapMs)
-      ? Config.planner.channelOpenerHoldCapMs
-      : 4000;
-    const floor = Number.isFinite(Config.planner.channelOpenerHoldMinMs)
-      ? Config.planner.channelOpenerHoldMinMs
-      : 120;
-    let needMs = 0;
-    const ct = slotRec.castTimeSec;
-    if (Number.isFinite(ct) && ct > 0) {
-      needMs = Math.max(needMs, ct * 1000 + pad);
-    }
-    const effs = slotRec.effects || [];
-    for (let j = 0; j < effs.length; j += 1) {
-      const e = effs[j];
-      if (e && e.type === "channel_gear" && Number.isFinite(e.channelMaxSec) && e.channelMaxSec > 0) {
-        needMs = Math.max(needMs, e.channelMaxSec * 1000 + pad);
-        break;
-      }
-    }
-    if (needMs <= 0) {
-      return { raw: 0, needsHold: false };
-    }
-    const raw = Math.min(Math.max(needMs, floor), cap);
-    return { raw: raw, needsHold: true };
-  }
-
-  function plannerOpenerMaxSafeBarHoldMs() {
-    const openMs = Number.isFinite(Config.skills.holdToOpenMs) ? Config.skills.holdToOpenMs : 450;
-    const margin = Number.isFinite(Config.planner.channelOpenerAvoidPopupMarginMs)
-      ? Config.planner.channelOpenerAvoidPopupMarginMs
-      : 120;
-    return Math.max(80, openMs - margin);
-  }
-
-  // AI CHANGED: slice 17+18 — true if this skill needs a real channel/cast hold longer than the bar “safe” window (only when clamp-to-tooltip mode is on).
-  function plannerSkillOpenerHoldBlockedByShortPressLimit(slotRec) {
-    if (Config.planner.channelOpenerClampHoldToTooltipSafeMs !== true) {
-      return false;
-    }
-    const o = plannerOpenerHoldRawClampedMs(slotRec);
-    if (!o.needsHold) {
-      return false;
-    }
-    return o.raw > plannerOpenerMaxSafeBarHoldMs();
-  }
-
-  // AI CHANGED: Phase C4 slice 12 — hold duration (ms) for opener when cache says cast time or channel_gear window.
-  // AI CHANGED: slice 18 — default path uses full raw hold (capped); optional clamp matches slice-12b scan-tooltip safety.
+  // AI CHANGED: slice 22 — combat does not use bar hold-cast; Ligmar activates skills with a normal tap. Kept for console/API scripts that still call ligmarBot.plannerOpenerHoldCastMs().
   function plannerOpenerHoldCastMs(slotRec) {
-    const o = plannerOpenerHoldRawClampedMs(slotRec);
-    if (!o.needsHold) {
-      return 0;
-    }
-    if (Config.planner.channelOpenerClampHoldToTooltipSafeMs !== true) {
-      return o.raw;
-    }
-    const maxSafeHold = plannerOpenerMaxSafeBarHoldMs();
-    if (o.raw > maxSafeHold) {
-      Logger.warn("PLANNER", "Opener hold-cast skipped (would open skill popup like scan long-press); using click", {
-        computedHoldMs: o.raw,
-        maxSafeHoldMs: maxSafeHold,
-        holdToOpenMs: Number.isFinite(Config.skills.holdToOpenMs) ? Config.skills.holdToOpenMs : 450,
-        name: slotRec.name || ""
-      });
-      return 0;
-    }
-    return o.raw;
+    void slotRec;
+    return 0;
   }
 
   // AI CHANGED: Phase C4 slice 8+12+15 — full pick { slot, record } for opener; optional excludeSlots (indices already tried this burst).
@@ -508,15 +437,6 @@
           });
           continue;
         }
-      }
-      // AI CHANGED: slice 17+18 — only when channelOpenerClampHoldToTooltipSafeMs: skip skills that need a long bar-hold (else full hold is used in combat).
-      if (plannerSkillOpenerHoldBlockedByShortPressLimit(s)) {
-        Logger.log("PLANNER", "Skipping ranked skill opener (cast/channel needs hold longer than safe bar window)", {
-          slot: idx,
-          name: s.name || "",
-          maxSafeHoldMs: plannerOpenerMaxSafeBarHoldMs()
-        });
-        continue;
       }
       if (exclude.has(idx)) {
         continue;

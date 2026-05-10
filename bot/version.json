@@ -1,8 +1,43 @@
 ﻿{
-    "version":  "0.3.35",
-    "description":  "slice 18 default full channel opener hold + dismiss popup (v0.3.35)",
-    "builtAt":  "2026-05-09T23:00:36.9928664+03:00",
+    "version":  "0.3.42",
+    "description":  "slice 23 shorter first ranked opener progress wait + post-click settle",
+    "builtAt":  "2026-05-10T12:19:33.6352747+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.42",
+                        "description":  "slice 23 shorter first ranked opener progress wait + post-click settle",
+                        "date":  "2026-05-10T12:19:33.6352747+03:00"
+                    },
+                    {
+                        "version":  "0.3.41",
+                        "description":  "slice 22 remove combat bar hold-cast tap-only opener",
+                        "date":  "2026-05-10T12:04:41.8132854+03:00"
+                    },
+                    {
+                        "version":  "0.3.40",
+                        "description":  "slice 21b stop exits secureTile no fail spam skill boot retries",
+                        "date":  "2026-05-10T09:50:00.1356962+03:00"
+                    },
+                    {
+                        "version":  "0.3.39",
+                        "description":  "slice 21 BOOT DPR use Logger.warn",
+                        "date":  "2026-05-10T09:29:02.5592836+03:00"
+                    },
+                    {
+                        "version":  "0.3.38",
+                        "description":  "slice 21 stop cooperativity zoom reset loot settle DPR boot warn",
+                        "date":  "2026-05-10T09:28:20.3582286+03:00"
+                    },
+                    {
+                        "version":  "0.3.37",
+                        "description":  "slice 20 pointer bar press + scoped basic attack + holdCast result + popup cleanup",
+                        "date":  "2026-05-09T23:15:48.9602492+03:00"
+                    },
+                    {
+                        "version":  "0.3.36",
+                        "description":  "slice 19b hard cap bar hold + holdCast defense; fix opener tooltip long-press",
+                        "date":  "2026-05-09T23:09:29.4895378+03:00"
+                    },
                     {
                         "version":  "0.3.35",
                         "description":  "slice 18 default full channel opener hold + dismiss popup (v0.3.35)",

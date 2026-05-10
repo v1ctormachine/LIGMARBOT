@@ -7,6 +7,18 @@
 
     // AI CHANGED: Boot log now includes BotVersion so the console clearly reports which bundle is live.
     Logger.log("BOOT", `bot loaded — v${BotVersion.version}: ${BotVersion.description}`);
+    // AI CHANGED: slice 21 — neighborStepPx ring calibration assumes ~100% browser zoom / nominal DPR≈1.
+    if (
+      Config.boot &&
+      Config.boot.warnNonUnityDevicePixelRatio &&
+      typeof window.devicePixelRatio === "number" &&
+      Math.abs(window.devicePixelRatio - 1) > 0.02
+    ) {
+      Logger.warn(
+        "BOOT",
+        `devicePixelRatio=${window.devicePixelRatio} — ring scan neighborStepPx is tuned for ~1.0; zoomed OS display or browser zoom may misalign clicks.`
+      );
+    }
     probeSelectors();
 
     // AI CHANGED: Phase C0 -- attempt to populate Runtime.skills.slots from localStorage cache.
@@ -23,25 +35,37 @@
         "If you changed class/hero or action bar: ligmarBot.clearSkillsCache() then await ligmarBot.scanSkills() (auto-farm OFF)."
       );
     } else if (Runtime.skills.lastError === "cache_bar_not_ready") {
-      // AI CHANGED: slice 16 — first inject can run before `app-battle-action-bar` mounts; retry once so a valid cache still loads.
-      Logger.log("BOOT", "Skill cache deferred: action bar not ready for fingerprint; retry in 1.5s.");
-      setTimeout(function () {
-        Runtime.skills.lastError = null;
-        if (loadSkillsFromCache()) {
-          Logger.log("BOOT", `Loaded ${Runtime.skills.slots.length} skill slots from cache (deferred)`, {
-            savedAt: Runtime.skills.scannedAt
-          });
+      // AI CHANGED: slice 16 — first inject can run before `app-battle-action-bar` mounts; slice 21b — multi-retry schedule.
+      const delays =
+        Array.isArray(Config.skills.bootCacheRetryDelaysMs) && Config.skills.bootCacheRetryDelaysMs.length > 0
+          ? Config.skills.bootCacheRetryDelaysMs
+          : [1500, 3500, 8000];
+      function scheduleSkillCacheRetry(retryIndex) {
+        if (retryIndex >= delays.length) {
           Logger.log(
             "BOOT",
-            "If you changed class/hero or action bar: ligmarBot.clearSkillsCache() then await ligmarBot.scanSkills() (auto-farm OFF)."
+            "Skill cache not loaded after deferred retries — run `ligmarBot.scanSkills()` (auto-farm OFF) if slots stay empty or names look wrong."
           );
-        } else {
-          Logger.log(
-            "BOOT",
-            "Deferred skill cache load skipped — run `ligmarBot.scanSkills()` (auto-farm OFF) if slots stay empty or names look wrong."
-          );
+          return;
         }
-      }, 1500);
+        const waitMs = delays[retryIndex];
+        Logger.log("BOOT", `Skill cache deferred: action bar not ready for fingerprint; retry ${retryIndex + 1}/${delays.length} in ${waitMs}ms.`);
+        setTimeout(function () {
+          Runtime.skills.lastError = null;
+          if (loadSkillsFromCache()) {
+            Logger.log("BOOT", `Loaded ${Runtime.skills.slots.length} skill slots from cache (deferred)`, {
+              savedAt: Runtime.skills.scannedAt
+            });
+            Logger.log(
+              "BOOT",
+              "If you changed class/hero or action bar: ligmarBot.clearSkillsCache() then await ligmarBot.scanSkills() (auto-farm OFF)."
+            );
+          } else {
+            scheduleSkillCacheRetry(retryIndex + 1);
+          }
+        }, waitMs);
+      }
+      scheduleSkillCacheRetry(0);
     } else if (
       Runtime.skills.lastError === "cache_bar_mismatch" ||
       Runtime.skills.lastError === "cache_missing_fingerprint"
@@ -94,6 +118,8 @@
       // AI CHANGED: Expose zoom helpers so user can re-trigger max zoom-out after reload/death without restarting bot.
       ensureMapZoomedOut: ensureMapZoomedOut,
       forceZoomOut: forceZoomOut,
+      // AI CHANGED: slice 21 — debug: clear zoom cache when session shows death / poor connection.
+      resetZoomAssumptionIfSessionRisk: resetZoomAssumptionIfSessionRisk,
       getMapCanvas: getMapCanvas,
       moveToMapPoint: moveToMapPoint,
       exploreIfIdle: exploreIfIdle,
@@ -108,7 +134,6 @@
       clearSecondRingOverlay: clearSecondRingOverlay,
       clickBasicAttack: clickBasicAttack,
       clickActionBarSlot: clickActionBarSlot,
-      clickActionBarSlotHoldCast: clickActionBarSlotHoldCast,
       closeSkillInfoPopupQuick: closeSkillInfoPopupQuick,
       isActionBarSlotShowingCooldown: isActionBarSlotShowingCooldown,
       isBasicAttackConfigured: isBasicAttackConfigured,
@@ -175,7 +200,6 @@
       plannerPickSkillSlotToCast: plannerPickSkillSlotToCast,
       plannerPickSkillOpeningPick: plannerPickSkillOpeningPick,
       plannerOpenerHoldCastMs: plannerOpenerHoldCastMs,
-      plannerSkillOpenerHoldBlockedByShortPressLimit: plannerSkillOpenerHoldBlockedByShortPressLimit,
       plannerSkillHasDirectDamageForOpener: plannerSkillHasDirectDamageForOpener
     };
 

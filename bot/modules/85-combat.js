@@ -1,6 +1,6 @@
   // AI CHANGED: Phase C4 slice 8 — first swing: ranked attack skill (if enabled + pick), else basic attack.
   // AI CHANGED: slice 9 — optional opts.useRankedSkillOpener === false forces basic-only (follow-up bursts).
-  // AI CHANGED: slice 12 — channel / non-instant cast uses hold-cast on bar when plannerOpenerHoldCastMs > 0.
+  // AI CHANGED: slice 22 — combat opener is tap-only (clickActionBarSlot); no synthetic bar hold — game uses tap for skills including charge start.
   // AI CHANGED: slice 15 — excludeSlots skips bar indices already used this burst (alternate ranked openers).
   async function clickPlannerOpeningAttack(opts, excludeSlots) {
     const useSkill =
@@ -9,23 +9,7 @@
     if (useSkill) {
       const opening = plannerPickSkillOpeningPick({ excludeSlots: excludeSlots || [] });
       if (opening != null) {
-        const holdMs = plannerOpenerHoldCastMs(opening.record);
-        let ok = false;
-        if (holdMs > 0) {
-          ok = await clickActionBarSlotHoldCast(opening.slot, holdMs);
-          // AI CHANGED: slice 18 — long combat hold can open skill info like scan; dismiss so the next click is not blocked.
-          closeSkillInfoPopupQuick();
-          if (ok) {
-            Logger.log("PLANNER", "Opening attack used ranked skill slot (hold-cast)", {
-              slot: opening.slot,
-              holdMs: holdMs,
-              name: opening.record.name || ""
-            });
-            return { ok: true, skillSlot: opening.slot };
-          }
-          Logger.warn("PLANNER", "Hold-cast failed; trying normal click", { slot: opening.slot });
-        }
-        ok = clickActionBarSlot(opening.slot);
+        const ok = clickActionBarSlot(opening.slot); // AI CHANGED: slice 22 — always normal bar click
         if (ok) {
           Logger.log("PLANNER", "Opening attack used ranked skill slot", { slot: opening.slot });
           return { ok: true, skillSlot: opening.slot };
@@ -60,9 +44,14 @@
   // AI CHANGED: Added helper to verify attack effect by enemy count drop or target HP change.
   // AI CHANGED: slice 9 — opts.useRankedSkillOpener (default true) gates ranked opener vs basic-only burst.
   async function attackUntilProgress(beforeState, opts) {
-    const timeoutMs = Number.isFinite(Config.combat.attackProgressTimeoutMs)
+    const fullTimeoutMs = Number.isFinite(Config.combat.attackProgressTimeoutMs)
       ? Config.combat.attackProgressTimeoutMs
       : 4500;
+    const firstRankedTimeoutRaw = Config.combat.rankedOpenerFirstProgressTimeoutMs;
+    const firstRankedTimeoutMs =
+      Number.isFinite(firstRankedTimeoutRaw) && firstRankedTimeoutRaw > 0
+        ? firstRankedTimeoutRaw
+        : fullTimeoutMs;
     const pollMs = Number.isFinite(Config.combat.attackProgressPollMs)
       ? Config.combat.attackProgressPollMs
       : 140;
@@ -73,13 +62,36 @@
       return false;
     }
 
+    // AI CHANGED: slice 23 — let the client apply tap-cast before we poll target HP / enemy count.
+    const settleRanked = Number.isFinite(Config.combat.postRankedSkillClickSettleMs)
+      ? Config.combat.postRankedSkillClickSettleMs
+      : 0;
+    if (open.skillSlot != null && settleRanked > 0) {
+      await sleep(settleRanked);
+    }
+
+    const firstWaitTimeoutMs =
+      open.skillSlot != null ? firstRankedTimeoutMs : fullTimeoutMs; // AI CHANGED: slice 23 — fast fallback when first ranked pick does nothing observable
+    if (open.skillSlot != null && firstWaitTimeoutMs < fullTimeoutMs) {
+      Logger.log("LOOP", "attack progress wait (first ranked opener)", {
+        timeoutMs: firstWaitTimeoutMs,
+        fullTimeoutMs: fullTimeoutMs,
+        slot: open.skillSlot
+      });
+    }
+
     let progressed = await waitForCondition(
       "attack progress",
       hasCombatProgressSince(beforeState),
-      { timeoutMs: timeoutMs, pollMs: pollMs }
+      { timeoutMs: firstWaitTimeoutMs, pollMs: pollMs }
     );
     if (progressed) {
       return true;
+    }
+    // AI CHANGED: slice 21b — stop-aborted wait must not fall through to more clicks (alternate opener / basic).
+    if (Runtime.autoFarm.stopRequested) {
+      Logger.log("LOOP", "attackUntilProgress: stop requested after opener wait; skipping follow-up attacks");
+      return false;
     }
 
     // AI CHANGED: slice 15 — try next ranked opener(s) before basic if first skill had no verified effect.
@@ -100,13 +112,21 @@
         slot: open2.skillSlot,
         attempt: alt + 1
       });
+      if (settleRanked > 0) {
+        await sleep(settleRanked);
+      }
       progressed = await waitForCondition(
         "attack progress",
         hasCombatProgressSince(beforeState),
-        { timeoutMs: timeoutMs, pollMs: pollMs }
+        { timeoutMs: fullTimeoutMs, pollMs: pollMs }
       );
       if (progressed) {
         return true;
+      }
+      // AI CHANGED: slice 21b — same as primary opener: do not chain more attacks after Stop.
+      if (Runtime.autoFarm.stopRequested) {
+        Logger.log("LOOP", "attackUntilProgress: stop requested after alternate opener wait");
+        return false;
       }
       triedSlots.push(open2.skillSlot);
     }
@@ -120,13 +140,21 @@
         Logger.warn("LOOP", "Basic attack click failed after skill opener");
         return false;
       }
+      if (Runtime.autoFarm.stopRequested) {
+        Logger.log("LOOP", "attackUntilProgress: stop requested before basic-attack wait");
+        return false;
+      }
       progressed = await waitForCondition(
         "attack progress",
         hasCombatProgressSince(baselineAfterSkill),
-        { timeoutMs: timeoutMs, pollMs: pollMs }
+        { timeoutMs: fullTimeoutMs, pollMs: pollMs }
       );
       if (progressed) {
         return true;
+      }
+      if (Runtime.autoFarm.stopRequested) {
+        Logger.log("LOOP", "attackUntilProgress: stop requested after basic-attack wait");
+        return false;
       }
     }
 
@@ -174,6 +202,8 @@
   // AI CHANGED: Added first autonomous secure-current-tile-and-loot cycle with bounded retries.
   async function secureTileAndLootOnce() {
     const startState = readBasicState();
+    // AI CHANGED: slice 21 — death / disconnect often reset in-game zoom without reloading the page.
+    resetZoomAssumptionIfSessionRisk(startState.session);
     if (typeof startState.combat.enemyCount !== "number") {
       Logger.warn("LOOP", "Cannot start secure loop: enemyCount unavailable");
       return { ok: false, stage: "precheck", reason: "enemy_count_unavailable" };
@@ -190,6 +220,20 @@
     let current = startState;
     let findAttempts = 0;
     while (current.combat.enemyCount > 0 && findAttempts < Config.combat.maxFindEnemyAttempts) {
+      // AI CHANGED: slice 21b — do not burn find-enemy attempts or send clicks after user Stop.
+      if (Runtime.autoFarm.stopRequested) {
+        Logger.log("LOOP", "Secure-tile cycle aborted before find-enemy (stop requested)", {
+          attemptsSoFar: findAttempts,
+          enemyCount: current.combat.enemyCount
+        });
+        return {
+          ok: false,
+          stage: "combat",
+          reason: "stop_requested",
+          enemyCount: current.combat.enemyCount,
+          attempts: findAttempts
+        };
+      }
       findAttempts += 1;
       // AI CHANGED: Surface find-enemy as live status.
       setBotStatus("finding", `attempt ${findAttempts}/${Config.combat.maxFindEnemyAttempts} (enemies=${current.combat.enemyCount})`);
@@ -197,6 +241,19 @@
 
       const findResult = await clickFindEnemyVerified();
       if (!findResult.ok) {
+        if (Runtime.autoFarm.stopRequested) {
+          Logger.log("LOOP", "Secure-tile cycle aborted after find-enemy wait (stop requested)", {
+            attempt: findAttempts,
+            enemyCount: current.combat.enemyCount
+          });
+          return {
+            ok: false,
+            stage: "combat",
+            reason: "stop_requested",
+            enemyCount: current.combat.enemyCount,
+            attempts: findAttempts
+          };
+        }
         Logger.warn("LOOP", "Find-enemy verification failed", findResult);
         current = readBasicState();
         continue;
@@ -235,6 +292,19 @@
         current.combat.enemyCount > 0 &&
         attackBursts < maxBursts
       ) {
+        if (Runtime.autoFarm.stopRequested) {
+          Logger.log("LOOP", "Secure-tile combat bursts aborted (stop requested)", {
+            attackBursts: attackBursts,
+            findAttempts: findAttempts
+          });
+          return {
+            ok: false,
+            stage: "combat",
+            reason: "stop_requested",
+            enemyCount: current.combat.enemyCount,
+            attempts: findAttempts
+          };
+        }
         attackBursts += 1;
         plannerMaybeRecordEnemyBeforeAttack();
 
@@ -250,6 +320,19 @@
           useRankedSkillOpener: useRankedBurst
         });
         if (!attackProgressed) {
+          if (Runtime.autoFarm.stopRequested) {
+            Logger.log("LOOP", "Secure-tile cycle aborted after attack burst (stop requested)", {
+              attackBursts: attackBursts,
+              findAttempts: findAttempts
+            });
+            return {
+              ok: false,
+              stage: "combat",
+              reason: "stop_requested",
+              enemyCount: current.combat.enemyCount,
+              attempts: findAttempts
+            };
+          }
           Logger.warn("LOOP", "No attack progress detected in burst", { attackBursts, findAttempts });
           break;
         }
@@ -283,6 +366,19 @@
           countAfterBurst > 0 &&
           attackBursts < maxBursts
         ) {
+          if (Runtime.autoFarm.stopRequested) {
+            Logger.log("LOOP", "Secure-tile cycle aborted before re-find (stop requested)", {
+              attackBursts: attackBursts,
+              findAttempts: findAttempts
+            });
+            return {
+              ok: false,
+              stage: "combat",
+              reason: "stop_requested",
+              enemyCount: current.combat.enemyCount,
+              attempts: findAttempts
+            };
+          }
           setBotStatus(
             "finding",
             `re-target after kill (enemies=${countAfterBurst}, burst=${attackBursts}/${maxBursts}, findPass=${findAttempts})`
@@ -294,6 +390,19 @@
           });
           const refindOk = await clickFindEnemyVerified();
           if (!refindOk.ok) {
+            if (Runtime.autoFarm.stopRequested) {
+              Logger.log("LOOP", "Secure-tile cycle aborted after re-find wait (stop requested)", {
+                attackBursts: attackBursts,
+                findAttempts: findAttempts
+              });
+              return {
+                ok: false,
+                stage: "combat",
+                reason: "stop_requested",
+                enemyCount: current.combat.enemyCount,
+                attempts: findAttempts
+              };
+            }
             Logger.warn("LOOP", "Re-find-enemy after burst failed", refindOk);
             break;
           }
@@ -314,6 +423,20 @@
           }
         }
       }
+    }
+
+    if (Runtime.autoFarm.stopRequested && typeof current.combat.enemyCount === "number" && current.combat.enemyCount > 0) {
+      Logger.log("LOOP", "Secure-tile cycle ended with enemies present (stop requested)", {
+        enemyCount: current.combat.enemyCount,
+        attempts: findAttempts
+      });
+      return {
+        ok: false,
+        stage: "combat",
+        reason: "stop_requested",
+        enemyCount: current.combat.enemyCount,
+        attempts: findAttempts
+      };
     }
 
     if (current.combat.enemyCount > 0) {
@@ -369,6 +492,7 @@
     return {
       ok: !!secureResult.ok,
       stage: secureResult.stage,
+      reason: secureResult.reason,
       prep: prepMap,
       secure: secureResult
     };
@@ -424,6 +548,8 @@
       setBotStatus("waiting", "movement settle gate");
       // AI CHANGED: Block new cycle start until movement bar clears to avoid scan-vs-move overlap.
       await waitUntilNotMoving("auto-loop");
+      // AI CHANGED: slice 21 — fresh session flags each cycle so zoom flag tracks UI, not stale assumptions.
+      resetZoomAssumptionIfSessionRisk(readBasicState().session);
       const cycleResult = await runPreparedSecureCycle();
       Runtime.autoFarm.lastResult = cycleResult;
       Runtime.autoFarm.cyclesCompleted += 1;
@@ -431,6 +557,11 @@
       if (cycleResult && cycleResult.ok) {
         Runtime.autoFarm.consecutiveFailures = 0;
         Logger.log("AUTO", "Cycle completed", {
+          cycle: Runtime.autoFarm.cyclesCompleted,
+          stage: cycleResult.stage
+        });
+      } else if (cycleResult && cycleResult.reason === "stop_requested") {
+        Logger.log("AUTO", "Cycle aborted by user stop (not counted as failure)", {
           cycle: Runtime.autoFarm.cyclesCompleted,
           stage: cycleResult.stage
         });

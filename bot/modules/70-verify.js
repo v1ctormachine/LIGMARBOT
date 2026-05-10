@@ -5,6 +5,12 @@
     const start = Date.now();
     return new Promise((resolve) => {
       const tick = () => {
+        // AI CHANGED: slice 21 — cooperative stop so verify waits don’t block Stop.
+        if (Runtime.autoFarm.stopRequested) {
+          Logger.log("VERIFY", `${label} aborted (stop requested)`, { elapsedMs: Date.now() - start });
+          resolve(false);
+          return;
+        }
         let passed = false;
         try {
           passed = !!predicate();
@@ -37,6 +43,14 @@
     let stableStart = null;
     return new Promise((resolve) => {
       const tick = () => {
+        // AI CHANGED: slice 21 — long loot-settle waits respect Stop.
+        if (Runtime.autoFarm.stopRequested) {
+          Logger.log("VERIFY", "loot interaction settle aborted (stop requested)", {
+            elapsedMs: Date.now() - start
+          });
+          resolve(false);
+          return;
+        }
         const lootElt = document.querySelector(Config.selectors.lootButton);
         const lootGone = !lootElt;
         let statusBusy = false;
@@ -74,6 +88,30 @@
       };
       tick();
     });
+  }
+
+  // AI CHANGED: slice 21 — heuristic “bag full” from visible overlay / game root text (see Config.verification).
+  function detectInventoryFullFromUi() {
+    const subs = Config.verification.inventoryFullSubstrings;
+    if (!Array.isArray(subs) || subs.length === 0) {
+      return false;
+    }
+    const sels = Config.verification.inventoryFullScanSelectors;
+    const roots = Array.isArray(sels) && sels.length > 0 ? sels : ["app-game"];
+    for (let r = 0; r < roots.length; r += 1) {
+      const root = document.querySelector(roots[r]);
+      if (!root) {
+        continue;
+      }
+      const text = (root.textContent || "").toLowerCase();
+      for (let i = 0; i < subs.length; i += 1) {
+        const sub = String(subs[i] || "").toLowerCase();
+        if (sub && text.indexOf(sub) !== -1) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   // AI CHANGED: Added guard to avoid scan/verify while movement animation is still active.
@@ -136,9 +174,32 @@
       return { ok: false, clicked: true, verified: false, reason: "center_failed_after_loot", center: centered };
     }
     clickMapCenterTile();
+    // AI CHANGED: slice 21 — brief pause after recenter before loot-settle (reduces highlight flicker race).
+    const settleMs = Number.isFinite(Config.verification.lootPostCenterTileSettleMs)
+      ? Config.verification.lootPostCenterTileSettleMs
+      : 0;
+    if (settleMs > 0) {
+      await sleep(settleMs);
+    }
     // AI CHANGED: Hybrid settle — battle status (Opening/Activating) + stable absence of highlight loot button.
     const verified = await waitForLootInteractionSettled();
-    return { ok: verified, clicked: true, verified: verified, waitedForLootGone: true };
+    if (!verified && detectInventoryFullFromUi()) {
+      Logger.warn("LOOT", "Loot settle failed; inventory-full hint detected in UI text");
+      return {
+        ok: false,
+        clicked: true,
+        verified: false,
+        waitedForLootGone: true,
+        reason: "inventory_full"
+      };
+    }
+    return {
+      ok: verified,
+      clicked: true,
+      verified: verified,
+      waitedForLootGone: true,
+      reason: verified ? undefined : "loot_settle_timeout"
+    };
   }
 
   // AI CHANGED: Added center-map verification wrapper for reliable map recentering.

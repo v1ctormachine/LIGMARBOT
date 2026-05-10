@@ -68,8 +68,27 @@
   }
 
   // AI CHANGED: Added shared async sleep helper for paced loop execution.
+  // AI CHANGED: slice 21 — chunk sleeps so Runtime.autoFarm.stopRequested can release long holds quickly.
   function sleep(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
+    const total = Math.max(0, Number(ms) || 0);
+    const stepMs = 80;
+    return new Promise((resolve) => {
+      let elapsed = 0;
+      const tick = () => {
+        if (Runtime.autoFarm.stopRequested) {
+          resolve();
+          return;
+        }
+        if (elapsed >= total) {
+          resolve();
+          return;
+        }
+        const slice = Math.min(stepMs, total - elapsed);
+        elapsed += slice;
+        setTimeout(tick, slice);
+      };
+      tick();
+    });
   }
 
   // AI CHANGED: Added helper for consistent compact JSON text in GUI status.

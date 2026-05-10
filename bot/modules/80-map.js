@@ -47,6 +47,22 @@
     return ensureMapZoomedOut();
   }
 
+  // AI CHANGED: slice 21 — game may reset camera zoom on death / poor connection; clear maxedOut so ensureMapZoomedOut runs again.
+  function resetZoomAssumptionIfSessionRisk(session) {
+    if (!session) {
+      return false;
+    }
+    const risky = !!(session.dead || session.poorConnection);
+    if (!risky) {
+      return false;
+    }
+    if (Runtime.zoom.maxedOut) {
+      Logger.log("ZOOM", "Cleared maxedOut (death or poor connection) — next scan will re-apply wheel zoom-out");
+    }
+    Runtime.zoom.maxedOut = false;
+    return true;
+  }
+
   // AI CHANGED: Added movement-state detector via yellow canvas condition bar "Moving".
   function isMovementInProgress() {
     const movingNode = document.querySelector(Config.selectors.movingBarValue);

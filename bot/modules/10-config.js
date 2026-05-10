@@ -1,6 +1,10 @@
   // AI CHANGED: Added centralized config for bootstrap, selectors, and timing.
   const Config = {
     tickMs: 500,
+    // AI CHANGED: slice 21 — optional boot hints (DPR / scaling vs calibrated neighborStepPx).
+    boot: {
+      warnNonUnityDevicePixelRatio: true
+    },
     // AI CHANGED: Added action verification timing config for click+confirm flows.
     verification: {
       pollMs: 120,
@@ -11,6 +15,12 @@
       lootSettleTimeoutMs: 12000,
       // AI CHANGED: Tighter poll during loot settle to catch short DOM flickers without adding much CPU.
       lootSettlePollMs: 80,
+      // AI CHANGED: slice 21 — after recenter, wait before loot-settle polling (map follow-up vs highlight button).
+      lootPostCenterTileSettleMs: 280,
+      // AI CHANGED: slice 21 — if loot settle fails and any of these substrings appear in scan roots, treat as full bag (tune to your locale; [] disables). Games that always grant coin loot may never surface these strings.
+      inventoryFullSubstrings: ["inventory is full", "bag is full", "not enough space"],
+      // AI CHANGED: slice 21 — roots scanned for inventoryFullSubstrings (cheap textContent includes).
+      inventoryFullScanSelectors: ["app-game", ".cdk-overlay-container"],
       // AI CHANGED: Substrings (lowercase match) on visible app-battle-status-bar label while interaction runs.
       lootInteractionBusySubstrings: ["opening", "activating"]
     },
@@ -21,6 +31,10 @@
       attackTickMs: 350,
       // AI CHANGED: slice 8b — attackUntilProgress waits for enemy kill OR target HP drop (same max).
       attackProgressTimeoutMs: 6500,
+      // AI CHANGED: slice 23 — first ranked opener only: shorter wait before alternate/basic (avoids ~6.5s idle when top-ranked skill whiffs or is slow to register). Alternate openers still use attackProgressTimeoutMs.
+      rankedOpenerFirstProgressTimeoutMs: 4200,
+      // AI CHANGED: slice 23 — brief pause after bar skill click before polling HP/count (reduces one-frame false “no progress”).
+      postRankedSkillClickSettleMs: 120,
       attackProgressPollMs: 140,
       // AI CHANGED: Phase C4 slice 9 — after each successful find-enemy, keep attacking until clear/stuck (bounded).
       maxCombatAttackBurstsPerFind: 24
@@ -42,15 +56,6 @@
       useRankedSkillOnlyFirstBurstAfterFind: true,
       // AI CHANGED: Phase C4 slice 11 — skip ranked opener when live DOM hints cooldown on that bar slot (see isActionBarSlotShowingCooldown).
       skipOpenerWhenActionBarShowsCooldown: true,
-      // AI CHANGED: Phase C4 slice 12 — ranked opener uses mousedown+hold+mouseup on bar when scan cache says channel / non-instant cast (see plannerOpenerHoldCastMs).
-      useHoldCastForChannelOpeners: true,
-      channelOpenerHoldPadMs: 180,
-      channelOpenerHoldMinMs: 120,
-      channelOpenerHoldCapMs: 4000,
-      // AI CHANGED: slice 12b — when channelOpenerClampHoldToTooltipSafeMs is true, hold must stay below scan long-press (Config.skills.holdToOpenMs) or the game may open skill tooltip instead of casting.
-      channelOpenerAvoidPopupMarginMs: 120,
-      // AI CHANGED: slice 18 — when true, cap opener hold to ~holdToOpenMs-margin and skip ranked picks that need longer holds (scan-tooltip safe). When false (default), opener uses full computed hold up to channelOpenerHoldCapMs so channels/casts actually fire; may open app-action-info — bot closes it after hold when possible.
-      channelOpenerClampHoldToTooltipSafeMs: false,
       // AI CHANGED: Phase C4 slice 15 — after first ranked opener fails verify, try up to N more ranked picks (same burst, same beforeState baseline) before basic fallback.
       openerExtraRankedSkills: 1
     },
@@ -185,7 +190,9 @@
       // localStorage key for the skill DB cache. Bumped if we ever change the parsed schema.
       storageKey: "ligmarbot.skillsDb.v1",
       // AI CHANGED: Phase C4 slice 13 — on boot, discard cache if live bar fingerprint != saved (class switch).
-      invalidateCacheOnBarMismatch: true
+      invalidateCacheOnBarMismatch: true,
+      // AI CHANGED: slice 21b — BOOT retries loadSkillsFromCache when action bar mounts late (ms after previous attempt).
+      bootCacheRetryDelaysMs: [1500, 3500, 8000]
     },
     selectors: {
       // AI CHANGED: Relaxed HP selector to avoid brittle container path mismatches.
@@ -198,8 +205,8 @@
       findEnemyButton: "app-button-icon.button-find-target",
       // AI CHANGED: Wired real loot/activate selector provided from live DOM.
       lootButton: "div.battle-event-button.highlight",
-      // AI CHANGED: Wired basic-attack selector from fresh provided DOM element.
-      basicAttackButton: "app-action-button.type-default",
+      // AI CHANGED: Wired basic-attack selector — must stay under battle bar so we never click a stray type-default elsewhere.
+      basicAttackButton: "app-battle-action-bar app-action-button.type-default",
       // AI CHANGED: Wired real center-map button selector from provided DOM.
       centerMapButton: "div.action-bottom-panel app-icon.to-center",
       // AI CHANGED: Wired real map-toggle button selector from provided DOM.
