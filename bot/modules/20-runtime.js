@@ -43,13 +43,6 @@
       // AI CHANGED: 2-ring debug overlay refs (the SVG element + its auto-clear timer).
       secondRingOverlay: null,
       secondRingOverlayTimer: null,
-      // AI CHANGED: Planner hook checkboxes (90-ui.js).
-      plannerRecordCheck: null,
-      plannerLogCheck: null,
-      // AI CHANGED: Phase C4 slice 8 — ranked skills in combat toggle.
-      plannerSkillsCheck: null,
-      // AI CHANGED: Phase C4 slice 10 — ranked skill only on first burst after find-enemy.
-      plannerFirstBurstOnlyCheck: null,
       // AI CHANGED: TEST (version) panel button — ref for disable-while-running (90-ui.js).
       testButton: null,
       // AI CHANGED: slice 26 — ranked opener ms inputs (90-ui.js).

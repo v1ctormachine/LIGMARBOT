@@ -318,10 +318,14 @@
     const baseObserve = {
       includeFloatingTexts: false,
       mergeToEnemyDb: true,
-      totalMs: 10000
+      totalMs: 10000,
+      // AI CHANGED: lethal-only fights (kill within window) still carry a real hp_drop — include in merge so TEST/calibration is not empty.
+      mergeOpts: { excludeLethal: false }
     };
     const observeIn = opts.observe && typeof opts.observe === "object" ? opts.observe : {};
     const observe = Object.assign({}, baseObserve, observeIn);
+    const moIn = observeIn.mergeOpts && typeof observeIn.mergeOpts === "object" ? observeIn.mergeOpts : {};
+    observe.mergeOpts = Object.assign({}, baseObserve.mergeOpts, moIn);
 
     const session = await observeCombatDamage(observe);
     const key =
