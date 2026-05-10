@@ -35,10 +35,13 @@
       rankedOpenerFirstProgressTimeoutMs: 4200,
       // AI CHANGED: slice 23 — brief pause after bar skill click before polling HP/count (reduces one-frame false “no progress”).
       postRankedSkillClickSettleMs: 120,
-      // AI CHANGED: slice 24 — charge skills: UI shows “Press to cancel”; second tap same slot fires partial/full release per game rules.
-      rankedOpenerSecondTapIfChargingHint: true,
+      // AI CHANGED: slice 24b — charge skills (e.g. Sniper Shot): CD does not start until cancel UI tap or full charge fires. Only if first progress wait fails, click the cancel control (not the bar slot).
+      rankedOpenerClickCancelUiIfChargeStuck: true,
       chargingCancelHintSubstrings: ["press to cancel"],
       chargingCancelHintScanRoot: "app-game",
+      // AI CHANGED: slice 24b — optional explicit cancel button(s); if empty, walk up from hint span to button / role=button.
+      chargingCancelClickSelectors: [],
+      chargingCancelParentWalkMax: 14,
       attackProgressPollMs: 140,
       // AI CHANGED: Phase C4 slice 9 — after each successful find-enemy, keep attacking until clear/stuck (bounded).
       maxCombatAttackBurstsPerFind: 24

@@ -120,11 +120,11 @@
     return false;
   }
 
-  // AI CHANGED: slice 24 — visible charge UI (e.g. span.status-description “Press to cancel”) for ranked opener second tap.
-  function isChargingSkillCancelHintVisible() {
+  // AI CHANGED: slice 24b — find visible “Press to cancel” (or configured substrings) on charge UI.
+  function findChargingSkillCancelHintElement() {
     const subs = Config.combat.chargingCancelHintSubstrings;
     if (!Array.isArray(subs) || subs.length === 0) {
-      return false;
+      return null;
     }
     const rootSel =
       typeof Config.combat.chargingCancelHintScanRoot === "string" && Config.combat.chargingCancelHintScanRoot.trim()
@@ -132,7 +132,7 @@
         : "app-game";
     const root = document.querySelector(rootSel);
     if (!root) {
-      return false;
+      return null;
     }
     const nodes = root.querySelectorAll("span.status-description, .status-description");
     for (let i = 0; i < nodes.length; i += 1) {
@@ -144,11 +144,65 @@
       for (let j = 0; j < subs.length; j += 1) {
         const sub = String(subs[j] || "").toLowerCase();
         if (sub && t.indexOf(sub) !== -1) {
-          return true;
+          return el;
         }
       }
     }
-    return false;
+    return null;
+  }
+
+  function isChargingSkillCancelHintVisible() {
+    return !!findChargingSkillCancelHintElement();
+  }
+
+  // AI CHANGED: slice 24b — element to click for charge cancel (explicit selectors first, else ancestor button / role=button, else hint node).
+  function getChargingSkillCancelClickTarget() {
+    const hint = findChargingSkillCancelHintElement();
+    if (!hint) {
+      return null;
+    }
+    const explicit = Config.combat.chargingCancelClickSelectors;
+    if (Array.isArray(explicit) && explicit.length > 0) {
+      for (let e = 0; e < explicit.length; e += 1) {
+        const sel = String(explicit[e] || "").trim();
+        if (!sel) {
+          continue;
+        }
+        const el = document.querySelector(sel);
+        if (el && isElementVisible(el)) {
+          return el;
+        }
+      }
+    }
+    const maxUp = Number.isFinite(Config.combat.chargingCancelParentWalkMax)
+      ? Config.combat.chargingCancelParentWalkMax
+      : 14;
+    let node = hint;
+    for (let u = 0; u < maxUp && node; u += 1) {
+      const tag = (node.tagName || "").toLowerCase();
+      const role = (node.getAttribute && node.getAttribute("role")) || "";
+      if (tag === "button" || role.toLowerCase() === "button") {
+        return node;
+      }
+      if (tag === "a") {
+        const href = node.getAttribute ? node.getAttribute("href") : null;
+        if (href && href !== "#") {
+          return node;
+        }
+      }
+      node = node.parentElement;
+    }
+    return hint;
+  }
+
+  // AI CHANGED: slice 24b — tap dedicated cancel UI (not action bar slot); cooldown starts after release.
+  function clickChargingSkillCancelUi() {
+    const target = getChargingSkillCancelClickTarget();
+    if (!target) {
+      Logger.warn("COMBAT", "charge cancel: no click target (hint missing or selectors unmatched)");
+      return false;
+    }
+    return clickElementSafe(target, "charge-cancel-ui");
   }
 
   // AI CHANGED: Added direct enemy counter reader using the real game selector.

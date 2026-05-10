@@ -94,14 +94,16 @@
       return false;
     }
 
-    // AI CHANGED: slice 24 — charge skill: same slot again when “Press to cancel” is visible (release shot).
+    // AI CHANGED: slice 24b — charge skill stuck: first wait saw no HP/count (CD not running until cancel or full shot). Tap cancel UI only when needed, not a second bar click.
     if (
       open.skillSlot != null &&
-      Config.combat.rankedOpenerSecondTapIfChargingHint !== false &&
+      Config.combat.rankedOpenerClickCancelUiIfChargeStuck !== false &&
       isChargingSkillCancelHintVisible()
     ) {
-      Logger.log("LOOP", "Charging cancel hint visible; second tap same opener slot", { slot: open.skillSlot });
-      clickActionBarSlot(open.skillSlot);
+      Logger.log("LOOP", "Charge cancel hint visible after opener wait; clicking cancel UI (not bar slot)", {
+        slot: open.skillSlot
+      });
+      clickChargingSkillCancelUi();
       if (settleRanked > 0) {
         await sleep(settleRanked);
       }
@@ -109,7 +111,7 @@
         return false;
       }
       progressed = await waitForCondition(
-        "attack progress after charge release tap",
+        "attack progress after charge cancel ui",
         hasCombatProgressSince(beforeState),
         { timeoutMs: fullTimeoutMs, pollMs: pollMs }
       );
@@ -118,7 +120,7 @@
       }
     }
     if (Runtime.autoFarm.stopRequested) {
-      Logger.log("LOOP", "attackUntilProgress: stop requested after charge-release wait");
+      Logger.log("LOOP", "attackUntilProgress: stop requested after charge-cancel wait");
       return false;
     }
 
