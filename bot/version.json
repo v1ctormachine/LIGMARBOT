@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.49",
-    "description":  "slice 27: Calib on TEST checkbox + testUi.v1 + farm-loop warn",
-    "builtAt":  "2026-05-10T16:52:36.5380233+03:00",
+    "version":  "0.3.50",
+    "description":  "slice 28: one-click TEST (auto-stop farm, full calib); drop testUi toggles",
+    "builtAt":  "2026-05-10T16:56:54.3330290+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.50",
+                        "description":  "slice 28: one-click TEST (auto-stop farm, full calib); drop testUi toggles",
+                        "date":  "2026-05-10T16:56:54.3330290+03:00"
+                    },
                     {
                         "version":  "0.3.49",
                         "description":  "slice 27: Calib on TEST checkbox + testUi.v1 + farm-loop warn",
@@ -247,11 +252,6 @@
                         "version":  "0.3.1",
                         "description":  "Skill parser: channel+gear%, stealth, mp/s drain, dodge, crit buff, Instantly cast, extra desc",
                         "date":  "2026-05-09T17:40:56.5890172+03:00"
-                    },
-                    {
-                        "version":  "0.3.0",
-                        "description":  "Phase C0: skill scanner (auto-discover skills, mana, cast/cooldown, effects)",
-                        "date":  "2026-05-09T17:30:00.0000000+03:00"
                     }
                 ]
 }

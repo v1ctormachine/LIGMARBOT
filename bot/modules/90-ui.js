@@ -254,40 +254,6 @@
     }
   }
 
-  // AI CHANGED: slice 24d — persist TEST cancel-smoke flag (separate key from planner).
-  function loadTestUiPrefs() {
-    try {
-      const raw = window.localStorage.getItem("ligmarbot.testUi.v1");
-      if (!raw) {
-        return;
-      }
-      const p = JSON.parse(raw);
-      if (typeof p.testButtonFireChargeCancelWhenHintVisible === "boolean") {
-        Config.ui.testButtonFireChargeCancelWhenHintVisible = p.testButtonFireChargeCancelWhenHintVisible;
-      }
-      // AI CHANGED: slice 27 — persist TEST calibration flag with testUi bundle.
-      if (typeof p.testButtonRunQuickCalibration === "boolean") {
-        Config.ui.testButtonRunQuickCalibration = p.testButtonRunQuickCalibration;
-      }
-    } catch (err) {
-      // AI CHANGED: Ignore corrupt prefs.
-    }
-  }
-
-  function saveTestUiPrefs() {
-    try {
-      window.localStorage.setItem(
-        "ligmarbot.testUi.v1",
-        JSON.stringify({
-          testButtonFireChargeCancelWhenHintVisible: !!Config.ui.testButtonFireChargeCancelWhenHintVisible,
-          testButtonRunQuickCalibration: !!Config.ui.testButtonRunQuickCalibration
-        })
-      );
-    } catch (err) {
-      // AI CHANGED: Non-fatal.
-    }
-  }
-
   // AI CHANGED: slice 26 — persist ranked opener timing (slice 25) from panel.
   function loadCombatUiPrefs() {
     try {
@@ -369,18 +335,6 @@
     ) {
       Runtime.ui.plannerFirstBurstOnlyCheck.checked = !!Config.planner.useRankedSkillOnlyFirstBurstAfterFind;
     }
-    if (
-      Runtime.ui.testCancelSmokeCheck &&
-      Runtime.ui.testCancelSmokeCheck.checked !== !!Config.ui.testButtonFireChargeCancelWhenHintVisible
-    ) {
-      Runtime.ui.testCancelSmokeCheck.checked = !!Config.ui.testButtonFireChargeCancelWhenHintVisible;
-    }
-    if (
-      Runtime.ui.testRunCalibCheck &&
-      Runtime.ui.testRunCalibCheck.checked !== !!Config.ui.testButtonRunQuickCalibration
-    ) {
-      Runtime.ui.testRunCalibCheck.checked = !!Config.ui.testButtonRunQuickCalibration;
-    }
 
     // AI CHANGED: slice 26 — sync opener ms fields when Config changes elsewhere (not while typing).
     if (Runtime.ui.combatGraceInput && document.activeElement !== Runtime.ui.combatGraceInput) {
@@ -447,28 +401,32 @@
     Runtime.ui.statusNode.textContent = lines.join("\n");
   }
 
-  // AI CHANGED: One-click diagnostics — replaces repeated console typing (probe + planner summary + skill rank + charge-cancel probe; optional calibration).
-  function runUiTestBundle(userOpts) {
+  // AI CHANGED: One-click TEST — full diagnostics + charge-cancel smoke (if hint) + quickCalibrationSession unless opts opt out (console: runUiTestBundle({ runQuickCalibration: false })).
+  async function runUiTestBundle(userOpts) {
     const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
-    const runCalibration =
-      opts.runQuickCalibration === true ||
-      (Config.ui && Config.ui.testButtonRunQuickCalibration === true);
-    const fireChargeCancelIfHint =
-      opts.fireChargeCancelIfHint === true ||
-      (Config.ui && Config.ui.testButtonFireChargeCancelWhenHintVisible === true);
+    const runCalibration = opts.runQuickCalibration !== false;
+    const fireChargeCancelIfHint = opts.fireChargeCancelIfHint !== false;
+
+    const af0 = getAutoFarmStatus();
+    if (af0 && af0.running) {
+      Logger.log("TEST", "auto-farm was ON — stop requested so TEST owns the session (click ON after if you want the loop back)", af0);
+      stopAutoFarmLoop();
+      const maxWaitMs = 120000;
+      const t0 = Date.now();
+      while (Runtime.autoFarm.running && Date.now() - t0 < maxWaitMs) {
+        await sleep(80);
+      }
+      if (Runtime.autoFarm.running) {
+        Logger.warn("TEST", "auto-farm still running after wait — continuing TEST anyway", getAutoFarmStatus());
+      } else {
+        Logger.log("TEST", "auto-farm idle — continuing");
+      }
+    }
 
     Logger.log("TEST", `bundle start v${BotVersion.version}`, {
       runQuickCalibration: runCalibration,
       fireChargeCancelIfHint: fireChargeCancelIfHint
     });
-
-    // AI CHANGED: slice 27 — calibration fights the farm loop; warn when both are active.
-    if (runCalibration) {
-      const af = getAutoFarmStatus();
-      if (af && af.running) {
-        Logger.warn("TEST", "Calib on TEST while auto-farm is ON — click OFF first for a clean calibration observe", af);
-      }
-    }
 
     try {
       probeSelectors();
@@ -541,45 +499,39 @@
     Logger.log("TEST", "skills meta", skillsMeta);
 
     if (!runCalibration) {
-      // AI CHANGED: Short “done” line so logs state clearly that default TEST never cancels charge.
-      if (fireChargeCancelIfHint) {
-        Logger.log("TEST", "done", { chargeCancelTest: chargeCancelTest });
-      } else {
-        Logger.log(
-          "TEST",
-          "done — probe only (no cancel click); tick panel “Cancel smoke on TEST” or Config.ui.testButtonFireChargeCancelWhenHintVisible = true"
-        );
-      }
-      return Promise.resolve({
+      Logger.log("TEST", "done (calibration skipped via opts)", {
+        chargeCancelTest: chargeCancelTest,
+        fireChargeCancelIfHint: fireChargeCancelIfHint
+      });
+      return {
         ok: true,
         runQuickCalibration: false,
         skillsMeta: skillsMeta,
         chargeCancelTest: chargeCancelTest
-      });
+      };
     }
 
-    return quickCalibrationSession()
-      .then(function (cal) {
-        Logger.log("TEST", "quickCalibrationSession", cal);
-        Logger.log("TEST", "bundle done");
-        return {
-          ok: true,
-          runQuickCalibration: true,
-          calibration: cal,
-          skillsMeta: skillsMeta,
-          chargeCancelTest: chargeCancelTest
-        };
-      })
-      .catch(function (err) {
-        Logger.warn("TEST", "quickCalibrationSession failed", err);
-        return {
-          ok: false,
-          runQuickCalibration: true,
-          error: String(err && err.message ? err.message : err),
-          skillsMeta: skillsMeta,
-          chargeCancelTest: chargeCancelTest
-        };
-      });
+    try {
+      const cal = await quickCalibrationSession();
+      Logger.log("TEST", "quickCalibrationSession", cal);
+      Logger.log("TEST", "bundle done");
+      return {
+        ok: true,
+        runQuickCalibration: true,
+        calibration: cal,
+        skillsMeta: skillsMeta,
+        chargeCancelTest: chargeCancelTest
+      };
+    } catch (err) {
+      Logger.warn("TEST", "quickCalibrationSession failed", err);
+      return {
+        ok: false,
+        runQuickCalibration: true,
+        error: String(err && err.message ? err.message : err),
+        skillsMeta: skillsMeta,
+        chargeCancelTest: chargeCancelTest
+      };
+    }
   }
 
   // AI CHANGED: Streamlined control panel — version header, ON/OFF only, large phase indicator, compact stats footer.
@@ -591,7 +543,6 @@
     }
 
     loadPlannerUiPrefs();
-    loadTestUiPrefs();
     loadCombatUiPrefs();
 
     const panel = document.createElement("div");
@@ -685,7 +636,7 @@
     buttonsWrap.appendChild(stopButton);
     panel.appendChild(buttonsWrap);
 
-    // AI CHANGED: TEST (version) — runs runUiTestBundle() (console diagnostics; optional calibration via Config.ui.testButtonRunQuickCalibration).
+    // AI CHANGED: TEST (version) — one-click full bundle (stops auto-farm if needed; probes; cancel smoke if hint; quick calibration).
     const testButton = makeButton(`TEST (${BotVersion.version})`, "#737fff", "#8f94ff", () => {
       if (testButton.disabled) {
         return;
@@ -712,65 +663,12 @@
     testButton.style.marginBottom = "6px";
     panel.appendChild(testButton);
 
-    // AI CHANGED: slice 24d — checkbox drives Config.ui.testButtonFireChargeCancelWhenHintVisible (persisted).
-    const testCancelRow = document.createElement("label");
-    testCancelRow.style.display = "flex";
-    testCancelRow.style.alignItems = "center";
-    testCancelRow.style.gap = "8px";
-    testCancelRow.style.cursor = "pointer";
-    testCancelRow.style.fontSize = "11px";
-    testCancelRow.style.marginBottom = "6px";
-    testCancelRow.style.opacity = "0.9";
-    const testCancelSmokeCheck = document.createElement("input");
-    testCancelSmokeCheck.type = "checkbox";
-    testCancelSmokeCheck.checked = !!Config.ui.testButtonFireChargeCancelWhenHintVisible;
-    testCancelSmokeCheck.style.cursor = "pointer";
-    testCancelSmokeCheck.addEventListener("change", () => {
-      Config.ui.testButtonFireChargeCancelWhenHintVisible = testCancelSmokeCheck.checked;
-      saveTestUiPrefs();
-      Logger.log("UI", "testButtonFireChargeCancelWhenHintVisible", Config.ui.testButtonFireChargeCancelWhenHintVisible);
-    });
-    const testCancelLabel = document.createElement("span");
-    testCancelLabel.textContent = "Cancel smoke on TEST";
-    testCancelLabel.style.lineHeight = "1.35";
-    testCancelRow.appendChild(testCancelSmokeCheck);
-    testCancelRow.appendChild(testCancelLabel);
-    panel.appendChild(testCancelRow);
-
-    // AI CHANGED: slice 27 — checkbox drives Config.ui.testButtonRunQuickCalibration (persisted ligmarbot.testUi.v1).
-    const testCalibRow = document.createElement("label");
-    testCalibRow.style.display = "flex";
-    testCalibRow.style.alignItems = "center";
-    testCalibRow.style.gap = "8px";
-    testCalibRow.style.cursor = "pointer";
-    testCalibRow.style.fontSize = "11px";
-    testCalibRow.style.marginBottom = "6px";
-    testCalibRow.style.opacity = "0.9";
-    const testRunCalibCheck = document.createElement("input");
-    testRunCalibCheck.type = "checkbox";
-    testRunCalibCheck.checked = !!Config.ui.testButtonRunQuickCalibration;
-    testRunCalibCheck.style.cursor = "pointer";
-    testRunCalibCheck.addEventListener("change", () => {
-      Config.ui.testButtonRunQuickCalibration = testRunCalibCheck.checked;
-      saveTestUiPrefs();
-      Logger.log("UI", "testButtonRunQuickCalibration", Config.ui.testButtonRunQuickCalibration);
-    });
-    const testCalibLabel = document.createElement("span");
-    testCalibLabel.textContent = "Calib on TEST";
-    testCalibLabel.style.lineHeight = "1.35";
-    testCalibRow.appendChild(testRunCalibCheck);
-    testCalibRow.appendChild(testCalibLabel);
-    panel.appendChild(testCalibRow);
-
-    // AI CHANGED: Static when-to-run hint + [Expected: …] lines so TEST results are easy to verify in console/game.
+    // AI CHANGED: Static hint — TEST is one button; no panel toggles.
     const testHint = document.createElement("div");
     // AI CHANGED: Keep TEST hint tiny — full detail stays in ARCHITECTURE / console.
-    // AI CHANGED: Spell out default TEST never cancels (users see hintVisible true in logs and expect a click).
     testHint.textContent =
-      "When: combat / mid-charge / after load.\n" +
-      "[Expected] Default: bot should not tap UI — no cancel, even if hint shows.\n" +
-      "☑ Cancel smoke + TEST: bot should cancel charge once (if hint).\n" +
-      "☑ Calib on TEST: ~10s observe — bot should not fight (you attack); OFF auto-farm recommended.";
+      "TEST: stops auto-farm if it was ON, runs probes, taps cancel UI if charge hint shows, then ~10s calibration — keep attacking the target.\n" +
+      "Lighter run from console: ligmarBot.runUiTestBundle({ runQuickCalibration: false }).";
     testHint.style.fontSize = "10px";
     testHint.style.lineHeight = "1.45";
     testHint.style.opacity = "0.72";
@@ -983,8 +881,6 @@
     Runtime.ui.plannerSkillsCheck = ps.check;
     Runtime.ui.plannerFirstBurstOnlyCheck = pf.check;
     Runtime.ui.testButton = testButton;
-    Runtime.ui.testCancelSmokeCheck = testCancelSmokeCheck;
-    Runtime.ui.testRunCalibCheck = testRunCalibCheck;
     Runtime.ui.combatGraceInput = graceInput;
     Runtime.ui.combatEarlyCancelInput = earlyInput;
 

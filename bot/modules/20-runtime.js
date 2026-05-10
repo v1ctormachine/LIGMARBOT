@@ -52,10 +52,6 @@
       plannerFirstBurstOnlyCheck: null,
       // AI CHANGED: TEST (version) panel button — ref for disable-while-running (90-ui.js).
       testButton: null,
-      // AI CHANGED: slice 24d — TEST cancel smoke checkbox (90-ui.js).
-      testCancelSmokeCheck: null,
-      // AI CHANGED: slice 27 — TEST quick calibration checkbox (90-ui.js).
-      testRunCalibCheck: null,
       // AI CHANGED: slice 26 — ranked opener ms inputs (90-ui.js).
       combatGraceInput: null,
       combatEarlyCancelInput: null

@@ -86,13 +86,6 @@
       // How long the overlay stays before fading itself out (ms). 0 = persist until next scan.
       secondRingOverlayTtlMs: 8000
     },
-    // AI CHANGED: In-page panel — optional heavy steps for the TEST (version) button (default: diagnostics only).
-    ui: {
-      // When true, panel TEST also runs quickCalibrationSession() (~10s observe + merge); keep false unless calibrating.
-      testButtonRunQuickCalibration: false,
-      // AI CHANGED: When true, TEST calls clickChargingSkillCancelUi() after probes if charge hint is visible (smoke-test cancel).
-      testButtonFireChargeCancelWhenHintVisible: false
-    },
     // AI CHANGED: Added configurable auto-farm loop controls.
     farmLoop: {
       cycleDelayMs: 900,
