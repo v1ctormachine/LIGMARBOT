@@ -81,5 +81,15 @@
       lastError: null,
       // AI CHANGED: Last known enemy DB key from profile/observe/merge (for console + future automation).
       lastFoughtKey: null
+    },
+    // AI CHANGED: Pack A — last ranked-opener pick outcome when cache empty / all candidates filtered (86-planner.js).
+    planner: {
+      lastOpeningPickReason: null,
+      lastOpeningPickDetail: null,
+      lastOpeningPickAt: null,
+      lastOpeningPickLogAt: null,
+      lastOpeningPickLogReason: null,
+      // AI CHANGED: Pack A — dedupe key for throttled opening-pick failure logs (86-planner.js).
+      lastOpeningPickLogDetailKey: null
     }
   };

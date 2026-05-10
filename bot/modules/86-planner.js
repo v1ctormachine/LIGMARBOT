@@ -374,6 +374,54 @@
     return 0;
   }
 
+  // AI CHANGED: Pack A — throttled [PLANNER] log when ranked opener cannot pick a slot (complements BOOT warn for empty cache).
+  function plannerMaybeLogOpeningPickFailure(reason, detail) {
+    if (Config.planner.logOpeningPickFailures === false) {
+      return;
+    }
+    const throttleMs = Number.isFinite(Config.planner.openingPickFailureLogThrottleMs)
+      ? Config.planner.openingPickFailureLogThrottleMs
+      : 12000;
+    const pr = Runtime.planner;
+    const now = Date.now();
+    const detailKey = detail ? JSON.stringify(detail) : "";
+    const sig = String(reason || "") + "|" + detailKey;
+    const prevSig =
+      String(pr.lastOpeningPickLogReason || "") +
+      "|" +
+      (pr.lastOpeningPickLogDetailKey || "");
+    if (sig === prevSig && now - (pr.lastOpeningPickLogAt || 0) < throttleMs) {
+      return;
+    }
+    pr.lastOpeningPickLogAt = now;
+    pr.lastOpeningPickLogReason = reason;
+    pr.lastOpeningPickLogDetailKey = detailKey;
+    Logger.log("PLANNER", "No ranked opener slot — using basic until this clears", {
+      reason: reason,
+      detail: detail || null,
+      hint:
+        reason === "empty_cache" || reason === "no_attack_skills_for_ranker"
+          ? "await ligmarBot.scanSkills() (auto-farm OFF) or enable attack skills on bar."
+          : reason === "all_candidates_filtered"
+            ? "Raise MP, wait CDs, lower skillMpReserve, or disable skipOpenerWhenActionBarShowsCooldown if hints are wrong."
+            : null
+    });
+  }
+
+  // AI CHANGED: Pack A — read-only snapshot for console after a fight / when debugging openers.
+  function getPlannerOpeningPickDiagnostics() {
+    const pr = Runtime.planner;
+    const slots = Runtime.skills.slots || [];
+    return {
+      rankedCombatEnabled: !!Config.planner.useRankedAttackSkillsInCombat,
+      lastReason: pr.lastOpeningPickReason,
+      lastDetail: pr.lastOpeningPickDetail,
+      lastAt: pr.lastOpeningPickAt,
+      cacheSlotCount: Array.isArray(slots) ? slots.length : 0,
+      attackSkillsRanked: rankAttackSkillsByHeuristic({}).order.length
+    };
+  }
+
   // AI CHANGED: Phase C4 slice 8+12+15 — full pick { slot, record } for opener; optional excludeSlots (indices already tried this burst).
   function plannerPickSkillOpeningPick(userOpts) {
     const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
@@ -388,11 +436,18 @@
         }
       }
     }
+    const pr = Runtime.planner;
+    pr.lastOpeningPickReason = null;
+    pr.lastOpeningPickDetail = null;
+    pr.lastOpeningPickAt = Date.now();
     if (!Config.planner.useRankedAttackSkillsInCombat) {
+      pr.lastOpeningPickReason = "ranked_disabled";
       return null;
     }
     const slots = Runtime.skills.slots;
     if (!Array.isArray(slots) || slots.length === 0) {
+      pr.lastOpeningPickReason = "empty_cache";
+      plannerMaybeLogOpeningPickFailure("empty_cache", { barSlots: 0 });
       return null;
     }
     const key = Runtime.enemy.lastFoughtKey;
@@ -401,35 +456,59 @@
         ? rankAttackSkillsByHeuristic({ enemyKey: key.trim() })
         : rankAttackSkillsByHeuristic({});
     if (!rank || !Array.isArray(rank.order) || rank.order.length === 0) {
+      pr.lastOpeningPickReason = "no_attack_skills_for_ranker";
+      pr.lastOpeningPickDetail = { cachedSlots: slots.length, enemyKey: key || null };
+      plannerMaybeLogOpeningPickFailure("no_attack_skills_for_ranker", pr.lastOpeningPickDetail);
       return null;
     }
     const reserve = Number.isFinite(Config.planner.skillMpReserve) ? Config.planner.skillMpReserve : 0;
     const st = readBasicState();
     const mpCur = st.player.mp && st.player.mp.valid ? st.player.mp.cur : null;
+    const breakdown = {
+      mp: 0,
+      cooldown: 0,
+      exclude: 0,
+      noDirectDamage: 0,
+      notSkill: 0,
+      notAttack: 0,
+      badIndex: 0,
+      emptyRow: 0
+    };
     for (let i = 0; i < rank.order.length; i += 1) {
       const idx = rank.order[i];
       if (typeof idx !== "number" || idx < 0 || idx >= slots.length) {
+        breakdown.badIndex += 1;
         continue;
       }
       const s = slots[idx];
-      if (!s || s.kind === "empty" || s.kind === "basic" || s.kind === "potion") {
+      if (!s || s.kind === "empty") {
+        breakdown.emptyRow += 1;
+        continue;
+      }
+      if (s.kind === "basic" || s.kind === "potion") {
+        breakdown.notSkill += 1;
         continue;
       }
       if (s.kind !== "skill") {
+        breakdown.notSkill += 1;
         continue;
       }
       if (!s.isAttack || !s.targetsEnemy) {
+        breakdown.notAttack += 1;
         continue;
       }
       if (!plannerSkillHasDirectDamageForOpener(s)) {
+        breakdown.noDirectDamage += 1;
         continue;
       }
       const mc = Number.isFinite(s.manaCost) ? s.manaCost : 0;
       if (mc > 0) {
         if (mpCur === null) {
+          breakdown.mp += 1;
           continue;
         }
         if (mpCur < mc + reserve) {
+          breakdown.mp += 1;
           continue;
         }
       }
@@ -439,14 +518,26 @@
             slot: idx,
             name: s.name || ""
           });
+          breakdown.cooldown += 1;
           continue;
         }
       }
       if (exclude.has(idx)) {
+        breakdown.exclude += 1;
         continue;
       }
+      pr.lastOpeningPickReason = "picked";
+      pr.lastOpeningPickDetail = { slot: idx, name: s.name || "" };
       return { slot: idx, record: s };
     }
+    pr.lastOpeningPickReason = "all_candidates_filtered";
+    pr.lastOpeningPickDetail = {
+      breakdown: breakdown,
+      mpCur: mpCur,
+      skillMpReserve: reserve,
+      excludedCount: exclude.size
+    };
+    plannerMaybeLogOpeningPickFailure("all_candidates_filtered", pr.lastOpeningPickDetail);
     return null;
   }
 

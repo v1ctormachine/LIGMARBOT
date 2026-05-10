@@ -1,6 +1,6 @@
 # Ligmarbot roadmap
 
-Baseline **v0.3.58**. **Going forward: bigger releases** — see **§ Release cadence** below; no more one-line-per-patch unless it’s an emergency hotfix.
+Baseline **v0.3.59** (after Pack A ship). **Going forward: bigger releases** — see **§ Release cadence** below; no more one-line-per-patch unless it’s an emergency hotfix.
 
 ## Release cadence (bigger steps)
 
@@ -17,6 +17,7 @@ Emergency **hotfix** (crash / wrong click): ship immediately, even if tiny.
 
 ## Done recently
 
+- **Pack A — planner / empty or gated skills**: **`Runtime.planner`** records every ranked-opener pick (`empty_cache`, `no_attack_skills_for_ranker`, `all_candidates_filtered` + skip **breakdown**, or **`picked`**); throttled **`[PLANNER]`** logs when combat falls back to basic; **`Config.planner.logOpeningPickFailures`** / **`openingPickFailureLogThrottleMs`**; **`ligmarBot.getPlannerOpeningPickDiagnostics()`**.
 - Stuck ranked opener → cancel charge (hint visible) so cooldown can start; map button / canvas gap click first.
 - **TEST** — single click runs the full diagnostic + calibration path; auto-farm stops first when it was running.
 - **`rankedOpenerChargeGraceMs`** / **`rankedOpenerEarlyCancelIfHintAfterMs`** — panel **Opener timing (ms)** (persisted **`ligmarbot.combatUi.v1`**) or Config.
@@ -29,7 +30,7 @@ Emergency **hotfix** (crash / wrong click): ship immediately, even if tiny.
 ## Next (pick order) — milestone-sized
 
 1. **Soak auto-farm** — Long run; **`TEST`** mid-session with farm ON (stop → run → restart).
-2. **Pack A (suggested next code drop):** Pick **one** theme and bundle several files — e.g. **loot/settle + inventory full** polish, or **neighbor scan** latency + failure logging, or **planner** behavior when skills empty (not another prefs-only tweak).
+2. **Pack B (next milestone drop):** Pick **one** theme and bundle several files — e.g. **loot/settle + inventory** polish, or **neighbor scan** latency + richer **failure logging** (per-tile timing / reasons), or further **planner** combat sequencing (still no prefs-only micro-ships).
 3. **Future: optimal charge %** — Needs a visible charge meter or timed release in-game.
 4. **Future: two-skill queue** — Planner does not model B-while-A (`ARCHITECTURE.md`).
 

@@ -217,7 +217,9 @@
       plannerPickSkillSlotToCast: plannerPickSkillSlotToCast,
       plannerPickSkillOpeningPick: plannerPickSkillOpeningPick,
       plannerOpenerHoldCastMs: plannerOpenerHoldCastMs,
-      plannerSkillHasDirectDamageForOpener: plannerSkillHasDirectDamageForOpener
+      plannerSkillHasDirectDamageForOpener: plannerSkillHasDirectDamageForOpener,
+      // AI CHANGED: Pack A — last opener skip reason + counts (after combat tries ranked openers).
+      getPlannerOpeningPickDiagnostics: getPlannerOpeningPickDiagnostics
     };
 
     Logger.log("BOOT", "Debug API exposed as window.ligmarBot");

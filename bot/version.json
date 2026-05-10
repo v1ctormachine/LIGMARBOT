@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.58",
-    "description":  "slice 36: prefs helpers return objects + saveAll/loadAll",
-    "builtAt":  "2026-05-10T18:53:19.8577481+03:00",
+    "version":  "0.3.59",
+    "description":  "headline: ranked opener logs when skill cache empty or all skills gated",
+    "builtAt":  "2026-05-10T18:57:39.5289933+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.59",
+                        "description":  "headline: ranked opener logs when skill cache empty or all skills gated",
+                        "date":  "2026-05-10T18:57:39.5289933+03:00"
+                    },
                     {
                         "version":  "0.3.58",
                         "description":  "slice 36: prefs helpers return objects + saveAll/loadAll",
@@ -247,11 +252,6 @@
                         "version":  "0.3.10",
                         "description":  "Phase C4 slice 1: paper basic DPS + planner summary API",
                         "date":  "2026-05-09T18:55:38.6622281+03:00"
-                    },
-                    {
-                        "version":  "0.3.9",
-                        "description":  "Enemy DB: drop mob damageClass; cache v2; strip on load",
-                        "date":  "2026-05-09T18:54:34.3165338+03:00"
                     }
                 ]
 }
