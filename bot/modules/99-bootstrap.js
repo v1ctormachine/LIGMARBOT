@@ -103,6 +103,8 @@
       logger: Logger,
       probeSelectors: probeSelectors,
       readBasicState: readBasicState,
+      // AI CHANGED: slice 24 — debug charge UI (“Press to cancel”) for opener second tap.
+      isChargingSkillCancelHintVisible: isChargingSkillCancelHintVisible,
       discoverFractionNodes: discoverFractionNodes,
       discoverButtons: discoverButtons,
       readEnemyCount: readEnemyCount,

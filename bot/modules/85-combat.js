@@ -94,6 +94,34 @@
       return false;
     }
 
+    // AI CHANGED: slice 24 — charge skill: same slot again when “Press to cancel” is visible (release shot).
+    if (
+      open.skillSlot != null &&
+      Config.combat.rankedOpenerSecondTapIfChargingHint !== false &&
+      isChargingSkillCancelHintVisible()
+    ) {
+      Logger.log("LOOP", "Charging cancel hint visible; second tap same opener slot", { slot: open.skillSlot });
+      clickActionBarSlot(open.skillSlot);
+      if (settleRanked > 0) {
+        await sleep(settleRanked);
+      }
+      if (Runtime.autoFarm.stopRequested) {
+        return false;
+      }
+      progressed = await waitForCondition(
+        "attack progress after charge release tap",
+        hasCombatProgressSince(beforeState),
+        { timeoutMs: fullTimeoutMs, pollMs: pollMs }
+      );
+      if (progressed) {
+        return true;
+      }
+    }
+    if (Runtime.autoFarm.stopRequested) {
+      Logger.log("LOOP", "attackUntilProgress: stop requested after charge-release wait");
+      return false;
+    }
+
     // AI CHANGED: slice 15 — try next ranked opener(s) before basic if first skill had no verified effect.
     const extra = Number.isFinite(Config.planner.openerExtraRankedSkills)
       ? Config.planner.openerExtraRankedSkills

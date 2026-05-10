@@ -35,6 +35,10 @@
       rankedOpenerFirstProgressTimeoutMs: 4200,
       // AI CHANGED: slice 23 — brief pause after bar skill click before polling HP/count (reduces one-frame false “no progress”).
       postRankedSkillClickSettleMs: 120,
+      // AI CHANGED: slice 24 — charge skills: UI shows “Press to cancel”; second tap same slot fires partial/full release per game rules.
+      rankedOpenerSecondTapIfChargingHint: true,
+      chargingCancelHintSubstrings: ["press to cancel"],
+      chargingCancelHintScanRoot: "app-game",
       attackProgressPollMs: 140,
       // AI CHANGED: Phase C4 slice 9 — after each successful find-enemy, keep attacking until clear/stuck (bounded).
       maxCombatAttackBurstsPerFind: 24

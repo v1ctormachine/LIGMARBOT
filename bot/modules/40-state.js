@@ -120,6 +120,37 @@
     return false;
   }
 
+  // AI CHANGED: slice 24 — visible charge UI (e.g. span.status-description “Press to cancel”) for ranked opener second tap.
+  function isChargingSkillCancelHintVisible() {
+    const subs = Config.combat.chargingCancelHintSubstrings;
+    if (!Array.isArray(subs) || subs.length === 0) {
+      return false;
+    }
+    const rootSel =
+      typeof Config.combat.chargingCancelHintScanRoot === "string" && Config.combat.chargingCancelHintScanRoot.trim()
+        ? Config.combat.chargingCancelHintScanRoot.trim()
+        : "app-game";
+    const root = document.querySelector(rootSel);
+    if (!root) {
+      return false;
+    }
+    const nodes = root.querySelectorAll("span.status-description, .status-description");
+    for (let i = 0; i < nodes.length; i += 1) {
+      const el = nodes[i];
+      if (!el || !isElementVisible(el)) {
+        continue;
+      }
+      const t = (el.textContent || "").toLowerCase().replace(/\s+/g, " ").trim();
+      for (let j = 0; j < subs.length; j += 1) {
+        const sub = String(subs[j] || "").toLowerCase();
+        if (sub && t.indexOf(sub) !== -1) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
   // AI CHANGED: Added direct enemy counter reader using the real game selector.
   function readEnemyCount() {
     const enemyCounterNode = document.querySelector(Config.selectors.enemyCounter);
