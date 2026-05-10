@@ -631,12 +631,14 @@
     testButton.style.marginBottom = "6px";
     panel.appendChild(testButton);
 
-    // AI CHANGED: Static hint — TEST is one button; no panel toggles.
+    // AI CHANGED: Static hint — when to press TEST + what it does (see ARCHITECTURE.md).
     const testHint = document.createElement("div");
-    // AI CHANGED: Keep TEST hint tiny — full detail stays in ARCHITECTURE / console.
     testHint.textContent =
-      "TEST: stops auto-farm if it was ON, runs probes, taps cancel UI if charge hint shows, then ~10s calibration — keep attacking the target.\n" +
-      "Lighter run from console: ligmarBot.runUiTestBundle({ runQuickCalibration: false }).";
+      "When to press TEST:\n" +
+      "• Calibration (~10s): in combat — target name + red HP bar visible, then press and keep attacking until it ends (idle/town = weak merge).\n" +
+      "• Cancel check: mid-charge only — skill shows cancel hint; otherwise that step skips.\n" +
+      "• Probes/planner logs: any time.\n" +
+      "Always: stops auto-farm first if it was ON. Lighter: ligmarBot.runUiTestBundle({ runQuickCalibration: false }).";
     testHint.style.fontSize = "10px";
     testHint.style.lineHeight = "1.45";
     testHint.style.opacity = "0.72";

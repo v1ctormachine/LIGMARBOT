@@ -1,6 +1,6 @@
 # Ligmarbot roadmap
 
-Short plan after **v0.3.51** / **slice 29** (lean panel: no planner checkboxes; **`quickCalibrationSession`** merges lethal **`hp_drop`**).
+Short plan after **v0.3.52** / **slice 30** (TEST **when-to-press** hint + **`ARCHITECTURE.md`** table).
 
 ## Done recently
 
@@ -8,6 +8,7 @@ Short plan after **v0.3.51** / **slice 29** (lean panel: no planner checkboxes; 
 - **TEST** — single click runs the full diagnostic + calibration path; auto-farm stops first when it was running.
 - **`rankedOpenerChargeGraceMs`** / **`rankedOpenerEarlyCancelIfHintAfterMs`** — panel **Opener timing (ms)** (persisted **`ligmarbot.combatUi.v1`**) or Config.
 - **Planner** — configure via **`ligmarBot.Config.planner`** (or legacy **`ligmarbot.plannerUi.v1`** loaded on boot); no GUI checkboxes.
+- **TEST** — press **in combat** for calibration (target bar visible, then keep hitting); **mid-charge** if you want cancel smoke; see panel hint / **`ARCHITECTURE.md`**.
 
 ## Next (pick order)
 
