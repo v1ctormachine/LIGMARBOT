@@ -6,7 +6,7 @@
 
 (function () {
   var NAMES = ["assassin", "archer", "mage", "guardian", "warrior", "priest"];
-  var MS = { s: 500, L: 2000, pop: 4500, gap: 350, pick: 4500 };
+  var MS = { s: 500, L: 2000, pop: 1200, gap: 350, pick: 4500 };
 
   function sleep(ms) {
     return new Promise(function (r) {
@@ -19,18 +19,74 @@
   function qsa(s, r) {
     return [].slice.call((r || document).querySelectorAll(s));
   }
-  // AI CHANGED: Do not require host <app-action-info> bbox — Angular host can be 0×0 (e.g. display:contents).
-  // Treat modal as open when an inner .action-name is visible and non-empty (matches live popup DOM).
+  // AI CHANGED: Character-sheet skill popup is <app-modal> (header "Skill") → .modal-body .dialog-action app-action-info — often NOT under .cdk-overlay-container.
   function findVisibleSkillPopup(S) {
-    var scoped = qsa(".cdk-overlay-container " + S.skillPopup);
-    var list = scoped.length > 0 ? scoped : qsa(S.skillPopup);
     var i;
+    var modals = qsa("app-modal");
+    var modal;
+    var mst;
+    var hdr;
+    var info;
+    var nameEl;
+    var infos;
+    var pst;
+    var scoped;
+    var list;
     var el;
     var st;
-    var nameEl;
-    var rn;
-    var nst;
     var nameText;
+
+    for (i = 0; i < modals.length; i++) {
+      modal = modals[i];
+      if (!modal || !modal.isConnected) {
+        continue;
+      }
+      mst = window.getComputedStyle(modal);
+      if (mst.display === "none" || mst.visibility === "hidden" || parseFloat(mst.opacity) < 0.01) {
+        continue;
+      }
+      hdr = modal.querySelector(".modal-header-content");
+      if (!hdr || !/\bskill\b/i.test((hdr.textContent || "").replace(/\s+/g, " ").trim())) {
+        continue;
+      }
+      info = modal.querySelector(".dialog-action app-action-info") || modal.querySelector(S.skillPopup);
+      if (!info) {
+        continue;
+      }
+      nameEl = info.querySelector(".action-name");
+      if (nameEl && (nameEl.textContent || "").trim().length > 0) {
+        return info;
+      }
+      if (info.querySelector(".header-description, .action-info-params")) {
+        return info;
+      }
+    }
+
+    infos = qsa(".dialog-action " + S.skillPopup);
+    for (i = 0; i < infos.length; i++) {
+      info = infos[i];
+      if (!info || !info.isConnected) {
+        continue;
+      }
+      pst = window.getComputedStyle(info);
+      if (pst.display === "none" || pst.visibility === "hidden") {
+        continue;
+      }
+      modal = info.closest ? info.closest("app-modal") : null;
+      if (modal) {
+        mst = window.getComputedStyle(modal);
+        if (mst.display === "none") {
+          continue;
+        }
+      }
+      nameEl = info.querySelector(".action-name");
+      if (nameEl && (nameEl.textContent || "").trim().length > 0) {
+        return info;
+      }
+    }
+
+    scoped = qsa(".cdk-overlay-container " + S.skillPopup);
+    list = scoped.length > 0 ? scoped : qsa(S.skillPopup);
     for (i = 0; i < list.length; i++) {
       el = list[i];
       if (!el || !el.isConnected) {
@@ -41,22 +97,10 @@
         continue;
       }
       nameEl = el.querySelector(".action-name");
-      if (!nameEl) {
-        continue;
+      nameText = nameEl ? (nameEl.textContent || "").trim() : "";
+      if (nameText.length > 0) {
+        return el;
       }
-      nameText = (nameEl.textContent || "").trim();
-      if (!nameText) {
-        continue;
-      }
-      rn = nameEl.getBoundingClientRect();
-      if (rn.width < 1 || rn.height < 1) {
-        continue;
-      }
-      nst = window.getComputedStyle(nameEl);
-      if (nst.display === "none" || nst.visibility === "hidden" || parseFloat(nst.opacity) < 0.01) {
-        continue;
-      }
-      return el;
     }
     return null;
   }
@@ -108,7 +152,7 @@
   }
   function mergeDesc(root, S) {
     var m = qs(S.skillPopupDescription, root) || qs(".header-description", root);
-    var a = qs(S.skillPopupAdditionalDescription, root);
+    var a = qs(S.skillPopupAdditionalDescription, root) || qs(".header-additional-description", root);
     var t1 = m ? (m.textContent || "").replace(/\s+/g, " ").trim() : "";
     var t2 = a ? (a.textContent || "").replace(/\s+/g, " ").trim() : "";
     return t2 ? (t1 + " " + t2).trim() : t1;
@@ -116,6 +160,9 @@
   function tags(root, S) {
     var out = [];
     var nodes = root.querySelectorAll(S.skillPopupTag);
+    if (nodes.length === 0) {
+      nodes = root.querySelectorAll(".action-tags app-tag, app-tag");
+    }
     var i;
     var x;
     for (i = 0; i < nodes.length; i++) {
@@ -129,6 +176,9 @@
   function params(root, S) {
     var out = {};
     var items = root.querySelectorAll(S.skillPopupParam);
+    if (items.length === 0) {
+      items = root.querySelectorAll("app-param-item-new");
+    }
     var i;
     var it;
     var L;
@@ -195,14 +245,14 @@
     return [];
   }
   function record(popup, cl, idx, S, heroClass) {
-    var nn = qs(S.skillPopupName, popup);
+    var nn = qs(S.skillPopupName, popup) || qs(".action-name", popup);
     var raw = nn ? (nn.textContent || "").trim() : "";
     var nm = raw;
     var lv = null;
     var mx = null;
     var m = raw.match(/^(.*?)\s*\((\d+)\/(\d+)\)\s*$/);
     var desc = mergeDesc(popup, S);
-    var addN = qs(S.skillPopupAdditionalDescription, popup);
+    var addN = qs(S.skillPopupAdditionalDescription, popup) || qs(".header-additional-description", popup);
     var addT = addN ? (addN.textContent || "").replace(/\s+/g, " ").trim() : null;
     var tg = tags(popup, S);
     var pr = params(popup, S);
@@ -245,7 +295,10 @@
     return null;
   }
   async function closePop(S) {
-    click(qs(S.skillPopupClose) || qs(".modal-header-close"));
+    var info = findVisibleSkillPopup(S);
+    var modal = info && info.closest ? info.closest("app-modal") : null;
+    var btn = modal ? modal.querySelector(".modal-header-close") : null;
+    click(btn || qs(S.skillPopupClose) || qs(".modal-header-close"));
     var t0 = Date.now();
     while (Date.now() - t0 < 2500 && findVisibleSkillPopup(S)) {
       await sleep(60);
