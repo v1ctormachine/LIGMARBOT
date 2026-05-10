@@ -283,6 +283,66 @@
     }
   }
 
+  // AI CHANGED: slice 26 — persist ranked opener timing (slice 25) from panel.
+  function loadCombatUiPrefs() {
+    try {
+      const raw = window.localStorage.getItem("ligmarbot.combatUi.v1");
+      if (!raw) {
+        return;
+      }
+      const p = JSON.parse(raw);
+      if (Number.isFinite(p.rankedOpenerChargeGraceMs) && p.rankedOpenerChargeGraceMs >= 0) {
+        Config.combat.rankedOpenerChargeGraceMs = p.rankedOpenerChargeGraceMs;
+      }
+      if (Number.isFinite(p.rankedOpenerEarlyCancelIfHintAfterMs) && p.rankedOpenerEarlyCancelIfHintAfterMs >= 0) {
+        Config.combat.rankedOpenerEarlyCancelIfHintAfterMs = p.rankedOpenerEarlyCancelIfHintAfterMs;
+      }
+    } catch (err) {
+      // AI CHANGED: Ignore corrupt prefs.
+    }
+  }
+
+  function saveCombatUiPrefs() {
+    try {
+      window.localStorage.setItem(
+        "ligmarbot.combatUi.v1",
+        JSON.stringify({
+          rankedOpenerChargeGraceMs: Number(Config.combat.rankedOpenerChargeGraceMs) || 0,
+          rankedOpenerEarlyCancelIfHintAfterMs: Number(Config.combat.rankedOpenerEarlyCancelIfHintAfterMs) || 0
+        })
+      );
+    } catch (err) {
+      // AI CHANGED: Non-fatal.
+    }
+  }
+
+  function clampEarlyCancelToFirstWaitMs(earlyMs) {
+    const firstRaw = Config.combat.rankedOpenerFirstProgressTimeoutMs;
+    const first =
+      Number.isFinite(firstRaw) && firstRaw > 0 ? firstRaw : Config.combat.attackProgressTimeoutMs || 4200;
+    let e = Number.isFinite(earlyMs) && earlyMs >= 0 ? earlyMs : 0;
+    if (e > 0 && e >= first) {
+      e = Math.max(0, first - 1);
+    }
+    return e;
+  }
+
+  function applyCombatTuneInputsAndSave(graceInput, earlyInput) {
+    const g = Number.parseInt(String(graceInput.value), 10);
+    Config.combat.rankedOpenerChargeGraceMs = Number.isFinite(g) && g >= 0 ? g : 0;
+    const eRaw = Number.parseInt(String(earlyInput.value), 10);
+    const e = clampEarlyCancelToFirstWaitMs(Number.isFinite(eRaw) && eRaw >= 0 ? eRaw : 0);
+    if (String(earlyInput.value) !== String(e)) {
+      earlyInput.value = String(e);
+    }
+    Config.combat.rankedOpenerEarlyCancelIfHintAfterMs = e;
+    saveCombatUiPrefs();
+    Logger.log("UI", "combat opener ms", {
+      rankedOpenerChargeGraceMs: Config.combat.rankedOpenerChargeGraceMs,
+      rankedOpenerEarlyCancelIfHintAfterMs: Config.combat.rankedOpenerEarlyCancelIfHintAfterMs
+    });
+  }
+
   // AI CHANGED: Live GUI refresher — phase block, button enabled-state, and compact stats line.
   function updateControlPanelStatus() {
     if (!Runtime.ui.statusNode) {
@@ -309,6 +369,22 @@
       Runtime.ui.testCancelSmokeCheck.checked !== !!Config.ui.testButtonFireChargeCancelWhenHintVisible
     ) {
       Runtime.ui.testCancelSmokeCheck.checked = !!Config.ui.testButtonFireChargeCancelWhenHintVisible;
+    }
+
+    // AI CHANGED: slice 26 — sync opener ms fields when Config changes elsewhere (not while typing).
+    if (Runtime.ui.combatGraceInput && document.activeElement !== Runtime.ui.combatGraceInput) {
+      const gv = Config.combat.rankedOpenerChargeGraceMs;
+      const gs = String(Number.isFinite(gv) && gv >= 0 ? gv : 0);
+      if (Runtime.ui.combatGraceInput.value !== gs) {
+        Runtime.ui.combatGraceInput.value = gs;
+      }
+    }
+    if (Runtime.ui.combatEarlyCancelInput && document.activeElement !== Runtime.ui.combatEarlyCancelInput) {
+      const ev = clampEarlyCancelToFirstWaitMs(Config.combat.rankedOpenerEarlyCancelIfHintAfterMs);
+      const es = String(ev);
+      if (Runtime.ui.combatEarlyCancelInput.value !== es) {
+        Runtime.ui.combatEarlyCancelInput.value = es;
+      }
     }
 
     // Update Start/Stop button enabled-state so the GUI shows which action is currently meaningful.
@@ -497,6 +573,7 @@
 
     loadPlannerUiPrefs();
     loadTestUiPrefs();
+    loadCombatUiPrefs();
 
     const panel = document.createElement("div");
     panel.id = "ligmar-bot-panel";
@@ -663,6 +740,68 @@
     testHint.style.border = "1px solid rgba(115, 138, 255, 0.15)";
     panel.appendChild(testHint);
 
+    // AI CHANGED: slice 26 — ranked opener timing (slice 25); persisted ligmarbot.combatUi.v1
+    const combatTuneWrap = document.createElement("div");
+    combatTuneWrap.style.marginBottom = "10px";
+    combatTuneWrap.style.padding = "8px 10px";
+    combatTuneWrap.style.background = "rgba(0,0,0,0.22)";
+    combatTuneWrap.style.borderRadius = "6px";
+    combatTuneWrap.style.border = "1px solid rgba(115, 138, 255, 0.2)";
+    const combatTuneTitle = document.createElement("div");
+    combatTuneTitle.textContent = "Opener timing (ms)";
+    combatTuneTitle.style.fontSize = "10.5px";
+    combatTuneTitle.style.fontWeight = "700";
+    combatTuneTitle.style.opacity = "0.75";
+    combatTuneTitle.style.marginBottom = "6px";
+    combatTuneTitle.style.letterSpacing = "0.4px";
+    combatTuneWrap.appendChild(combatTuneTitle);
+
+    function makeMsRow(labelText, initialVal) {
+      const row = document.createElement("div");
+      row.style.display = "flex";
+      row.style.alignItems = "center";
+      row.style.justifyContent = "space-between";
+      row.style.gap = "8px";
+      row.style.marginBottom = "4px";
+      row.style.fontSize = "11px";
+      const lab = document.createElement("span");
+      lab.textContent = labelText;
+      lab.style.opacity = "0.9";
+      lab.style.lineHeight = "1.35";
+      const inp = document.createElement("input");
+      inp.type = "number";
+      inp.min = "0";
+      inp.step = "50";
+      inp.value = String(initialVal);
+      inp.style.width = "72px";
+      inp.style.padding = "4px 6px";
+      inp.style.borderRadius = "4px";
+      inp.style.border = "1px solid rgba(115, 138, 255, 0.35)";
+      inp.style.background = "rgba(14, 18, 30, 0.9)";
+      inp.style.color = "#dce3ff";
+      inp.style.fontFamily = "inherit";
+      inp.style.fontSize = "11px";
+      inp.style.userSelect = "text";
+      row.appendChild(lab);
+      row.appendChild(inp);
+      combatTuneWrap.appendChild(row);
+      return inp;
+    }
+
+    const graceInput = makeMsRow(
+      "Grace",
+      Number.isFinite(Config.combat.rankedOpenerChargeGraceMs) ? Config.combat.rankedOpenerChargeGraceMs : 0
+    );
+    const earlyClamped = clampEarlyCancelToFirstWaitMs(Config.combat.rankedOpenerEarlyCancelIfHintAfterMs);
+    Config.combat.rankedOpenerEarlyCancelIfHintAfterMs = earlyClamped;
+    const earlyInput = makeMsRow("Early cancel", earlyClamped);
+    function onCombatTuneCommit() {
+      applyCombatTuneInputsAndSave(graceInput, earlyInput);
+    }
+    graceInput.addEventListener("change", onCombatTuneCommit);
+    earlyInput.addEventListener("change", onCombatTuneCommit);
+    panel.appendChild(combatTuneWrap);
+
     // ---- Planner hooks (C4 slice 7) ------------------------------------
     const plannerWrap = document.createElement("div");
     plannerWrap.style.marginBottom = "10px";
@@ -801,6 +940,8 @@
     Runtime.ui.plannerFirstBurstOnlyCheck = pf.check;
     Runtime.ui.testButton = testButton;
     Runtime.ui.testCancelSmokeCheck = testCancelSmokeCheck;
+    Runtime.ui.combatGraceInput = graceInput;
+    Runtime.ui.combatEarlyCancelInput = earlyInput;
 
     updateControlPanelStatus();
 

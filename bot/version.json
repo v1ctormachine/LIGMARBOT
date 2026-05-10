@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.47",
-    "description":  "slice 25: charge grace + early cancel-if-hint on ranked opener",
-    "builtAt":  "2026-05-10T16:14:24.4053304+03:00",
+    "version":  "0.3.48",
+    "description":  "slice 26: panel opener timing ms + combatUi.v1 persistence",
+    "builtAt":  "2026-05-10T16:27:58.5650038+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.48",
+                        "description":  "slice 26: panel opener timing ms + combatUi.v1 persistence",
+                        "date":  "2026-05-10T16:27:58.5650038+03:00"
+                    },
                     {
                         "version":  "0.3.47",
                         "description":  "slice 25: charge grace + early cancel-if-hint on ranked opener",
@@ -247,11 +252,6 @@
                         "version":  "0.2.7",
                         "description":  "Disable 2-ring overlay by default + speed up 1-ring scan (220ms wall timeout, 40ms poll)",
                         "date":  "2026-05-09T14:49:27.6002205+03:00"
-                    },
-                    {
-                        "version":  "0.2.6",
-                        "description":  "Fix die-guided ally bias + hex sampling + tolerance 75 + ally penalty 5x",
-                        "date":  "2026-05-09T14:38:26.1740557+03:00"
                     }
                 ]
 }
