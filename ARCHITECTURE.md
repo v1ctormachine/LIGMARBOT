@@ -113,6 +113,8 @@ The bot is delivered to Tampermonkey via a thin loader userscript that points at
 
 **Per-change loop after that:** edit modules → **`.\bot\build.ps1 -Description "..."`** (version bump) → commit/push → **F5** on the game tab → new version is live. The agent/maintainer runs the bumping build; the player only refreshes.
 
+**Release batching (bigger steps — default from 2026-05):** Avoid shipping **one-tweak** versions (single API return shape, one-line log, copy-only) as their **own** patch. **Batch** work until at least one of: (1) **player-visible** behavior change in combat/loot/map/planner, (2) **≥ ~50 lines** or **≥ 2 modules** touched for a coherent feature, or (3) a **named milestone** in **`ROADMAP.md`** (e.g. “loot settle v2”). Micro-fixes may accumulate on a **working branch** and ship as **one** `build.ps1 -Description` with a **headline** summary. Docs-only edits use **`-NoBump`** when the bundle is unchanged.
+
 **Why this layout (and not ES modules / `@require` from GitHub):**
 
 - Tampermonkey's most reliable distribution shape is a single self-contained file. ES module imports inside a userscript add CSP/loader friction we don't need.

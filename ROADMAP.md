@@ -1,6 +1,19 @@
 # Ligmarbot roadmap
 
-Short plan after **v0.3.58** / **slice 36** (prefs save/load return **`{ ok, … }`**; **`saveAllUiPrefs`** / **`loadAllUiPrefs`**).
+Baseline **v0.3.58**. **Going forward: bigger releases** — see **§ Release cadence** below; no more one-line-per-patch unless it’s an emergency hotfix.
+
+## Release cadence (bigger steps)
+
+Ship **fewer, fatter** versions so each refresh feels worth it:
+
+| Prefer | Avoid |
+|--------|--------|
+| One **headline** per bump (e.g. “loot + inventory hardening”, “scan speed pack”) | Dedicated patch for return-value / hint / single API only |
+| Batch until **gameplay** or **multi-file** feature is done | “Slice 37: tweak `Logger` text” as its own version |
+| Collect small tweaks on a branch → **one** `build.ps1 -Description "…"` | Daily micro-bumps that only change console ergonomics |
+| **`-NoBump`** for **docs / rules-only** commits | Bumping `loader.user.js` when nothing in the bundle changed |
+
+Emergency **hotfix** (crash / wrong click): ship immediately, even if tiny.
 
 ## Done recently
 
@@ -13,12 +26,12 @@ Short plan after **v0.3.58** / **slice 36** (prefs save/load return **`{ ok, …
 - **Opener Grace** — new installs default **200 ms**; existing **`combatUi.v1`** saves keep your old values until you change the panel.
 - **TEST mid-channel** — cancel hint visible → bot **will** tap cancel (smoke); DB merge from the follow-on observe is still a successful run.
 
-## Next (pick order)
+## Next (pick order) — milestone-sized
 
-1. **Soak auto-farm** — Long run with tuned opener ms + **`TEST`** mid-session (farm should stop, run, then come back on); confirm no regressions.
-2. **Future: optimal charge %** — Would need a game-visible charge meter or timed full-release.
-3. **Future: two-skill queue** — Game allows queuing **B** while **A** channels; planner does not model this yet (`ARCHITECTURE.md` note).
-4. **Version bumps** — On every shipped module change, the maintainer/agent runs `.\bot\build.ps1 -Description "…"` (not `-NoBump`); you only refresh the game tab.
+1. **Soak auto-farm** — Long run; **`TEST`** mid-session with farm ON (stop → run → restart).
+2. **Pack A (suggested next code drop):** Pick **one** theme and bundle several files — e.g. **loot/settle + inventory full** polish, or **neighbor scan** latency + failure logging, or **planner** behavior when skills empty (not another prefs-only tweak).
+3. **Future: optimal charge %** — Needs a visible charge meter or timed release in-game.
+4. **Future: two-skill queue** — Planner does not model B-while-A (`ARCHITECTURE.md`).
 
 ## Parking lot
 
