@@ -265,6 +265,10 @@
       if (typeof p.testButtonFireChargeCancelWhenHintVisible === "boolean") {
         Config.ui.testButtonFireChargeCancelWhenHintVisible = p.testButtonFireChargeCancelWhenHintVisible;
       }
+      // AI CHANGED: slice 27 — persist TEST calibration flag with testUi bundle.
+      if (typeof p.testButtonRunQuickCalibration === "boolean") {
+        Config.ui.testButtonRunQuickCalibration = p.testButtonRunQuickCalibration;
+      }
     } catch (err) {
       // AI CHANGED: Ignore corrupt prefs.
     }
@@ -275,7 +279,8 @@
       window.localStorage.setItem(
         "ligmarbot.testUi.v1",
         JSON.stringify({
-          testButtonFireChargeCancelWhenHintVisible: !!Config.ui.testButtonFireChargeCancelWhenHintVisible
+          testButtonFireChargeCancelWhenHintVisible: !!Config.ui.testButtonFireChargeCancelWhenHintVisible,
+          testButtonRunQuickCalibration: !!Config.ui.testButtonRunQuickCalibration
         })
       );
     } catch (err) {
@@ -370,6 +375,12 @@
     ) {
       Runtime.ui.testCancelSmokeCheck.checked = !!Config.ui.testButtonFireChargeCancelWhenHintVisible;
     }
+    if (
+      Runtime.ui.testRunCalibCheck &&
+      Runtime.ui.testRunCalibCheck.checked !== !!Config.ui.testButtonRunQuickCalibration
+    ) {
+      Runtime.ui.testRunCalibCheck.checked = !!Config.ui.testButtonRunQuickCalibration;
+    }
 
     // AI CHANGED: slice 26 — sync opener ms fields when Config changes elsewhere (not while typing).
     if (Runtime.ui.combatGraceInput && document.activeElement !== Runtime.ui.combatGraceInput) {
@@ -450,6 +461,14 @@
       runQuickCalibration: runCalibration,
       fireChargeCancelIfHint: fireChargeCancelIfHint
     });
+
+    // AI CHANGED: slice 27 — calibration fights the farm loop; warn when both are active.
+    if (runCalibration) {
+      const af = getAutoFarmStatus();
+      if (af && af.running) {
+        Logger.warn("TEST", "Calib on TEST while auto-farm is ON — click OFF first for a clean calibration observe", af);
+      }
+    }
 
     try {
       probeSelectors();
@@ -718,6 +737,31 @@
     testCancelRow.appendChild(testCancelLabel);
     panel.appendChild(testCancelRow);
 
+    // AI CHANGED: slice 27 — checkbox drives Config.ui.testButtonRunQuickCalibration (persisted ligmarbot.testUi.v1).
+    const testCalibRow = document.createElement("label");
+    testCalibRow.style.display = "flex";
+    testCalibRow.style.alignItems = "center";
+    testCalibRow.style.gap = "8px";
+    testCalibRow.style.cursor = "pointer";
+    testCalibRow.style.fontSize = "11px";
+    testCalibRow.style.marginBottom = "6px";
+    testCalibRow.style.opacity = "0.9";
+    const testRunCalibCheck = document.createElement("input");
+    testRunCalibCheck.type = "checkbox";
+    testRunCalibCheck.checked = !!Config.ui.testButtonRunQuickCalibration;
+    testRunCalibCheck.style.cursor = "pointer";
+    testRunCalibCheck.addEventListener("change", () => {
+      Config.ui.testButtonRunQuickCalibration = testRunCalibCheck.checked;
+      saveTestUiPrefs();
+      Logger.log("UI", "testButtonRunQuickCalibration", Config.ui.testButtonRunQuickCalibration);
+    });
+    const testCalibLabel = document.createElement("span");
+    testCalibLabel.textContent = "Calib on TEST";
+    testCalibLabel.style.lineHeight = "1.35";
+    testCalibRow.appendChild(testRunCalibCheck);
+    testCalibRow.appendChild(testCalibLabel);
+    panel.appendChild(testCalibRow);
+
     // AI CHANGED: Static when-to-run hint + [Expected: …] lines so TEST results are easy to verify in console/game.
     const testHint = document.createElement("div");
     // AI CHANGED: Keep TEST hint tiny — full detail stays in ARCHITECTURE / console.
@@ -726,7 +770,7 @@
       "When: combat / mid-charge / after load.\n" +
       "[Expected] Default: bot should not tap UI — no cancel, even if hint shows.\n" +
       "☑ Cancel smoke + TEST: bot should cancel charge once (if hint).\n" +
-      "Calib on: bot should not fight — you attack ~10s.";
+      "☑ Calib on TEST: ~10s observe — bot should not fight (you attack); OFF auto-farm recommended.";
     testHint.style.fontSize = "10px";
     testHint.style.lineHeight = "1.45";
     testHint.style.opacity = "0.72";
@@ -940,6 +984,7 @@
     Runtime.ui.plannerFirstBurstOnlyCheck = pf.check;
     Runtime.ui.testButton = testButton;
     Runtime.ui.testCancelSmokeCheck = testCancelSmokeCheck;
+    Runtime.ui.testRunCalibCheck = testRunCalibCheck;
     Runtime.ui.combatGraceInput = graceInput;
     Runtime.ui.combatEarlyCancelInput = earlyInput;
 
