@@ -6,7 +6,7 @@
 
 (function () {
   var NAMES = ["assassin", "archer", "mage", "guardian", "warrior", "priest"];
-  var MS = { s: 500, L: 2000, pop: 3000, gap: 350, pick: 4500 };
+  var MS = { s: 500, L: 2000, pop: 4500, gap: 350, pick: 4500 };
 
   function sleep(ms) {
     return new Promise(function (r) {
@@ -19,22 +19,21 @@
   function qsa(s, r) {
     return [].slice.call((r || document).querySelectorAll(s));
   }
-  // AI CHANGED: CDK/modals use position:fixed → offsetParent is null even when visible; use bbox + style.
+  // AI CHANGED: Do not require host <app-action-info> bbox — Angular host can be 0×0 (e.g. display:contents).
+  // Treat modal as open when an inner .action-name is visible and non-empty (matches live popup DOM).
   function findVisibleSkillPopup(S) {
-    var list = qsa(S.skillPopup);
+    var scoped = qsa(".cdk-overlay-container " + S.skillPopup);
+    var list = scoped.length > 0 ? scoped : qsa(S.skillPopup);
     var i;
     var el;
-    var r;
     var st;
     var nameEl;
     var rn;
+    var nst;
+    var nameText;
     for (i = 0; i < list.length; i++) {
       el = list[i];
       if (!el || !el.isConnected) {
-        continue;
-      }
-      r = el.getBoundingClientRect();
-      if (r.width < 4 || r.height < 4) {
         continue;
       }
       st = window.getComputedStyle(el);
@@ -42,11 +41,20 @@
         continue;
       }
       nameEl = el.querySelector(".action-name");
-      if (nameEl) {
-        rn = nameEl.getBoundingClientRect();
-        if (rn.width < 1 || rn.height < 1) {
-          continue;
-        }
+      if (!nameEl) {
+        continue;
+      }
+      nameText = (nameEl.textContent || "").trim();
+      if (!nameText) {
+        continue;
+      }
+      rn = nameEl.getBoundingClientRect();
+      if (rn.width < 1 || rn.height < 1) {
+        continue;
+      }
+      nst = window.getComputedStyle(nameEl);
+      if (nst.display === "none" || nst.visibility === "hidden" || parseFloat(nst.opacity) < 0.01) {
+        continue;
       }
       return el;
     }
