@@ -534,8 +534,28 @@
     });
     testButton.style.flex = "none";
     testButton.style.width = "100%";
-    testButton.style.marginBottom = "10px";
+    testButton.style.marginBottom = "6px";
     panel.appendChild(testButton);
+
+    // AI CHANGED: Static when-to-run hint so TEST is used in a useful game state (not only “any time”).
+    const testHint = document.createElement("div");
+    testHint.textContent =
+      "When to run TEST:\n" +
+      "• Move onto a tile, tap Find enemy, then TEST — checks combat/target HP and planner context.\n" +
+      "• Charge skill: wait until “Press to cancel” shows, then TEST — checks cancel UI resolution.\n" +
+      "• Or right after load for selector/planner-only; leave auto-farm OFF for cleaner console logs.";
+    testHint.style.fontSize = "10px";
+    testHint.style.lineHeight = "1.45";
+    testHint.style.opacity = "0.72";
+    testHint.style.color = "#b8c4e8";
+    testHint.style.whiteSpace = "pre-wrap";
+    testHint.style.wordBreak = "break-word";
+    testHint.style.marginBottom = "10px";
+    testHint.style.padding = "6px 8px";
+    testHint.style.background = "rgba(0,0,0,0.2)";
+    testHint.style.borderRadius = "6px";
+    testHint.style.border = "1px solid rgba(115, 138, 255, 0.15)";
+    panel.appendChild(testHint);
 
     // ---- Planner hooks (C4 slice 7) ------------------------------------
     const plannerWrap = document.createElement("div");
