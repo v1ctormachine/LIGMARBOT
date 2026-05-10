@@ -105,7 +105,9 @@
     // AI CHANGED: In-page panel — optional heavy steps for the TEST (version) button (default: diagnostics only).
     ui: {
       // When true, panel TEST also runs quickCalibrationSession() (~10s observe + merge); keep false unless calibrating.
-      testButtonRunQuickCalibration: false
+      testButtonRunQuickCalibration: false,
+      // AI CHANGED: When true, TEST calls clickChargingSkillCancelUi() after probes if charge hint is visible (smoke-test cancel).
+      testButtonFireChargeCancelWhenHintVisible: false
     },
     // AI CHANGED: Added configurable auto-farm loop controls.
     farmLoop: {
@@ -5831,8 +5833,14 @@
     const runCalibration =
       opts.runQuickCalibration === true ||
       (Config.ui && Config.ui.testButtonRunQuickCalibration === true);
+    const fireChargeCancelIfHint =
+      opts.fireChargeCancelIfHint === true ||
+      (Config.ui && Config.ui.testButtonFireChargeCancelWhenHintVisible === true);
 
-    Logger.log("TEST", `bundle start v${BotVersion.version}`, { runQuickCalibration: runCalibration });
+    Logger.log("TEST", `bundle start v${BotVersion.version}`, {
+      runQuickCalibration: runCalibration,
+      fireChargeCancelIfHint: fireChargeCancelIfHint
+    });
 
     try {
       probeSelectors();
@@ -5864,6 +5872,7 @@
       Logger.warn("TEST", "rankAttackSkillsByHeuristic threw", err);
     }
 
+    let chargeCancelTest = null;
     try {
       const hintVis = isChargingSkillCancelHintVisible();
       let cancelClickTarget = null;
@@ -5882,6 +5891,16 @@
         cancelClickTarget: cancelClickTarget,
         mapGapClientPoint: getChargeCancelMapGapClientPoint()
       });
+      if (fireChargeCancelIfHint) {
+        if (hintVis) {
+          const clickedOk = clickChargingSkillCancelUi();
+          Logger.log("TEST", "charge-cancel click (smoke test)", { ok: clickedOk });
+          chargeCancelTest = { attempted: true, ok: clickedOk };
+        } else {
+          Logger.log("TEST", "charge-cancel click skipped (hint not visible)");
+          chargeCancelTest = { attempted: false, ok: null, reason: "no_hint" };
+        }
+      }
     } catch (err) {
       Logger.warn("TEST", "charge-cancel probe threw", err);
     }
@@ -5896,20 +5915,37 @@
     if (!runCalibration) {
       Logger.log(
         "TEST",
-        "bundle done (diagnostics only). For 10s observe+merge: ligmarBot.Config.ui.testButtonRunQuickCalibration = true or runUiTestBundle({ runQuickCalibration: true })"
+        "bundle done. Optional: observe+merge → Config.ui.testButtonRunQuickCalibration / runUiTestBundle({ runQuickCalibration: true }); live cancel smoke → testButtonFireChargeCancelWhenHintVisible or runUiTestBundle({ fireChargeCancelIfHint: true })"
       );
-      return Promise.resolve({ ok: true, runQuickCalibration: false, skillsMeta: skillsMeta });
+      return Promise.resolve({
+        ok: true,
+        runQuickCalibration: false,
+        skillsMeta: skillsMeta,
+        chargeCancelTest: chargeCancelTest
+      });
     }
 
     return quickCalibrationSession()
       .then(function (cal) {
         Logger.log("TEST", "quickCalibrationSession", cal);
         Logger.log("TEST", "bundle done");
-        return { ok: true, runQuickCalibration: true, calibration: cal, skillsMeta: skillsMeta };
+        return {
+          ok: true,
+          runQuickCalibration: true,
+          calibration: cal,
+          skillsMeta: skillsMeta,
+          chargeCancelTest: chargeCancelTest
+        };
       })
       .catch(function (err) {
         Logger.warn("TEST", "quickCalibrationSession failed", err);
-        return { ok: false, runQuickCalibration: true, error: String(err && err.message ? err.message : err), skillsMeta: skillsMeta };
+        return {
+          ok: false,
+          runQuickCalibration: true,
+          error: String(err && err.message ? err.message : err),
+          skillsMeta: skillsMeta,
+          chargeCancelTest: chargeCancelTest
+        };
       });
   }
 
@@ -6041,13 +6077,20 @@
     testButton.style.marginBottom = "6px";
     panel.appendChild(testButton);
 
-    // AI CHANGED: Static when-to-run hint so TEST is used in a useful game state (not only “any time”).
+    // AI CHANGED: Static when-to-run hint + [Expected: …] lines so TEST results are easy to verify in console/game.
     const testHint = document.createElement("div");
     testHint.textContent =
       "When to run TEST:\n" +
       "• Move onto a tile, tap Find enemy, then TEST — checks combat/target HP and planner context.\n" +
-      "• Charge skill: wait until “Press to cancel” shows, then TEST — checks cancel UI resolution.\n" +
-      "• Or right after load for selector/planner-only; leave auto-farm OFF for cleaner console logs.";
+      "  [Expected: console TEST logs — bundle start v…; readBasicState; getAutoFarmStatus; summarizePlannerInputs; rankAttackSkillsByHeuristic; charge-cancel-ui (hintVisible false unless a charge-cancel hint is on screen); skills meta; then bundle done / Logger TEST finished after the button re-enables.]\n" + // AI CHANGED: spell out general/diagnostics TEST console output
+      "• Charge skill: wait until “Press to cancel” shows, then TEST — logs map-gap + DOM cancel target.\n" +
+      "  [Expected: TEST charge-cancel-ui with hintVisible true; cancelClickTarget shows tag/id/class of the DOM cancel control; mapGapClientPoint has clientX/clientY when the map/canvas gap can be resolved.]\n" + // AI CHANGED: expected when cancel hint visible (probe only)
+      "• To actually fire cancel on TEST: ligmarBot.Config.ui.testButtonFireChargeCancelWhenHintVisible = true (or runUiTestBundle({ fireChargeCancelIfHint: true })).\n" +
+      "  [Expected: if the hint is visible — a real cancel click runs (often Logger ACTION charge-cancel-map-gap click-at via map-gap, else charge-cancel-ui / COMBAT fallbacks); TEST charge-cancel click (smoke test) { ok: … }; the in-game charge should stop and the cancel hint should clear. If the hint is not visible — TEST charge-cancel click skipped (hint not visible) and no cancel click.]\n" + // AI CHANGED: expected for fireChargeCancelIfHint / testButtonFireChargeCancelWhenHintVisible
+      "• Or right after load for selector/planner-only; leave auto-farm OFF for cleaner console logs.\n" +
+      "  [Expected: same TEST diagnostic sequence as the combat case, but planner/selector-focused; with auto-farm OFF you should see little or no LOOP spam mixed in.]\n" + // AI CHANGED: expected for load/planner-only + auto-farm OFF
+      "• Optional calibration: Config.ui.testButtonRunQuickCalibration = true (or runUiTestBundle({ runQuickCalibration: true })).\n" + // AI CHANGED: optional calibration bullet
+      "  [Expected: TEST quickCalibrationSession … logged with merge/calibration output; bundle ends after that path instead of only the short “optional observe+merge” reminder.]"; // AI CHANGED: expected when quick calibration flag set
     testHint.style.fontSize = "10px";
     testHint.style.lineHeight = "1.45";
     testHint.style.opacity = "0.72";
