@@ -583,12 +583,12 @@
     // AI CHANGED: Static when-to-run hint + [Expected: …] lines so TEST results are easy to verify in console/game.
     const testHint = document.createElement("div");
     // AI CHANGED: Keep TEST hint tiny — full detail stays in ARCHITECTURE / console.
-    // AI CHANGED: Spell out default TEST never cancels (users see hintVisible true in logs and expect a click).
+    // AI CHANGED: RU [Ожидается] lines for on-screen expectations (Victor locale).
     testHint.textContent =
-      "When: combat / mid-charge / after load.\n" +
-      "[Expected] Default: bot should not tap UI — no cancel, even if hint shows.\n" +
-      "Cancel smoke on: bot should cancel charge once (if hint visible).\n" +
-      "Calib on: bot should not fight — you attack ~10s.";
+      "Когда: бой / заряд навыка / после загрузки.\n" +
+      "[Ожидается] По умолчанию: бот ничего не жмёт — отмены нет, даже если подсказка видна.\n" +
+      "Дым отмены вкл.: бот один раз отменяет заряд (если подсказка есть).\n" +
+      "Калибровка вкл.: бот не бьёт — атакуешь ты ~10 с.";
     testHint.style.fontSize = "10px";
     testHint.style.lineHeight = "1.45";
     testHint.style.opacity = "0.72";
