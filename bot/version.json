@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.53",
-    "description":  "slice 31: TEST restarts auto-farm if it was running",
-    "builtAt":  "2026-05-10T17:19:58.7955044+03:00",
+    "version":  "0.3.54",
+    "description":  "slice 32: default ranked opener grace 200ms",
+    "builtAt":  "2026-05-10T17:28:55.3144209+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.54",
+                        "description":  "slice 32: default ranked opener grace 200ms",
+                        "date":  "2026-05-10T17:28:55.3144209+03:00"
+                    },
                     {
                         "version":  "0.3.53",
                         "description":  "slice 31: TEST restarts auto-farm if it was running",
@@ -247,11 +252,6 @@
                         "version":  "0.3.5",
                         "description":  "Phase C2 damage observer: HP deltas + floating text scan",
                         "date":  "2026-05-09T18:24:42.3147217+03:00"
-                    },
-                    {
-                        "version":  "0.3.4",
-                        "description":  "Hero stats: parse app-param-item rows + crit regex + click labels",
-                        "date":  "2026-05-09T18:19:38.4392794+03:00"
                     }
                 ]
 }

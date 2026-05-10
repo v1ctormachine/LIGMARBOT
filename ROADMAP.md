@@ -1,6 +1,6 @@
 # Ligmarbot roadmap
 
-Short plan after **v0.3.53** / **slice 31** (TEST **auto-restarts** farm if it was running).
+Short plan after **v0.3.54** / **slice 32** (default **Grace 200 ms** on ranked opener; early cancel still **0**).
 
 ## Done recently
 
@@ -10,6 +10,7 @@ Short plan after **v0.3.53** / **slice 31** (TEST **auto-restarts** farm if it w
 - **Planner** — configure via **`ligmarBot.Config.planner`** (or legacy **`ligmarbot.plannerUi.v1`** loaded on boot); no GUI checkboxes.
 - **TEST** — press **in combat** for calibration (target bar visible, then keep hitting); **mid-charge** if you want cancel smoke; see panel hint / **`ARCHITECTURE.md`**.
 - **TEST + farm** — if auto-farm was **ON**, TEST stops it for the bundle, then **starts the loop again** (stay off: `ligmarBot.runUiTestBundle({ resumeAutoFarm: false })`).
+- **Opener Grace** — new installs default **200 ms**; existing **`combatUi.v1`** saves keep your old values until you change the panel.
 
 ## Next (pick order)
 
