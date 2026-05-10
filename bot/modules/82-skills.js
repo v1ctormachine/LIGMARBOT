@@ -287,6 +287,138 @@
     return effects;
   }
 
+  // AI CHANGED: Strip "(4/10)" suffix so master DB keys match across upgrade levels.
+  function normalizeSkillName(rawName) {
+    if (typeof rawName !== "string") {
+      return "";
+    }
+    const m = rawName.match(/^(.*?)\s*\(\d+\/\d+\)\s*$/);
+    return (m ? m[1] : rawName).trim();
+  }
+
+  // AI CHANGED: Semantic skill shape for planning — effect *types* and text *shape*, not scaled tooltip numbers.
+  // Requirements (level/status/silver) are intentionally ignored everywhere here.
+  function inferSkillConception(slotLike) {
+    const effects = Array.isArray(slotLike.effects) ? slotLike.effects : [];
+    const tags = Array.isArray(slotLike.tags)
+      ? slotLike.tags.map((t) => String(t).toLowerCase())
+      : [];
+    const desc = String(slotLike.description || "").toLowerCase();
+    const types = [];
+    for (let i = 0; i < effects.length; i++) {
+      if (effects[i] && effects[i].type) {
+        types.push(effects[i].type);
+      }
+    }
+    const uniqTypes = [...new Set(types)].sort();
+    const flags = {
+      dot: uniqTypes.indexOf("dot") >= 0,
+      slow: uniqTypes.indexOf("slow") >= 0,
+      stun: uniqTypes.indexOf("stun") >= 0,
+      stealth: uniqTypes.indexOf("stealth") >= 0,
+      channel: uniqTypes.indexOf("channel_gear") >= 0,
+      basicAugment: uniqTypes.indexOf("basic_proc") >= 0,
+      directBonus: uniqTypes.indexOf("instant") >= 0,
+      heal: effects.some((e) => e && e.type === "heal"),
+      manaDrain: uniqTypes.indexOf("mana_drain_per_sec") >= 0,
+      damageBuff: uniqTypes.indexOf("damage_buff") >= 0,
+      critBuff: uniqTypes.indexOf("crit_damage_buff") >= 0,
+      dodgeBuff: uniqTypes.indexOf("dodge_buff") >= 0
+    };
+    const descShape = {
+      selfAttackSpeedReduced:
+        /\b(reduces|decreases|slows)\b[\s\S]{0,120}\battack\s+speed\b/.test(desc) &&
+        (/\b(assassin|yourself|your|self|character)\b/.test(desc) || tags.indexOf("self") >= 0),
+      selfAttackSpeedBuffed:
+        /\b(increases|raises|boosts)\b[\s\S]{0,120}\battack\s+speed\b/.test(desc) && tags.indexOf("self") >= 0,
+      selfAccelerated: /\baccelerat/.test(desc),
+      reducesEnemyDefense:
+        /\b(reduces|decreases|lowers)\b[\s\S]{0,100}\b(armor|resistance|defense)\b/.test(desc) &&
+        /\btarget\b/.test(desc)
+    };
+    const tacticalRoles = [];
+    const usageHints = [];
+    const delivery = [];
+    if (flags.stealth) {
+      tacticalRoles.push("stealth");
+      usageHints.push("commits_to_low_visibility");
+    }
+    if (flags.manaDrain) {
+      tacticalRoles.push("ongoing_mana_cost");
+      usageHints.push("not_flat_mana_price");
+    }
+    if (flags.slow || flags.stun) {
+      tacticalRoles.push("control");
+    }
+    if (flags.dot) {
+      tacticalRoles.push("damage_over_time");
+      delivery.push("dot");
+    }
+    if (flags.channel) {
+      tacticalRoles.push("channeled");
+      delivery.push("channel");
+      usageHints.push("interruptible_window");
+    }
+    if (flags.basicAugment || flags.directBonus) {
+      delivery.push("on_hit_damage");
+    }
+    if (flags.damageBuff || flags.critBuff || flags.dodgeBuff) {
+      tacticalRoles.push("self_buff");
+      delivery.push("buff");
+    }
+    if (flags.heal) {
+      tacticalRoles.push("recovery");
+      delivery.push("heal");
+    }
+    if (tags.indexOf("attack") >= 0 && tags.indexOf("target") >= 0) {
+      tacticalRoles.push("offensive");
+    }
+    if (tags.indexOf("support") >= 0 && tags.indexOf("self") >= 0) {
+      tacticalRoles.push("self_support");
+    }
+    if (descShape.selfAttackSpeedReduced) {
+      tacticalRoles.push("self_tradeoff");
+      usageHints.push("self_slow_as_cost");
+    }
+    if (descShape.selfAccelerated || descShape.selfAttackSpeedBuffed) {
+      tacticalRoles.push("mobility_or_speed");
+    }
+    if (descShape.reducesEnemyDefense) {
+      tacticalRoles.push("shred");
+    }
+    let rangeBucket = "unknown";
+    const raws = String(slotLike.range || "").toLowerCase();
+    if (raws.indexOf("melee") >= 0) {
+      rangeBucket = "melee";
+    } else if (raws.indexOf("ranged") >= 0) {
+      rangeBucket = "ranged";
+    }
+    let castShape = "unknown";
+    if (Number.isFinite(slotLike.castTimeSec)) {
+      castShape = slotLike.castTimeSec <= 0 ? "instant" : "timed_cast";
+    } else if (slotLike.paramsRaw && slotLike.paramsRaw.activation_time) {
+      const rawAt = String(slotLike.paramsRaw.activation_time.raw || "").trim();
+      if (/^instantly$/i.test(rawAt)) {
+        castShape = "instant";
+      }
+    }
+    const dedupe = (arr) => [...new Set(arr)];
+    return {
+      schemaVersion: 1,
+      effectTypes: uniqTypes,
+      flags: flags,
+      descShape: descShape,
+      tacticalRoles: dedupe(tacticalRoles),
+      delivery: dedupe(delivery),
+      usageHints: dedupe(usageHints),
+      rangeBucket: rangeBucket,
+      castShape: castShape,
+      targetKind: tags.indexOf("target") >= 0 ? "enemy" : tags.indexOf("self") >= 0 ? "self" : "unknown",
+      note:
+        "Conception is level-invariant (roles/shapes). Parsed effect magnitudes remain on slot.effects for paper DPS only."
+    };
+  }
+
   // AI CHANGED: Classify a button purely from its class string + image URL, BEFORE we open its
   // popup. Lets us decide whether to scan it at all and what record shape to emit.
   function classifyActionButton(button) {
@@ -425,7 +557,7 @@
     const descriptionAdditional = getAdditionalDescriptionText(popupRoot);
     const params = getSkillParams(popupRoot);
     const effects = parseSkillEffects(description);
-    return {
+    const record = {
       slot: slotIndex,
       kind: classification.kind,
       flavor: classification.flavor || null,
@@ -457,6 +589,8 @@
       descriptionAdditional: descriptionAdditional || null,
       effects: effects
     };
+    record.conception = inferSkillConception(record);
+    return record;
   }
 
   // AI CHANGED: Read action-bar count badge for potions (the .action-counter on the button itself).
@@ -576,6 +710,12 @@
         }
       }
       Runtime.skills.slots = payload.slots;
+      for (let bi = 0; bi < Runtime.skills.slots.length; bi++) {
+        const row = Runtime.skills.slots[bi];
+        if (row && row.kind === "skill" && !row.conception && Array.isArray(row.effects)) {
+          row.conception = inferSkillConception(row);
+        }
+      }
       Runtime.skills.cacheLoadedAt = Date.now();
       Runtime.skills.scannedAt = payload.savedAt || null;
       Runtime.skills.lastError = null;
@@ -717,6 +857,9 @@
       flavor: s.flavor || "",
       name: s.name || (s.kind === "empty" ? "(empty)" : ""),
       level: s.level || "",
+      conception: s.conception && Array.isArray(s.conception.tacticalRoles)
+        ? s.conception.tacticalRoles.join("+")
+        : "",
       cast: s.castTimeSec ?? "",
       cd: s.cooldownSec ?? "",
       mp: s.manaCost ?? "",

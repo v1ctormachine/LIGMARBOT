@@ -179,6 +179,8 @@
       clearSkillsCache: clearSkillsCache,
       readActionBarLayoutFingerprint: readActionBarLayoutFingerprint,
       parseSkillEffects: parseSkillEffects,
+      inferSkillConception: inferSkillConception,
+      normalizeSkillName: normalizeSkillName,
       // AI CHANGED: Phase C1 -- hero stats + passive regen (console-first).
       readHeroCombatStats: readHeroCombatStats,
       measurePassiveRegen: measurePassiveRegen,

@@ -174,6 +174,41 @@
     return summary.calibratedRows.length ? summary.calibratedRows[0] : null;
   }
 
+  // AI CHANGED: Rank using skill conception (flags/roles) — stable across upgrade levels; ignores tooltip magnitudes.
+  function plannerConceptionHeuristicScore(conception) {
+    if (!conception || typeof conception !== "object" || !conception.flags) {
+      return { score: 0, parts: [] };
+    }
+    const f = conception.flags;
+    const ds = conception.descShape || {};
+    let score = 0;
+    const parts = [];
+    function add(label, v) {
+      if (v) {
+        score += v;
+        parts.push({ type: label, add: v });
+      }
+    }
+    add("basic_proc", f.basicAugment ? 10 : 0);
+    add("instant", f.directBonus ? 7 : 0);
+    add("dot", f.dot ? 12 : 0);
+    add("channel_gear", f.channel ? 14 : 0);
+    add("slow", f.slow ? 8 : 0);
+    add("stun", f.stun ? 18 : 0);
+    add("crit_damage_buff", f.critBuff ? 6 : 0);
+    add("damage_buff", f.damageBuff ? 6 : 0);
+    add("dodge_buff", f.dodgeBuff ? 4 : 0);
+    if (ds.selfAttackSpeedReduced) {
+      score -= 4;
+      parts.push({ type: "self_atk_spd_cost", add: -4 });
+    }
+    if (f.stealth) {
+      score -= 2;
+      parts.push({ type: "stealth_opener_caution", add: -2 });
+    }
+    return { score: score, parts: parts };
+  }
+
   // AI CHANGED: Phase C4 slice 4 -- rough effect weights for ranking (console-only; no live CDs).
   function plannerSkillEffectHeuristicScore(effects) {
     if (!Array.isArray(effects)) {
@@ -225,13 +260,24 @@
         : null;
 
     const slots = Runtime.skills.slots || [];
+    const useConcRank = Config.planner.skillRankUseConception === true;
     const ranked = [];
     for (let i = 0; i < slots.length; i += 1) {
       const s = slots[i];
       if (!s || s.kind === "empty" || !s.isAttack || !s.targetsEnemy) {
         continue;
       }
-      const eff = plannerSkillEffectHeuristicScore(s.effects);
+      let eff;
+      if (useConcRank) {
+        let conc = s.conception;
+        if (!conc && typeof inferSkillConception === "function") {
+          conc = inferSkillConception(s);
+          s.conception = conc;
+        }
+        eff = plannerConceptionHeuristicScore(conc);
+      } else {
+        eff = plannerSkillEffectHeuristicScore(s.effects);
+      }
       const cd = Number.isFinite(s.cooldownSec) ? s.cooldownSec : 0;
       const mana = Number.isFinite(s.manaCost) ? s.manaCost : 0;
       const cast = Number.isFinite(s.castTimeSec) ? s.castTimeSec : 0;
@@ -251,7 +297,8 @@
         manaCost: s.manaCost,
         castTimeSec: s.castTimeSec,
         heuristicScore: +score.toFixed(3),
-        effectBreakdown: eff.parts
+        effectBreakdown: eff.parts,
+        rankBasis: useConcRank ? "conception" : "effect_magnitude"
       });
     }
     ranked.sort((a, b) => b.heuristicScore - a.heuristicScore);
@@ -260,8 +307,9 @@
       ranked: ranked,
       enemyKeyUsed: enemyKey,
       mobFactorApplied: mobFactor,
+      rankMode: useConcRank ? "conception" : "effect_magnitude",
       note:
-        "Heuristic rank only — weights are guesses; opener picks also skip slots when isActionBarSlotShowingCooldown(slot) is true. Pass enemyKey to nudge basic_proc skills using calibration ratio."
+        "Heuristic rank only — weights are guesses; opener picks also skip slots when isActionBarSlotShowingCooldown(slot) is true. Pass enemyKey to nudge basic_proc skills using calibration ratio. Set Config.planner.skillRankUseConception=true for level-invariant role-based rank (openerHorizonSim still uses magnitudes unless disabled)."
     };
   }
 

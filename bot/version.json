@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.65",
-    "description":  "headline: TEST runs previewOpenerHorizonSim; ship rule TEST coverage",
-    "builtAt":  "2026-05-10T19:38:30.8741778+03:00",
+    "version":  "0.3.66",
+    "description":  "Skill conception layer (inferSkillConception, optional rank-by-conception); ignore requirements.",
+    "builtAt":  "2026-05-10T22:15:01.1204032+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.66",
+                        "description":  "Skill conception layer (inferSkillConception, optional rank-by-conception); ignore requirements.",
+                        "date":  "2026-05-10T22:15:01.1204032+03:00"
+                    },
                     {
                         "version":  "0.3.65",
                         "description":  "headline: TEST runs previewOpenerHorizonSim; ship rule TEST coverage",
@@ -247,11 +252,6 @@
                         "version":  "0.3.17",
                         "description":  "C4 slice 6: planner hooks in secureTile (DB refresh + log)",
                         "date":  "2026-05-09T19:35:18.3443738+03:00"
-                    },
-                    {
-                        "version":  "0.3.16",
-                        "description":  "C4 slice 5: lastFoughtKey + quickCalibrationSession",
-                        "date":  "2026-05-09T19:34:03.5899977+03:00"
                     }
                 ]
 }
