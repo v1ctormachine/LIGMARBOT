@@ -49,7 +49,9 @@
       // AI CHANGED: Phase C4 slice 8 — ranked skills in combat toggle.
       plannerSkillsCheck: null,
       // AI CHANGED: Phase C4 slice 10 — ranked skill only on first burst after find-enemy.
-      plannerFirstBurstOnlyCheck: null
+      plannerFirstBurstOnlyCheck: null,
+      // AI CHANGED: TEST (version) panel button — ref for disable-while-running (90-ui.js).
+      testButton: null
     },
     // AI CHANGED: Phase C0 -- skill DB. Populated by scanSkills() (manual, console-first). Combat can
     // consume cached slots when Config.planner.useRankedAttackSkillsInCombat is true (slice 8).

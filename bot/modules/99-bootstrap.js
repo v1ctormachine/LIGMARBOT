@@ -151,6 +151,8 @@
       getAutoFarmStatus: getAutoFarmStatus,
       createControlPanel: createControlPanel,
       updateControlPanelStatus: updateControlPanelStatus,
+      // AI CHANGED: Panel TEST (version) and console — same entry point.
+      runUiTestBundle: runUiTestBundle,
       // AI CHANGED: Phase C0 -- skill scanner public API. scanSkills() is the only "active" call;
       // the rest are getters / cache helpers for inspection and recovery.
       scanSkills: scanSkills,

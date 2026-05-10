@@ -100,6 +100,11 @@
       // How long the overlay stays before fading itself out (ms). 0 = persist until next scan.
       secondRingOverlayTtlMs: 8000
     },
+    // AI CHANGED: In-page panel — optional heavy steps for the TEST (version) button (default: diagnostics only).
+    ui: {
+      // When true, panel TEST also runs quickCalibrationSession() (~10s observe + merge); keep false unless calibrating.
+      testButtonRunQuickCalibration: false
+    },
     // AI CHANGED: Added configurable auto-farm loop controls.
     farmLoop: {
       cycleDelayMs: 900,
@@ -367,7 +372,9 @@
       // AI CHANGED: Phase C4 slice 8 — ranked skills in combat toggle.
       plannerSkillsCheck: null,
       // AI CHANGED: Phase C4 slice 10 — ranked skill only on first burst after find-enemy.
-      plannerFirstBurstOnlyCheck: null
+      plannerFirstBurstOnlyCheck: null,
+      // AI CHANGED: TEST (version) panel button — ref for disable-while-running (90-ui.js).
+      testButton: null
     },
     // AI CHANGED: Phase C0 -- skill DB. Populated by scanSkills() (manual, console-first). Combat can
     // consume cached slots when Config.planner.useRankedAttackSkillsInCombat is true (slice 8).
@@ -5724,6 +5731,90 @@
     Runtime.ui.statusNode.textContent = lines.join("\n");
   }
 
+  // AI CHANGED: One-click diagnostics — replaces repeated console typing (probe + planner summary + skill rank + charge-cancel probe; optional calibration).
+  function runUiTestBundle(userOpts) {
+    const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
+    const runCalibration =
+      opts.runQuickCalibration === true ||
+      (Config.ui && Config.ui.testButtonRunQuickCalibration === true);
+
+    Logger.log("TEST", `bundle start v${BotVersion.version}`, { runQuickCalibration: runCalibration });
+
+    try {
+      probeSelectors();
+    } catch (err) {
+      Logger.warn("TEST", "probeSelectors threw", err);
+    }
+
+    try {
+      Logger.log("TEST", "readBasicState", readBasicState());
+    } catch (err) {
+      Logger.warn("TEST", "readBasicState threw", err);
+    }
+
+    try {
+      Logger.log("TEST", "getAutoFarmStatus", getAutoFarmStatus());
+    } catch (err) {
+      Logger.warn("TEST", "getAutoFarmStatus threw", err);
+    }
+
+    try {
+      Logger.log("TEST", "summarizePlannerInputs", summarizePlannerInputs());
+    } catch (err) {
+      Logger.warn("TEST", "summarizePlannerInputs threw", err);
+    }
+
+    try {
+      Logger.log("TEST", "rankAttackSkillsByHeuristic", rankAttackSkillsByHeuristic({}));
+    } catch (err) {
+      Logger.warn("TEST", "rankAttackSkillsByHeuristic threw", err);
+    }
+
+    try {
+      const hintVis = isChargingSkillCancelHintVisible();
+      let cancelClickTarget = null;
+      if (hintVis) {
+        const el = getChargingSkillCancelClickTarget();
+        if (el && el.nodeType === 1) {
+          cancelClickTarget = {
+            tag: el.tagName,
+            id: el.id || null,
+            className: typeof el.className === "string" ? el.className : null
+          };
+        }
+      }
+      Logger.log("TEST", "charge-cancel-ui", { hintVisible: hintVis, cancelClickTarget: cancelClickTarget });
+    } catch (err) {
+      Logger.warn("TEST", "charge-cancel probe threw", err);
+    }
+
+    const skillsMeta = {
+      slotCount: Runtime.skills && Array.isArray(Runtime.skills.slots) ? Runtime.skills.slots.length : 0,
+      scannedAt: Runtime.skills ? Runtime.skills.scannedAt : null,
+      lastError: Runtime.skills ? Runtime.skills.lastError : null
+    };
+    Logger.log("TEST", "skills meta", skillsMeta);
+
+    if (!runCalibration) {
+      Logger.log(
+        "TEST",
+        "bundle done (diagnostics only). For 10s observe+merge: ligmarBot.Config.ui.testButtonRunQuickCalibration = true or runUiTestBundle({ runQuickCalibration: true })"
+      );
+      return Promise.resolve({ ok: true, runQuickCalibration: false, skillsMeta: skillsMeta });
+    }
+
+    return quickCalibrationSession()
+      .then(function (cal) {
+        Logger.log("TEST", "quickCalibrationSession", cal);
+        Logger.log("TEST", "bundle done");
+        return { ok: true, runQuickCalibration: true, calibration: cal, skillsMeta: skillsMeta };
+      })
+      .catch(function (err) {
+        Logger.warn("TEST", "quickCalibrationSession failed", err);
+        return { ok: false, runQuickCalibration: true, error: String(err && err.message ? err.message : err), skillsMeta: skillsMeta };
+      });
+  }
+
   // AI CHANGED: Streamlined control panel — version header, ON/OFF only, large phase indicator, compact stats footer.
   // All previously-clickable debug buttons (Run 1 Cycle, Map prep, Scan Ring, Toggle Logs, Refresh) are still
   // available via window.ligmarBot.* in the devtools console.
@@ -5824,6 +5915,33 @@
     buttonsWrap.appendChild(startButton);
     buttonsWrap.appendChild(stopButton);
     panel.appendChild(buttonsWrap);
+
+    // AI CHANGED: TEST (version) — runs runUiTestBundle() (console diagnostics; optional calibration via Config.ui.testButtonRunQuickCalibration).
+    const testButton = makeButton(`TEST (${BotVersion.version})`, "#737fff", "#8f94ff", () => {
+      if (testButton.disabled) {
+        return;
+      }
+      testButton.disabled = true;
+      testButton.style.opacity = "0.45";
+      testButton.style.cursor = "wait";
+      Promise.resolve(runUiTestBundle())
+        .then(function (res) {
+          Logger.log("TEST", "finished", res);
+        })
+        .catch(function (err) {
+          Logger.warn("TEST", "bundle rejected", err);
+        })
+        .finally(function () {
+          testButton.disabled = false;
+          testButton.style.opacity = "1";
+          testButton.style.cursor = "pointer";
+          updateControlPanelStatus();
+        });
+    });
+    testButton.style.flex = "none";
+    testButton.style.width = "100%";
+    testButton.style.marginBottom = "10px";
+    panel.appendChild(testButton);
 
     // ---- Planner hooks (C4 slice 7) ------------------------------------
     const plannerWrap = document.createElement("div");
@@ -5961,6 +6079,7 @@
     Runtime.ui.plannerLogCheck = pl.check;
     Runtime.ui.plannerSkillsCheck = ps.check;
     Runtime.ui.plannerFirstBurstOnlyCheck = pf.check;
+    Runtime.ui.testButton = testButton;
 
     updateControlPanelStatus();
 
@@ -6121,6 +6240,8 @@
       getAutoFarmStatus: getAutoFarmStatus,
       createControlPanel: createControlPanel,
       updateControlPanelStatus: updateControlPanelStatus,
+      // AI CHANGED: Panel TEST (version) and console — same entry point.
+      runUiTestBundle: runUiTestBundle,
       // AI CHANGED: Phase C0 -- skill scanner public API. scanSkills() is the only "active" call;
       // the rest are getters / cache helpers for inspection and recovery.
       scanSkills: scanSkills,
