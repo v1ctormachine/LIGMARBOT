@@ -51,7 +51,7 @@ Design principles:
 ### Repository layout
 
 - Git repo lives at the **project root** (`C:\Users\Victor\.cursor\projects\ligmarbot`).
-- Tracked files: `.gitignore`, `ARCHITECTURE.md`, **`ROADMAP.md`** (prioritized next steps), `bot/build.ps1`, `bot/loader.user.js`, `bot/version.json`, `bot/bot.user.js`, `bot/modules/*.js`.
+- Tracked files: `.gitignore`, `ARCHITECTURE.md`, **`ROADMAP.md`** (prioritized next steps), `bot/build.ps1`, `bot/loader.user.js`, `bot/version.json`, `bot/bot.user.js`, `bot/modules/*.js`, **`bot/tools/*.js`** (standalone console helpers; not part of the concatenated bundle).
 - `bot/bot.user.js`, `bot/modules/05-version.js`, `bot/loader.user.js` (`@version` line), and `bot/version.json` are **build artifacts**. **Do not hand-edit them.** They are regenerated from `bot/modules/*.js` and the version state by `bot/build.ps1`.
 - `.gitignore` excludes Cursor tooling artifacts (`mcps/`, `terminals/`, `agent-transcripts/`) and editor scratch files. They live on disk for the IDE but never reach GitHub.
 
@@ -122,7 +122,10 @@ The bot is delivered to Tampermonkey via a thin loader userscript that points at
 
 - **Today:** Each browser already stores **`scanSkills`** output in **`localStorage[Config.skills.storageKey]`** (per machine / profile). That is a **personal** skill DB, not a repo-wide source of truth.
 - **When to freeze a shared “master” DB:** After **effect parsers** and **planner consumers** (`openerHorizonSim`, ranking) are stable for your main build — otherwise bulk imports bake in bad parses. Good trigger: one release notes “skill schema vN locked,” then export.
-- **Workflow you suggested:** A **collector** (Tampermonkey helper or manual `scanSkills` per class) exports **JSON** (normalized slot list + effects + params) → committed e.g. **`bot/data/skills-master.json`** (or similar) → offline review / diffs on game patches → planner weights and missing effect patterns. **Fast-check script:** iterate bar slots + optional alt heroes; same **`parseSkillEffects`** pipeline as live bot so the file matches runtime.
+- **Console collector (skill tree → master export):** **`bot/tools/skill-master-collector-console.js`** is a **standalone IIFE** (not concatenated into **`bot.user.js`**). Open the game with the bot loaded (so **`ligmarBot.parseSkillEffects`** and **`ligmarBot.Config.selectors`** match **`82-skills.js`**), paste the file contents into DevTools console, then:
+  - **Single class (current hero):** Position UI on **Character → Skills** (`.skills-tree` visible). Run `await LigmarSkillMasterCollector.collectCurrentClass({ classKey: "assassin" })` (set **`classKey`** to match the tab you are on). Output is logged as JSON and returned.
+  - **All six classes:** Start on the **first** hero matching **`startClassIndex`** (`0` = assassin … `5` = priest, same order as Hall icon tabs). Run `await LigmarSkillMasterCollector.runFullRoster({ startClassIndex: 0 })`. The script walks **Town → Buildings → Hall of Heroes → class tab → Select** between classes, re-opens **Character → Skills**, clicks **each** `app-action-button.skill-item` in the tree, parses **`app-action-info`** (name, tags, merged description, params, **`parseSkillEffects`** output), closes the modal, and ends with an optional **`ligmar-skills-master.json`** download (`download: false` to skip). Tune delays via **`LigmarSkillMasterCollector.setCfg({ settleMs, longSettleMs, afterSelectMs, … })`** if the UI is slow.
+- **Workflow you suggested (repo file):** Merge collector JSON into e.g. **`bot/data/skills-master.json`** → offline review / diffs on game patches → planner weights and missing effect patterns. **`scanSkills`** on the action bar remains the fast per-build check; the tree collector captures **full class skill lists** (including un-slotted nodes) with the same effect pipeline when the bot is present.
 - **Benefit:** Consistent combat tuning, regression tests (“skill X parsed”), and optional **fallback load** when `localStorage` empty (future).
 
 **Why this layout (and not ES modules / `@require` from GitHub):**
