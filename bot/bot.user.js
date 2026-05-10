@@ -6449,6 +6449,7 @@
         Logger.warn("TEST", "getPlannerOpeningPickDiagnostics threw", err);
       }
       const rankedOn = !!Config.planner.useRankedAttackSkillsInCombat;
+      // AI CHANGED: ranked builds — TEST exercises openerHorizonSim preview (ship rule: new testable behavior via TEST).
       let horizonPreview = null;
       if (rankedOn) {
         try {
