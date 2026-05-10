@@ -254,6 +254,35 @@
     }
   }
 
+  // AI CHANGED: slice 24d — persist TEST cancel-smoke flag (separate key from planner).
+  function loadTestUiPrefs() {
+    try {
+      const raw = window.localStorage.getItem("ligmarbot.testUi.v1");
+      if (!raw) {
+        return;
+      }
+      const p = JSON.parse(raw);
+      if (typeof p.testButtonFireChargeCancelWhenHintVisible === "boolean") {
+        Config.ui.testButtonFireChargeCancelWhenHintVisible = p.testButtonFireChargeCancelWhenHintVisible;
+      }
+    } catch (err) {
+      // AI CHANGED: Ignore corrupt prefs.
+    }
+  }
+
+  function saveTestUiPrefs() {
+    try {
+      window.localStorage.setItem(
+        "ligmarbot.testUi.v1",
+        JSON.stringify({
+          testButtonFireChargeCancelWhenHintVisible: !!Config.ui.testButtonFireChargeCancelWhenHintVisible
+        })
+      );
+    } catch (err) {
+      // AI CHANGED: Non-fatal.
+    }
+  }
+
   // AI CHANGED: Live GUI refresher — phase block, button enabled-state, and compact stats line.
   function updateControlPanelStatus() {
     if (!Runtime.ui.statusNode) {
@@ -274,6 +303,12 @@
       Runtime.ui.plannerFirstBurstOnlyCheck.checked !== !!Config.planner.useRankedSkillOnlyFirstBurstAfterFind
     ) {
       Runtime.ui.plannerFirstBurstOnlyCheck.checked = !!Config.planner.useRankedSkillOnlyFirstBurstAfterFind;
+    }
+    if (
+      Runtime.ui.testCancelSmokeCheck &&
+      Runtime.ui.testCancelSmokeCheck.checked !== !!Config.ui.testButtonFireChargeCancelWhenHintVisible
+    ) {
+      Runtime.ui.testCancelSmokeCheck.checked = !!Config.ui.testButtonFireChargeCancelWhenHintVisible;
     }
 
     // Update Start/Stop button enabled-state so the GUI shows which action is currently meaningful.
@@ -417,7 +452,7 @@
       } else {
         Logger.log(
           "TEST",
-          "done — probe only (no cancel click); turn on Cancel smoke: Config.ui.testButtonFireChargeCancelWhenHintVisible = true"
+          "done — probe only (no cancel click); tick panel “Cancel smoke on TEST” or Config.ui.testButtonFireChargeCancelWhenHintVisible = true"
         );
       }
       return Promise.resolve({
@@ -461,6 +496,7 @@
     }
 
     loadPlannerUiPrefs();
+    loadTestUiPrefs();
 
     const panel = document.createElement("div");
     panel.id = "ligmar-bot-panel";
@@ -580,15 +616,40 @@
     testButton.style.marginBottom = "6px";
     panel.appendChild(testButton);
 
+    // AI CHANGED: slice 24d — checkbox drives Config.ui.testButtonFireChargeCancelWhenHintVisible (persisted).
+    const testCancelRow = document.createElement("label");
+    testCancelRow.style.display = "flex";
+    testCancelRow.style.alignItems = "center";
+    testCancelRow.style.gap = "8px";
+    testCancelRow.style.cursor = "pointer";
+    testCancelRow.style.fontSize = "11px";
+    testCancelRow.style.marginBottom = "6px";
+    testCancelRow.style.opacity = "0.9";
+    const testCancelSmokeCheck = document.createElement("input");
+    testCancelSmokeCheck.type = "checkbox";
+    testCancelSmokeCheck.checked = !!Config.ui.testButtonFireChargeCancelWhenHintVisible;
+    testCancelSmokeCheck.style.cursor = "pointer";
+    testCancelSmokeCheck.addEventListener("change", () => {
+      Config.ui.testButtonFireChargeCancelWhenHintVisible = testCancelSmokeCheck.checked;
+      saveTestUiPrefs();
+      Logger.log("UI", "testButtonFireChargeCancelWhenHintVisible", Config.ui.testButtonFireChargeCancelWhenHintVisible);
+    });
+    const testCancelLabel = document.createElement("span");
+    testCancelLabel.textContent = "Cancel smoke on TEST";
+    testCancelLabel.style.lineHeight = "1.35";
+    testCancelRow.appendChild(testCancelSmokeCheck);
+    testCancelRow.appendChild(testCancelLabel);
+    panel.appendChild(testCancelRow);
+
     // AI CHANGED: Static when-to-run hint + [Expected: …] lines so TEST results are easy to verify in console/game.
     const testHint = document.createElement("div");
     // AI CHANGED: Keep TEST hint tiny — full detail stays in ARCHITECTURE / console.
-    // AI CHANGED: RU [Ожидается] lines for on-screen expectations (Victor locale).
+    // AI CHANGED: Spell out default TEST never cancels (users see hintVisible true in logs and expect a click).
     testHint.textContent =
-      "Когда: бой / заряд навыка / после загрузки.\n" +
-      "[Ожидается] По умолчанию: бот ничего не жмёт — отмены нет, даже если подсказка видна.\n" +
-      "Дым отмены вкл.: бот один раз отменяет заряд (если подсказка есть).\n" +
-      "Калибровка вкл.: бот не бьёт — атакуешь ты ~10 с.";
+      "When: combat / mid-charge / after load.\n" +
+      "[Expected] Default: bot should not tap UI — no cancel, even if hint shows.\n" +
+      "☑ Cancel smoke + TEST: bot should cancel charge once (if hint).\n" +
+      "Calib on: bot should not fight — you attack ~10s.";
     testHint.style.fontSize = "10px";
     testHint.style.lineHeight = "1.45";
     testHint.style.opacity = "0.72";
@@ -739,6 +800,7 @@
     Runtime.ui.plannerSkillsCheck = ps.check;
     Runtime.ui.plannerFirstBurstOnlyCheck = pf.check;
     Runtime.ui.testButton = testButton;
+    Runtime.ui.testCancelSmokeCheck = testCancelSmokeCheck;
 
     updateControlPanelStatus();
 

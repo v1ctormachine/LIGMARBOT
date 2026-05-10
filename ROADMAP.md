@@ -1,23 +1,18 @@
 # Ligmarbot roadmap
 
-Short plan after **v0.3.46** / **slice 24d** (RU TEST hint + ongoing combat UX).
-
-## Current focus
-
-1. **Soak test auto-farm** — Долгий прогон с зарядным опенером: мульти-паки, re-find, без лишнего тапа по слоту. Смотреть `LOOP` / `COMBAT` / `ACTION` на зависания.
+Short plan after **v0.3.46** / **slice 24d** (TEST cancel-smoke checkbox + persistence; ranked opener + map-gap cancel unchanged).
 
 ## Done recently
 
-- Stuck ranked opener → cancel charge (hint visible); map-gap + DOM fallback.
-- TEST panel: компактные **`[Ожидается] …`** под кнопкой **на русском**; дым отмены / калибровка через `Config` или `runUiTestBundle`.
-- Версия: бамп через `build.ps1 -Description` при каждом шипе модулей.
+- Stuck ranked opener → cancel charge (hint visible) so cooldown can start; map button / canvas gap click first.
+- TEST panel: compact expectations; **Cancel smoke on TEST** checkbox + `ligmarbot.testUi.v1`; calibration flag still via Config / console.
 
-## Next (after soak)
+## Next (pick order)
 
-2. **Optional: TEST “Cancel smoke” in GUI** — Чекбокс → `Config.ui.testButtonFireChargeCancelWhenHintVisible` без консоли.
-3. **Optional: partial charge policy** — `minChargeMs` / `maxChargeMs` для `channel_gear` (не только отмена по таймауту прогресса).
-4. **Future: two-skill queue** — Очередь **B** пока **A** в канале; планировщик пока не моделирует (`ARCHITECTURE.md`).
-5. **Version bumps** — См. `.cursor/rules/ligmarbot-ship-version.mdc` и `ARCHITECTURE.md`: после правок модулей — `build.ps1 -Description`, коммит, пуш; ты только F5.
+1. **Soak test auto-farm** — Long run with your real charge opener (Sniper-style): multi-mob pulls, re-find, no double-tap bar. Confirm no regressions; note any remaining stuck states in logs (`LOOP`, `COMBAT`, `ACTION`).
+2. **Optional: partial charge policy** — Config such as `minChargeMs` / `maxChargeMs` (wait before cancel or before treating as “full shot”) for `channel_gear` skills; today we only cancel when progress wait fails, not for optimal DPS timing.
+3. **Future: two-skill queue** — Game allows queuing **B** while **A** channels; planner does not model this yet (`ARCHITECTURE.md` note).
+4. **Version bumps** — On every shipped module change, the maintainer/agent runs `.\bot\build.ps1 -Description "…"` (not `-NoBump`); you only refresh the game tab.
 
 ## Parking lot
 
