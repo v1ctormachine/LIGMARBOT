@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.44",
-    "description":  "slice 24b charge cancel UI click not second bar tap",
-    "builtAt":  "2026-05-10T12:50:49.6717710+03:00",
+    "version":  "0.3.45",
+    "description":  "slice 24c: TEST panel, map-gap cancel, smoke flags, compact hints, ROADMAP",
+    "builtAt":  "2026-05-10T16:01:22.1403202+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.45",
+                        "description":  "slice 24c: TEST panel, map-gap cancel, smoke flags, compact hints, ROADMAP",
+                        "date":  "2026-05-10T16:01:22.1403202+03:00"
+                    },
                     {
                         "version":  "0.3.44",
                         "description":  "slice 24b charge cancel UI click not second bar tap",
@@ -247,11 +252,6 @@
                         "version":  "0.2.4",
                         "description":  "2-ring overlay + multi-candidate dirs (min-enemies tiebreak)",
                         "date":  "2026-05-09T14:05:00.2088840+03:00"
-                    },
-                    {
-                        "version":  "0.2.3",
-                        "description":  "2-ring visual scan: yellow die (#f0b80c) detection guides moves when 1-ring is empty",
-                        "date":  "2026-05-09T13:44:33.7492117+03:00"
                     }
                 ]
 }

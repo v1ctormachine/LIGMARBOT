@@ -1,0 +1,15 @@
+---
+description: After changing bot modules, bump version and push so user only refreshes the game tab.
+globs: bot/modules/**/*.js
+alwaysApply: true
+---
+
+# Ligmarbot ship workflow
+
+When you change **`bot/modules/*.js`** (or anything that changes runtime behavior in the game):
+
+1. Run **`.\bot\build.ps1 -Description "short slice summary"`** — **always use `-Description`** for a normal ship so **`version.json`**, **`05-version.js`**, **`loader.user.js` `@version`**, and **`bot.user.js`** update. Do **not** use **`-NoBump`** unless the edit truly does not change the bundle (rare).
+2. **Commit and push** the regenerated files (`version.json`, `bot/modules/05-version.js`, `bot/loader.user.js`, `bot/bot.user.js`, plus any module edits).
+3. The user only **refreshes** the ligmar.io tab; Tampermonkey reloads the local `@require` when the loader version changes.
+
+See **`ARCHITECTURE.md`** → Versioning and ship rule.

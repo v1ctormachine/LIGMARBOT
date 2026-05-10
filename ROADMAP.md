@@ -1,6 +1,6 @@
 # Ligmarbot roadmap
 
-Short plan after **v0.3.44** (ranked opener + charge cancel via map-gap / DOM fallback + TEST diagnostics).
+Short plan after **v0.3.45** / **slice 24c** (ranked opener + charge cancel via map-gap / DOM fallback + TEST diagnostics + version bump on every ship).
 
 ## Done recently
 
@@ -13,7 +13,7 @@ Short plan after **v0.3.44** (ranked opener + charge cancel via map-gap / DOM fa
 2. **Optional: TEST “Cancel smoke” in GUI** — One checkbox bound to `Config.ui.testButtonFireChargeCancelWhenHintVisible` so you never need the console for that smoke test.
 3. **Optional: partial charge policy** — Config such as `minChargeMs` / `maxChargeMs` (wait before cancel or before treating as “full shot”) for `channel_gear` skills; today we only cancel when progress wait fails, not for optimal DPS timing.
 4. **Future: two-skill queue** — Game allows queuing **B** while **A** channels; planner does not model this yet (`ARCHITECTURE.md` note).
-5. **When you call the build stable** — Run `.\bot\build.ps1 -Description "…"` to bump patch, then commit + push (per project convention).
+5. **Version bumps** — On every shipped module change, the maintainer/agent runs `.\bot\build.ps1 -Description "…"` (not `-NoBump`); you only refresh the game tab.
 
 ## Parking lot
 
