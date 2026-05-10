@@ -569,6 +569,21 @@
         Logger.warn("TEST", "getPlannerOpeningPickDiagnostics threw", err);
       }
       const rankedOn = !!Config.planner.useRankedAttackSkillsInCombat;
+      let horizonPreview = null;
+      if (rankedOn) {
+        try {
+          horizonPreview = previewOpenerHorizonSim({});
+          Logger.log("TEST", "previewOpenerHorizonSim", horizonPreview);
+        } catch (err) {
+          Logger.warn("TEST", "previewOpenerHorizonSim threw", err);
+        }
+      }
+      addCheck(
+        "planner_opener_horizon_preview",
+        !rankedOn || !!(horizonPreview && horizonPreview.ok),
+        horizonPreview,
+        false
+      );
       let openerOk = !rankedOn;
       if (rankedOn) {
         openerOk =

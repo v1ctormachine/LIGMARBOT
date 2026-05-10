@@ -1,6 +1,6 @@
 # Ligmarbot roadmap
 
-Baseline **v0.3.59** (after Pack A ship). **Going forward: bigger releases** — see **§ Release cadence** below; no more one-line-per-patch unless it’s an emergency hotfix.
+Baseline **v0.3.64+**. **Going forward: bigger releases** — see **§ Release cadence** below; no more one-line-per-patch unless it’s an emergency hotfix. **TEST** must stay the one-click full validator when a version needs in-game checks (see **`ARCHITECTURE.md`** versioning + **`.cursor/rules/ligmarbot-ship-version.mdc`**).
 
 ## Release cadence (bigger steps)
 
@@ -17,6 +17,7 @@ Emergency **hotfix** (crash / wrong click): ship immediately, even if tiny.
 
 ## Done recently
 
+- **TEST + openerHorizonSim** — **`runUiTestBundle`** calls **`previewOpenerHorizonSim()`** when ranked combat is on (soft check **`planner_opener_horizon_preview`**). Ship rule: extend TEST for any new testable behavior.
 - **Planner — openerHorizonSim (v0.3.64)** — **`plannerPickSkillOpeningPick`**: paper damage over **`openerHorizonSimMs`** vs basics-only; **`previewOpenerHorizonSim`**, **`Config.planner.useOpenerHorizonSim`** / **`openerHorizonMinImprovementFraction`** / **`openerHorizonLog`**.
 - **Hotfix v0.3.63** — **TEST** left **`stopRequested`** true after farm exit → hero profile **`waitForCondition`** aborted instantly, wrong tab / stuck UI; clear flag on loop exit + before TEST body when idle.
 - **Hotfix v0.3.62** — **ON → TEST** tab freeze: **`sleep()`** was **0 ms** while **`stopRequested`**, so TEST’s farm-idle wait spun the main thread; **`sleep(80, { bypassStop: true })`** in **`runUiTestBundle`**.
@@ -33,11 +34,12 @@ Emergency **hotfix** (crash / wrong click): ship immediately, even if tiny.
 
 ## Next (pick order) — milestone-sized
 
-1. **Soak auto-farm** — Long run; **`TEST`** mid-session with farm ON (stop → run → restart).
-2. **Planner v2** — **openerHorizonSim** shipped (paper window). Next: optional **discrete tick sim** for GCD/channel fidelity, or **two-skill queue** / charge timing when UI signals exist.
-3. **Pack B (parallel):** **loot/settle + inventory** polish, or **neighbor scan** latency + richer **failure logging** (still no prefs-only micro-ships).
-4. **Future: optimal charge %** — Needs a visible charge meter or timed release in-game.
-5. **Future: two-skill queue** — Planner does not model B-while-A (`ARCHITECTURE.md`).
+1. **Permanent skill DB (shared)** — Lock **effect schema** → export **`skills-master.json`** (collector: per-class **`scanSkills`** or dedicated script using same **`parseSkillEffects`**) → tune planner / spot parse gaps. See **`ARCHITECTURE.md`** → **Permanent skill database (planned)**.
+2. **Soak auto-farm** — Long run; **`TEST`** mid-session with farm ON (stop → run → restart).
+3. **Planner v2** — **openerHorizonSim** shipped (paper window). Next: optional **discrete tick sim** for GCD/channel fidelity, or **two-skill queue** / charge timing when UI signals exist.
+4. **Pack B (parallel):** **loot/settle + inventory** polish, or **neighbor scan** latency + richer **failure logging** (still no prefs-only micro-ships).
+5. **Future: optimal charge %** — Needs a visible charge meter or timed release in-game.
+6. **Future: two-skill queue** — Planner does not model B-while-A (`ARCHITECTURE.md`).
 
 ## Parking lot
 
