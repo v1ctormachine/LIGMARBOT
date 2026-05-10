@@ -5913,10 +5913,15 @@
     Logger.log("TEST", "skills meta", skillsMeta);
 
     if (!runCalibration) {
-      Logger.log(
-        "TEST",
-        "bundle done. Optional: observe+merge → Config.ui.testButtonRunQuickCalibration / runUiTestBundle({ runQuickCalibration: true }); live cancel smoke → testButtonFireChargeCancelWhenHintVisible or runUiTestBundle({ fireChargeCancelIfHint: true })"
-      );
+      // AI CHANGED: Short “done” line so logs state clearly that default TEST never cancels charge.
+      if (fireChargeCancelIfHint) {
+        Logger.log("TEST", "done", { chargeCancelTest: chargeCancelTest });
+      } else {
+        Logger.log(
+          "TEST",
+          "done — probe only (no cancel click); turn on Cancel smoke: Config.ui.testButtonFireChargeCancelWhenHintVisible = true"
+        );
+      }
       return Promise.resolve({
         ok: true,
         runQuickCalibration: false,
@@ -6080,9 +6085,10 @@
     // AI CHANGED: Static when-to-run hint + [Expected: …] lines so TEST results are easy to verify in console/game.
     const testHint = document.createElement("div");
     // AI CHANGED: Keep TEST hint tiny — full detail stays in ARCHITECTURE / console.
+    // AI CHANGED: Spell out default TEST never cancels (users see hintVisible true in logs and expect a click).
     testHint.textContent =
       "When: combat / mid-charge / after load.\n" +
-      "[Expected] Default: bot should not click anything.\n" +
+      "[Expected] Default: bot should not tap UI — no cancel, even if hint shows.\n" +
       "Cancel smoke on: bot should cancel charge once (if hint visible).\n" +
       "Calib on: bot should not fight — you attack ~10s.";
     testHint.style.fontSize = "10px";
