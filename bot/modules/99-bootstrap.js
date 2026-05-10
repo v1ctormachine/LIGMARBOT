@@ -156,6 +156,9 @@
       // AI CHANGED: grouped slice 34 — planner localStorage sync from console (panel had no toggles since slice 29).
       loadPlannerUiPrefs: loadPlannerUiPrefs,
       savePlannerUiPrefs: savePlannerUiPrefs,
+      // AI CHANGED: slice 35 — opener timing ms (`ligmarbot.combatUi.v1`) from console without touching panel inputs.
+      loadCombatUiPrefs: loadCombatUiPrefs,
+      saveCombatUiPrefs: saveCombatUiPrefs,
       // AI CHANGED: Panel TEST (version) and console — same entry point.
       runUiTestBundle: runUiTestBundle,
       // AI CHANGED: Phase C0 -- skill scanner public API. scanSkills() is the only "active" call;

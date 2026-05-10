@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.56",
-    "description":  "slice 34: savePlannerUiPrefs API + boot ranked/skills warn",
-    "builtAt":  "2026-05-10T18:40:46.0411457+03:00",
+    "version":  "0.3.57",
+    "description":  "slice 35: ligmarBot save/load combatUi prefs API",
+    "builtAt":  "2026-05-10T18:49:41.1522893+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.57",
+                        "description":  "slice 35: ligmarBot save/load combatUi prefs API",
+                        "date":  "2026-05-10T18:49:41.1522893+03:00"
+                    },
                     {
                         "version":  "0.3.56",
                         "description":  "slice 34: savePlannerUiPrefs API + boot ranked/skills warn",
@@ -247,11 +252,6 @@
                         "version":  "0.3.8",
                         "description":  "Phase C3 enemy profile reader + enemy DB cache",
                         "date":  "2026-05-09T18:45:00.9987871+03:00"
-                    },
-                    {
-                        "version":  "0.3.7",
-                        "description":  "Damage observer: coerce HP cur for lethal + non-finite guard",
-                        "date":  "2026-05-09T18:32:55.6690620+03:00"
                     }
                 ]
 }
