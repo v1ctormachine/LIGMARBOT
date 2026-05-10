@@ -789,24 +789,22 @@
       Promise.resolve(runUiTestBundle())
         .then(function (res) {
           Logger.log("TEST", "finished", res);
+          // AI CHANGED: auto-check outcome — green only when bundle critical checks pass (`res.ok`).
           if (testResultLine) {
             if (res && res.ok) {
-              testResultLine.textContent = "Last TEST: critical checks OK (see [TEST] SUMMARY for soft warns)";
+              testResultLine.textContent = "Test result: successful";
               testResultLine.style.color = "#7dffb3";
-            } else if (res) {
-              testResultLine.textContent = "Last TEST: critical FAIL — open console [TEST] SUMMARY";
-              testResultLine.style.color = "#ffb38a";
             } else {
-              testResultLine.textContent = "Last TEST: no result";
-              testResultLine.style.color = "#dce3ff";
+              testResultLine.textContent = "Test result: failed";
+              testResultLine.style.color = "#ff6b6b";
             }
           }
         })
         .catch(function (err) {
           Logger.warn("TEST", "bundle rejected", err);
           if (testResultLine) {
-            testResultLine.textContent = "Last TEST: error — " + (err && err.message ? err.message : String(err));
-            testResultLine.style.color = "#ff8a8a";
+            testResultLine.textContent = "Test result: failed";
+            testResultLine.style.color = "#ff6b6b";
           }
         })
         .finally(function () {
@@ -823,7 +821,7 @@
 
     // AI CHANGED: last TEST pass/fail line — filled when runUiTestBundle resolves (no manual console steps).
     const testResultLine = document.createElement("div");
-    testResultLine.textContent = "Last TEST: —";
+    testResultLine.textContent = "Test result: —";
     testResultLine.style.fontSize = "10px";
     testResultLine.style.lineHeight = "1.35";
     testResultLine.style.marginBottom = "8px";

@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.60",
-    "description":  "headline: TEST runs scan hero planner checks SUMMARY",
-    "builtAt":  "2026-05-10T19:02:11.0128278+03:00",
+    "version":  "0.3.61",
+    "description":  "headline: TEST panel shows successful vs failed",
+    "builtAt":  "2026-05-10T19:05:43.4748227+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.61",
+                        "description":  "headline: TEST panel shows successful vs failed",
+                        "date":  "2026-05-10T19:05:43.4748227+03:00"
+                    },
                     {
                         "version":  "0.3.60",
                         "description":  "headline: TEST runs scan hero planner checks SUMMARY",
@@ -247,11 +252,6 @@
                         "version":  "0.3.12",
                         "description":  "C4 slice 3: summarizeEnemyDbCalibration + getEnemyCalibrationRow",
                         "date":  "2026-05-09T19:06:50.3009334+03:00"
-                    },
-                    {
-                        "version":  "0.3.11",
-                        "description":  "C4 slice 2: observe attribution + merge hp_drop into enemy DB",
-                        "date":  "2026-05-09T19:02:39.7862504+03:00"
                     }
                 ]
 }
