@@ -45,6 +45,8 @@
       secondRingOverlayTimer: null,
       // AI CHANGED: TEST (version) panel button — ref for disable-while-running (90-ui.js).
       testButton: null,
+      // AI CHANGED: one-line last TEST outcome under the TEST button (90-ui.js runUiTestBundle).
+      testResultLine: null,
       // AI CHANGED: slice 26 — ranked opener ms inputs (90-ui.js).
       combatGraceInput: null,
       combatEarlyCancelInput: null
