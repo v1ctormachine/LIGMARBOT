@@ -107,6 +107,8 @@
       isChargingSkillCancelHintVisible: isChargingSkillCancelHintVisible,
       getChargingSkillCancelClickTarget: getChargingSkillCancelClickTarget,
       clickChargingSkillCancelUi: clickChargingSkillCancelUi,
+      // AI CHANGED: Debug map-gap charge-cancel coordinates (slice 24b gap click).
+      getChargeCancelMapGapClientPoint: getChargeCancelMapGapClientPoint,
       discoverFractionNodes: discoverFractionNodes,
       discoverButtons: discoverButtons,
       readEnemyCount: readEnemyCount,

@@ -100,7 +100,7 @@
       Config.combat.rankedOpenerClickCancelUiIfChargeStuck !== false &&
       isChargingSkillCancelHintVisible()
     ) {
-      Logger.log("LOOP", "Charge cancel hint visible after opener wait; clicking cancel UI (not bar slot)", {
+      Logger.log("LOOP", "Charge cancel hint visible after opener wait; map-gap / cancel UI (not bar slot)", {
         slot: open.skillSlot
       });
       clickChargingSkillCancelUi();

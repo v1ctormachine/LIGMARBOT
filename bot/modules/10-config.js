@@ -37,6 +37,8 @@
       postRankedSkillClickSettleMs: 120,
       // AI CHANGED: slice 24b — charge skills (e.g. Sniper Shot): CD does not start until cancel UI tap or full charge fires. Only if first progress wait fails, click the cancel control (not the bar slot).
       rankedOpenerClickCancelUiIfChargeStuck: true,
+      // AI CHANGED: Prefer click in the gap between map toggle and map canvas (reliable charge cancel); false = DOM cancel only.
+      chargingCancelPreferMapGapClick: true,
       chargingCancelHintSubstrings: ["press to cancel"],
       chargingCancelHintScanRoot: "app-game",
       // AI CHANGED: slice 24b — optional explicit cancel button(s); if empty, walk up from hint span to button / role=button.

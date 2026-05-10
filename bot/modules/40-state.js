@@ -156,6 +156,64 @@
   }
 
   // AI CHANGED: slice 24b — element to click for charge cancel (explicit selectors first, else ancestor button / role=button, else hint node).
+  // AI CHANGED: Midpoint in the gap between map-open button and map canvas (viewport coords) — game treats as empty UI; cancels charge.
+  function getChargeCancelMapGapClientPoint() {
+    const btnSel =
+      typeof Config.selectors.mapToggleButton === "string" && Config.selectors.mapToggleButton.trim()
+        ? Config.selectors.mapToggleButton.trim()
+        : "app-button-icon.button-map";
+    const cvSel =
+      typeof Config.selectors.mapCanvas === "string" && Config.selectors.mapCanvas.trim()
+        ? Config.selectors.mapCanvas.trim()
+        : "app-game canvas";
+    const btn = document.querySelector(btnSel);
+    const canvas = document.querySelector(cvSel);
+    if (!btn || !canvas || !isElementVisible(btn) || !isElementVisible(canvas)) {
+      return null;
+    }
+    const a = btn.getBoundingClientRect();
+    const b = canvas.getBoundingClientRect();
+    let x;
+    let y;
+    if (a.right <= b.left) {
+      x = (a.right + b.left) / 2;
+      const yTop = Math.max(a.top, b.top);
+      const yBot = Math.min(a.bottom, b.bottom);
+      y = yBot > yTop ? (yTop + yBot) / 2 : (a.top + a.bottom + b.top + b.bottom) / 4;
+    } else if (b.right <= a.left) {
+      x = (b.right + a.left) / 2;
+      const yTop = Math.max(a.top, b.top);
+      const yBot = Math.min(a.bottom, b.bottom);
+      y = yBot > yTop ? (yTop + yBot) / 2 : (a.top + a.bottom + b.top + b.bottom) / 4;
+    } else if (a.bottom <= b.top) {
+      y = (a.bottom + b.top) / 2;
+      const xLeft = Math.max(a.left, b.left);
+      const xRight = Math.min(a.right, b.right);
+      x = xRight > xLeft ? (xLeft + xRight) / 2 : (a.left + a.right + b.left + b.right) / 4;
+    } else if (b.bottom <= a.top) {
+      y = (b.bottom + a.top) / 2;
+      const xLeft = Math.max(a.left, b.left);
+      const xRight = Math.min(a.right, b.right);
+      x = xRight > xLeft ? (xLeft + xRight) / 2 : (a.left + a.right + b.left + b.right) / 4;
+    } else {
+      x = (a.right + b.left) / 2;
+      y = (a.top + a.bottom + b.top + b.bottom) / 4;
+    }
+    const margin = 2;
+    const clampedX = Math.min(Math.max(x, margin), window.innerWidth - margin);
+    const clampedY = Math.min(Math.max(y, margin), window.innerHeight - margin);
+    return { clientX: clampedX, clientY: clampedY };
+  }
+
+  function clickChargeCancelViaMapToggleCanvasGap() {
+    const pt = getChargeCancelMapGapClientPoint();
+    if (!pt) {
+      Logger.warn("COMBAT", "charge cancel map-gap: map button or canvas missing / not visible");
+      return false;
+    }
+    return dispatchClickAt(pt.clientX, pt.clientY, "charge-cancel-map-gap");
+  }
+
   function getChargingSkillCancelClickTarget() {
     const hint = findChargingSkillCancelHintElement();
     if (!hint) {
@@ -195,11 +253,17 @@
     return hint;
   }
 
-  // AI CHANGED: slice 24b — tap dedicated cancel UI (not action bar slot); cooldown starts after release.
+  // AI CHANGED: slice 24b — cancel charge: prefer map-toggle/canvas gap click; else DOM cancel control (not bar slot).
   function clickChargingSkillCancelUi() {
+    if (Config.combat.chargingCancelPreferMapGapClick !== false) {
+      if (clickChargeCancelViaMapToggleCanvasGap()) {
+        return true;
+      }
+      Logger.log("COMBAT", "charge cancel: map-gap click failed; trying DOM cancel target");
+    }
     const target = getChargingSkillCancelClickTarget();
     if (!target) {
-      Logger.warn("COMBAT", "charge cancel: no click target (hint missing or selectors unmatched)");
+      Logger.warn("COMBAT", "charge cancel: no DOM click target (hint missing or selectors unmatched)");
       return false;
     }
     return clickElementSafe(target, "charge-cancel-ui");

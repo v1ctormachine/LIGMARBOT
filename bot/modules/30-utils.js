@@ -144,6 +144,34 @@
     canvas.dispatchEvent(event);
   }
 
+  // AI CHANGED: Full click sequence at viewport coords (elementFromPoint) — for dead UI gaps, not only canvas.
+  function dispatchClickAt(clientX, clientY, label) {
+    const x = Number(clientX);
+    const y = Number(clientY);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      Logger.warn("ACTION", `${label} click-at skipped: bad coordinates`);
+      return false;
+    }
+    const el = document.elementFromPoint(x, y);
+    if (!el) {
+      Logger.warn("ACTION", `${label} click-at skipped: no element at point`);
+      return false;
+    }
+    const opts = {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      clientX: x,
+      clientY: y,
+      button: 0
+    };
+    el.dispatchEvent(new MouseEvent("mousedown", opts));
+    el.dispatchEvent(new MouseEvent("mouseup", opts));
+    el.dispatchEvent(new MouseEvent("click", opts));
+    Logger.log("ACTION", `${label} click-at`, { x: Math.round(x), y: Math.round(y), tag: el.tagName });
+    return true;
+  }
+
   // AI CHANGED: Single funnel for bot phase changes. Updates Runtime.status and emits a structured log.
   // Call from action-path boundaries (start/stop of major operations), not from inner atoms.
   function setBotStatus(phase, detail) {

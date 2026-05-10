@@ -377,7 +377,11 @@
           };
         }
       }
-      Logger.log("TEST", "charge-cancel-ui", { hintVisible: hintVis, cancelClickTarget: cancelClickTarget });
+      Logger.log("TEST", "charge-cancel-ui", {
+        hintVisible: hintVis,
+        cancelClickTarget: cancelClickTarget,
+        mapGapClientPoint: getChargeCancelMapGapClientPoint()
+      });
     } catch (err) {
       Logger.warn("TEST", "charge-cancel probe threw", err);
     }
