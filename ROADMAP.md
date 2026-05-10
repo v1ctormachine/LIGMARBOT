@@ -17,6 +17,7 @@ Emergency **hotfix** (crash / wrong click): ship immediately, even if tiny.
 
 ## Done recently
 
+- **Planner — openerHorizonSim (v0.3.64)** — **`plannerPickSkillOpeningPick`**: paper damage over **`openerHorizonSimMs`** vs basics-only; **`previewOpenerHorizonSim`**, **`Config.planner.useOpenerHorizonSim`** / **`openerHorizonMinImprovementFraction`** / **`openerHorizonLog`**.
 - **Hotfix v0.3.63** — **TEST** left **`stopRequested`** true after farm exit → hero profile **`waitForCondition`** aborted instantly, wrong tab / stuck UI; clear flag on loop exit + before TEST body when idle.
 - **Hotfix v0.3.62** — **ON → TEST** tab freeze: **`sleep()`** was **0 ms** while **`stopRequested`**, so TEST’s farm-idle wait spun the main thread; **`sleep(80, { bypassStop: true })`** in **`runUiTestBundle`**.
 - **TEST (full auto)** — **`runUiTestBundle`** runs **scanSkills** (when needed), **readHeroCombatStats**, planner opener dry-run + diagnostics, probes, cancel smoke, calibration; console **`[TEST] SUMMARY`** + panel **Last TEST** line; opts **`forceSkillScan`**, **`strictCalibration`**, etc.
@@ -33,9 +34,10 @@ Emergency **hotfix** (crash / wrong click): ship immediately, even if tiny.
 ## Next (pick order) — milestone-sized
 
 1. **Soak auto-farm** — Long run; **`TEST`** mid-session with farm ON (stop → run → restart).
-2. **Pack B (next milestone drop):** Pick **one** theme and bundle several files — e.g. **loot/settle + inventory** polish, or **neighbor scan** latency + richer **failure logging** (per-tile timing / reasons), or further **planner** combat sequencing (still no prefs-only micro-ships).
-3. **Future: optimal charge %** — Needs a visible charge meter or timed release in-game.
-4. **Future: two-skill queue** — Planner does not model B-while-A (`ARCHITECTURE.md`).
+2. **Planner v2** — **openerHorizonSim** shipped (paper window). Next: optional **discrete tick sim** for GCD/channel fidelity, or **two-skill queue** / charge timing when UI signals exist.
+3. **Pack B (parallel):** **loot/settle + inventory** polish, or **neighbor scan** latency + richer **failure logging** (still no prefs-only micro-ships).
+4. **Future: optimal charge %** — Needs a visible charge meter or timed release in-game.
+5. **Future: two-skill queue** — Planner does not model B-while-A (`ARCHITECTURE.md`).
 
 ## Parking lot
 

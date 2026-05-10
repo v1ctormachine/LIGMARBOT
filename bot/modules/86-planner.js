@@ -408,6 +408,120 @@
     });
   }
 
+  // AI CHANGED: openerHorizonSim — mob factor from enemy DB calibration (1 when unknown).
+  function plannerMobCalibrationFactorForKey(enemyKey) {
+    const row =
+      enemyKey && String(enemyKey).trim() ? getEnemyCalibrationRow(String(enemyKey).trim()) : null;
+    if (row && Number.isFinite(row.ratioObservedVsCurrentPaper) && row.ratioObservedVsCurrentPaper > 0) {
+      return row.ratioObservedVsCurrentPaper;
+    }
+    return 1;
+  }
+
+  // AI CHANGED: openerHorizonSim — one basic swing from paper hero stats.
+  function plannerExpectedBasicHitFromPaper(paper) {
+    if (!paper || !paper.breakdown || !Number.isFinite(paper.expectedHitMult)) {
+      return null;
+    }
+    const pa = paper.breakdown.physicalAttack;
+    if (!Number.isFinite(pa)) {
+      return null;
+    }
+    return pa * paper.expectedHitMult;
+  }
+
+  // AI CHANGED: openerHorizonSim — rough skill damage over window from parsed effects (HP units, same scale as paper).
+  function plannerSkillPaperDamageInHorizon(slot, horizonSec, mobFactor, expectedBasicHit) {
+    if (!slot || !Array.isArray(slot.effects) || !(horizonSec > 0)) {
+      return 0;
+    }
+    const mf = Number.isFinite(mobFactor) && mobFactor > 0 ? mobFactor : 1;
+    let add = 0;
+    for (let i = 0; i < slot.effects.length; i += 1) {
+      const e = slot.effects[i];
+      if (!e || !e.type) {
+        continue;
+      }
+      if (e.type === "dot" && Number.isFinite(e.perSec)) {
+        const dur = Number.isFinite(e.durationSec) ? e.durationSec : horizonSec;
+        add += e.perSec * Math.min(horizonSec, dur);
+      } else if (e.type === "instant" && Number.isFinite(e.value)) {
+        add += e.value * mf;
+      } else if (e.type === "basic_proc" && expectedBasicHit !== null && Number.isFinite(expectedBasicHit)) {
+        add += expectedBasicHit * mf;
+      } else if (e.type === "channel_gear" && expectedBasicHit !== null && Number.isFinite(expectedBasicHit)) {
+        const chMax = Number.isFinite(e.channelMaxSec) ? e.channelMaxSec : 2;
+        const ch = Math.min(Math.max(0, chMax), horizonSec);
+        const gearPct = Number.isFinite(e.gearDamagePercent) ? e.gearDamagePercent / 100 : 0;
+        const basePart = expectedBasicHit * mf;
+        add += basePart * (1 + gearPct * 0.7 * (ch / Math.max(chMax, 0.05)));
+      }
+    }
+    return add;
+  }
+
+  // AI CHANGED: openerHorizonSim — closed-form: cast blocks basics for castTime, then basics rest; skill lump from effects.
+  function plannerOpenerHorizonSkillPlusBasics(slot, horizonSec, enemyKey) {
+    const paper = estimatePaperBasicAttackDps();
+    const basicDps = paper && Number.isFinite(paper.dps) ? paper.dps : 0;
+    const mobFactor = plannerMobCalibrationFactorForKey(enemyKey);
+    const expectedBasicHit = plannerExpectedBasicHitFromPaper(paper);
+    const castBlocked =
+      Number.isFinite(slot.castTimeSec) && slot.castTimeSec > 0 ? Math.min(horizonSec, slot.castTimeSec) : 0;
+    const skillPaper = plannerSkillPaperDamageInHorizon(slot, horizonSec, mobFactor, expectedBasicHit);
+    const timeLeft = Math.max(0, horizonSec - castBlocked);
+    return skillPaper + basicDps * timeLeft;
+  }
+
+  function plannerOpenerHorizonBasicOnly(horizonSec) {
+    const paper = estimatePaperBasicAttackDps();
+    const basicDps = paper && Number.isFinite(paper.dps) ? paper.dps : 0;
+    return basicDps * horizonSec;
+  }
+
+  // AI CHANGED: console/debug — table of opener candidates vs baseline for current target key.
+  function previewOpenerHorizonSim(userOpts) {
+    const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
+    const key =
+      typeof opts.enemyKey === "string" && opts.enemyKey.trim()
+        ? opts.enemyKey.trim()
+        : Runtime.enemy.lastFoughtKey || null;
+    const horizonMsRaw = opts.horizonMs;
+    const horizonMs = Number.isFinite(horizonMsRaw) ? horizonMsRaw : Config.planner.openerHorizonSimMs;
+    const horizonSec = Math.max(0.001, horizonMs / 1000);
+    const rank = key ? rankAttackSkillsByHeuristic({ enemyKey: key }) : rankAttackSkillsByHeuristic({});
+    const slots = Runtime.skills.slots || [];
+    const baseline = plannerOpenerHorizonBasicOnly(horizonSec);
+    const rows = [];
+    if (rank && Array.isArray(rank.order)) {
+      for (let i = 0; i < rank.order.length; i += 1) {
+        const idx = rank.order[i];
+        const s = slots[idx];
+        if (!s || s.kind !== "skill" || !s.isAttack || !s.targetsEnemy) {
+          continue;
+        }
+        if (!plannerSkillHasDirectDamageForOpener(s)) {
+          continue;
+        }
+        const d = plannerOpenerHorizonSkillPlusBasics(s, horizonSec, key);
+        rows.push({
+          slot: idx,
+          name: s.name || "",
+          horizonDamage: +d.toFixed(2),
+          vsBaseline: +((d / baseline - 1) * 100).toFixed(2) + "%"
+        });
+      }
+    }
+    return {
+      ok: true,
+      enemyKey: key,
+      horizonMs: horizonMs,
+      baselineDamage: +baseline.toFixed(2),
+      candidates: rows,
+      note: "Paper + effect parse; not live combat. Disable with Config.planner.useOpenerHorizonSim = false."
+    };
+  }
+
   // AI CHANGED: Pack A — read-only snapshot for console after a fight / when debugging openers.
   function getPlannerOpeningPickDiagnostics() {
     const pr = Runtime.planner;
@@ -418,11 +532,12 @@
       lastDetail: pr.lastOpeningPickDetail,
       lastAt: pr.lastOpeningPickAt,
       cacheSlotCount: Array.isArray(slots) ? slots.length : 0,
-      attackSkillsRanked: rankAttackSkillsByHeuristic({}).order.length
+      attackSkillsRanked: rankAttackSkillsByHeuristic({}).order.length,
+      lastOpenerHorizonSim: pr.lastOpenerHorizonSim || null
     };
   }
 
-  // AI CHANGED: Phase C4 slice 8+12+15 — full pick { slot, record } for opener; optional excludeSlots (indices already tried this burst).
+  // AI CHANGED: Phase C4 slice 8+12+15 — pick opener with optional horizonSim (paper damage window); else first feasible heuristic order.
   function plannerPickSkillOpeningPick(userOpts) {
     const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
     let exclude = new Set();
@@ -440,6 +555,7 @@
     pr.lastOpeningPickReason = null;
     pr.lastOpeningPickDetail = null;
     pr.lastOpeningPickAt = Date.now();
+    pr.lastOpenerHorizonSim = null;
     if (!Config.planner.useRankedAttackSkillsInCombat) {
       pr.lastOpeningPickReason = "ranked_disabled";
       return null;
@@ -474,6 +590,7 @@
       badIndex: 0,
       emptyRow: 0
     };
+    const candidates = [];
     for (let i = 0; i < rank.order.length; i += 1) {
       const idx = rank.order[i];
       if (typeof idx !== "number" || idx < 0 || idx >= slots.length) {
@@ -526,19 +643,89 @@
         breakdown.exclude += 1;
         continue;
       }
-      pr.lastOpeningPickReason = "picked";
-      pr.lastOpeningPickDetail = { slot: idx, name: s.name || "" };
-      return { slot: idx, record: s };
+      candidates.push({ idx: idx, record: s });
     }
-    pr.lastOpeningPickReason = "all_candidates_filtered";
+
+    if (candidates.length === 0) {
+      pr.lastOpeningPickReason = "all_candidates_filtered";
+      pr.lastOpeningPickDetail = {
+        breakdown: breakdown,
+        mpCur: mpCur,
+        skillMpReserve: reserve,
+        excludedCount: exclude.size
+      };
+      plannerMaybeLogOpeningPickFailure("all_candidates_filtered", pr.lastOpeningPickDetail);
+      return null;
+    }
+
+    const useHorizon = Config.planner.useOpenerHorizonSim !== false;
+    const horizonMs = Number.isFinite(Config.planner.openerHorizonSimMs) ? Config.planner.openerHorizonSimMs : 5000;
+    const minFracRaw = Config.planner.openerHorizonMinImprovementFraction;
+    const minFrac = Number.isFinite(minFracRaw) && minFracRaw >= 0 ? minFracRaw : 0.02;
+    const paper = estimatePaperBasicAttackDps();
+    if (useHorizon && horizonMs > 0 && paper && Number.isFinite(paper.dps) && paper.dps > 0) {
+      const horizonSec = horizonMs / 1000;
+      const baselineTotal = plannerOpenerHorizonBasicOnly(horizonSec);
+      let bestIdx = null;
+      let bestDmg = baselineTotal;
+      const scored = [];
+      for (let c = 0; c < candidates.length; c += 1) {
+        const cand = candidates[c];
+        const d = plannerOpenerHorizonSkillPlusBasics(cand.record, horizonSec, key);
+        scored.push({ slot: cand.idx, name: cand.record.name || "", damage: +d.toFixed(2) });
+        if (d > bestDmg) {
+          bestDmg = d;
+          bestIdx = cand.idx;
+        }
+      }
+      pr.lastOpenerHorizonSim = {
+        horizonMs: horizonMs,
+        baselineDamage: +baselineTotal.toFixed(2),
+        bestDamage: +bestDmg.toFixed(2),
+        bestSlot: bestIdx,
+        scored: scored
+      };
+      if (Config.planner.openerHorizonLog) {
+        Logger.log("PLANNER", "openerHorizonSim", pr.lastOpenerHorizonSim);
+      }
+      const threshold = baselineTotal * (1 + minFrac);
+      if (bestIdx !== null && bestDmg > threshold) {
+        let pickedPair = null;
+        for (let p = 0; p < candidates.length; p += 1) {
+          if (candidates[p].idx === bestIdx) {
+            pickedPair = candidates[p];
+            break;
+          }
+        }
+        if (!pickedPair) {
+          pickedPair = candidates[0];
+        }
+        pr.lastOpeningPickReason = "picked";
+        pr.lastOpeningPickDetail = {
+          slot: pickedPair.idx,
+          name: pickedPair.record.name || "",
+          horizonSim: pr.lastOpenerHorizonSim
+        };
+        return { slot: pickedPair.idx, record: pickedPair.record };
+      }
+      pr.lastOpeningPickReason = "horizon_prefers_basic";
+      pr.lastOpeningPickDetail = {
+        horizonSim: pr.lastOpenerHorizonSim,
+        threshold: +threshold.toFixed(2),
+        minImprovementFraction: minFrac
+      };
+      return null;
+    }
+
+    const first = candidates[0];
+    pr.lastOpeningPickReason = "picked";
     pr.lastOpeningPickDetail = {
-      breakdown: breakdown,
-      mpCur: mpCur,
-      skillMpReserve: reserve,
-      excludedCount: exclude.size
+      slot: first.idx,
+      name: first.record.name || "",
+      heuristicFallback: true,
+      note: useHorizon ? "horizonSim skipped (no paper DPS)" : "useOpenerHorizonSim off"
     };
-    plannerMaybeLogOpeningPickFailure("all_candidates_filtered", pr.lastOpeningPickDetail);
-    return null;
+    return { slot: first.idx, record: first.record };
   }
 
   // AI CHANGED: Phase C4 slice 8 — pick action-bar index for opening attack, or null to use basic-only path.

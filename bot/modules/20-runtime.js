@@ -92,6 +92,8 @@
       lastOpeningPickLogAt: null,
       lastOpeningPickLogReason: null,
       // AI CHANGED: Pack A — dedupe key for throttled opening-pick failure logs (86-planner.js).
-      lastOpeningPickLogDetailKey: null
+      lastOpeningPickLogDetailKey: null,
+      // AI CHANGED: last closed-form horizon compare for opener (86-planner.js openerHorizonSim).
+      lastOpenerHorizonSim: null
     }
   };

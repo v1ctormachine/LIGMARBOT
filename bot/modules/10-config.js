@@ -74,7 +74,12 @@
       // AI CHANGED: Pack A — console visibility when ranked openers are ON but no slot is eligible (empty cache, MP gate, cooldown hints, etc.).
       logOpeningPickFailures: true,
       // AI CHANGED: Pack A — min ms between repeated [PLANNER] logs for the same failure class (still updates Runtime.planner every pick).
-      openingPickFailureLogThrottleMs: 12000
+      openingPickFailureLogThrottleMs: 12000,
+      // AI CHANGED: openerHorizonSim — compare ~N ms of paper damage: skill opener + basics after cast vs basics-only; pick skill only if ahead by min fraction (no per-tick sim loop — cheap).
+      useOpenerHorizonSim: true,
+      openerHorizonSimMs: 5000,
+      openerHorizonMinImprovementFraction: 0.02,
+      openerHorizonLog: false
     },
     // AI CHANGED: Added runtime logging flags so noisy snapshot logs can be disabled quickly.
     logging: {

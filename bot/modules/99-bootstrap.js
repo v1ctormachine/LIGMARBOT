@@ -219,7 +219,9 @@
       plannerOpenerHoldCastMs: plannerOpenerHoldCastMs,
       plannerSkillHasDirectDamageForOpener: plannerSkillHasDirectDamageForOpener,
       // AI CHANGED: Pack A — last opener skip reason + counts (after combat tries ranked openers).
-      getPlannerOpeningPickDiagnostics: getPlannerOpeningPickDiagnostics
+      getPlannerOpeningPickDiagnostics: getPlannerOpeningPickDiagnostics,
+      // AI CHANGED: openerHorizonSim — paper damage window preview for ranked candidates (86-planner.js).
+      previewOpenerHorizonSim: previewOpenerHorizonSim
     };
 
     Logger.log("BOOT", "Debug API exposed as window.ligmarBot");
