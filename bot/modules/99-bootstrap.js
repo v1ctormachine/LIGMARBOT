@@ -159,6 +159,9 @@
       // AI CHANGED: slice 35 — opener timing ms (`ligmarbot.combatUi.v1`) from console without touching panel inputs.
       loadCombatUiPrefs: loadCombatUiPrefs,
       saveCombatUiPrefs: saveCombatUiPrefs,
+      // AI CHANGED: slice 36 — persist / reload both storage keys; console shows `{ ok, … }` not `undefined`.
+      saveAllUiPrefs: saveAllUiPrefs,
+      loadAllUiPrefs: loadAllUiPrefs,
       // AI CHANGED: Panel TEST (version) and console — same entry point.
       runUiTestBundle: runUiTestBundle,
       // AI CHANGED: Phase C0 -- skill scanner public API. scanSkills() is the only "active" call;

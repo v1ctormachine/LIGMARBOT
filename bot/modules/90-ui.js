@@ -213,12 +213,21 @@
     return `${hr}h ${restMin}m`;
   }
 
-  // AI CHANGED: Boot-only: apply saved planner flags from localStorage (no panel — use console Config.planner to change live).
+  // AI CHANGED: Boot-only + console — apply saved planner flags; returns a result object (slice 36).
+  function plannerPrefsSnapshot() {
+    return {
+      recordEnemyDbBeforeAttack: !!Config.planner.recordEnemyDbBeforeAttack,
+      logPlannerAfterSecureTile: !!Config.planner.logPlannerAfterSecureTile,
+      useRankedAttackSkillsInCombat: !!Config.planner.useRankedAttackSkillsInCombat,
+      useRankedSkillOnlyFirstBurstAfterFind: !!Config.planner.useRankedSkillOnlyFirstBurstAfterFind
+    };
+  }
+
   function loadPlannerUiPrefs() {
     try {
       const raw = window.localStorage.getItem("ligmarbot.plannerUi.v1");
       if (!raw) {
-        return;
+        return { ok: true, fromStorage: false, planner: plannerPrefsSnapshot() };
       }
       const p = JSON.parse(raw);
       if (typeof p.recordEnemyDbBeforeAttack === "boolean") {
@@ -233,34 +242,41 @@
       if (typeof p.useRankedSkillOnlyFirstBurstAfterFind === "boolean") {
         Config.planner.useRankedSkillOnlyFirstBurstAfterFind = p.useRankedSkillOnlyFirstBurstAfterFind;
       }
+      return { ok: true, fromStorage: true, planner: plannerPrefsSnapshot() };
     } catch (err) {
-      // AI CHANGED: Ignore corrupt prefs.
+      return {
+        ok: false,
+        fromStorage: false,
+        error: String(err && err.message ? err.message : err),
+        planner: plannerPrefsSnapshot()
+      };
     }
   }
 
   // AI CHANGED: grouped slice 34 — persist planner flags after console edits (ligmarBot.savePlannerUiPrefs).
   function savePlannerUiPrefs() {
+    const payload = plannerPrefsSnapshot();
     try {
-      window.localStorage.setItem(
-        "ligmarbot.plannerUi.v1",
-        JSON.stringify({
-          recordEnemyDbBeforeAttack: !!Config.planner.recordEnemyDbBeforeAttack,
-          logPlannerAfterSecureTile: !!Config.planner.logPlannerAfterSecureTile,
-          useRankedAttackSkillsInCombat: !!Config.planner.useRankedAttackSkillsInCombat,
-          useRankedSkillOnlyFirstBurstAfterFind: !!Config.planner.useRankedSkillOnlyFirstBurstAfterFind
-        })
-      );
+      window.localStorage.setItem("ligmarbot.plannerUi.v1", JSON.stringify(payload));
+      return { ok: true, storageKey: "ligmarbot.plannerUi.v1", planner: payload };
     } catch (err) {
-      // AI CHANGED: Non-fatal.
+      return { ok: false, error: String(err && err.message ? err.message : err), planner: payload };
     }
   }
 
-  // AI CHANGED: slice 26 — persist ranked opener timing (slice 25) from panel.
+  // AI CHANGED: slice 26 — persist ranked opener timing (slice 25) from panel; returns result object (slice 36).
+  function combatPrefsSnapshot() {
+    return {
+      rankedOpenerChargeGraceMs: Number(Config.combat.rankedOpenerChargeGraceMs) || 0,
+      rankedOpenerEarlyCancelIfHintAfterMs: Number(Config.combat.rankedOpenerEarlyCancelIfHintAfterMs) || 0
+    };
+  }
+
   function loadCombatUiPrefs() {
     try {
       const raw = window.localStorage.getItem("ligmarbot.combatUi.v1");
       if (!raw) {
-        return;
+        return { ok: true, fromStorage: false, combat: combatPrefsSnapshot() };
       }
       const p = JSON.parse(raw);
       if (Number.isFinite(p.rankedOpenerChargeGraceMs) && p.rankedOpenerChargeGraceMs >= 0) {
@@ -269,23 +285,39 @@
       if (Number.isFinite(p.rankedOpenerEarlyCancelIfHintAfterMs) && p.rankedOpenerEarlyCancelIfHintAfterMs >= 0) {
         Config.combat.rankedOpenerEarlyCancelIfHintAfterMs = p.rankedOpenerEarlyCancelIfHintAfterMs;
       }
+      return { ok: true, fromStorage: true, combat: combatPrefsSnapshot() };
     } catch (err) {
-      // AI CHANGED: Ignore corrupt prefs.
+      return {
+        ok: false,
+        fromStorage: false,
+        error: String(err && err.message ? err.message : err),
+        combat: combatPrefsSnapshot()
+      };
     }
   }
 
   function saveCombatUiPrefs() {
+    const payload = combatPrefsSnapshot();
     try {
-      window.localStorage.setItem(
-        "ligmarbot.combatUi.v1",
-        JSON.stringify({
-          rankedOpenerChargeGraceMs: Number(Config.combat.rankedOpenerChargeGraceMs) || 0,
-          rankedOpenerEarlyCancelIfHintAfterMs: Number(Config.combat.rankedOpenerEarlyCancelIfHintAfterMs) || 0
-        })
-      );
+      window.localStorage.setItem("ligmarbot.combatUi.v1", JSON.stringify(payload));
+      return { ok: true, storageKey: "ligmarbot.combatUi.v1", combat: payload };
     } catch (err) {
-      // AI CHANGED: Non-fatal.
+      return { ok: false, error: String(err && err.message ? err.message : err), combat: payload };
     }
+  }
+
+  // AI CHANGED: slice 36 — one console call to persist planner + opener ms; refresh panel fields.
+  function saveAllUiPrefs() {
+    const planner = savePlannerUiPrefs();
+    const combat = saveCombatUiPrefs();
+    return { ok: !!(planner.ok && combat.ok), planner: planner, combat: combat };
+  }
+
+  function loadAllUiPrefs() {
+    const planner = loadPlannerUiPrefs();
+    const combat = loadCombatUiPrefs();
+    updateControlPanelStatus();
+    return { ok: !!(planner.ok && combat.ok), planner: planner, combat: combat };
   }
 
   function clampEarlyCancelToFirstWaitMs(earlyMs) {

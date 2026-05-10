@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.57",
-    "description":  "slice 35: ligmarBot save/load combatUi prefs API",
-    "builtAt":  "2026-05-10T18:49:41.1522893+03:00",
+    "version":  "0.3.58",
+    "description":  "slice 36: prefs helpers return objects + saveAll/loadAll",
+    "builtAt":  "2026-05-10T18:53:19.8577481+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.58",
+                        "description":  "slice 36: prefs helpers return objects + saveAll/loadAll",
+                        "date":  "2026-05-10T18:53:19.8577481+03:00"
+                    },
                     {
                         "version":  "0.3.57",
                         "description":  "slice 35: ligmarBot save/load combatUi prefs API",
@@ -247,11 +252,6 @@
                         "version":  "0.3.9",
                         "description":  "Enemy DB: drop mob damageClass; cache v2; strip on load",
                         "date":  "2026-05-09T18:54:34.3165338+03:00"
-                    },
-                    {
-                        "version":  "0.3.8",
-                        "description":  "Phase C3 enemy profile reader + enemy DB cache",
-                        "date":  "2026-05-09T18:45:00.9987871+03:00"
                     }
                 ]
 }
