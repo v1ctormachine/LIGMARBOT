@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.62",
-    "description":  "fix: TEST wait loop sleep bypassStop (tab freeze)",
-    "builtAt":  "2026-05-10T19:09:35.5917740+03:00",
+    "version":  "0.3.63",
+    "description":  "fix: clear stopRequested after farm exit so TEST hero stats works",
+    "builtAt":  "2026-05-10T19:19:15.8387956+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.63",
+                        "description":  "fix: clear stopRequested after farm exit so TEST hero stats works",
+                        "date":  "2026-05-10T19:19:15.8387956+03:00"
+                    },
                     {
                         "version":  "0.3.62",
                         "description":  "fix: TEST wait loop sleep bypassStop (tab freeze)",
@@ -247,11 +252,6 @@
                         "version":  "0.3.14",
                         "description":  "calibrateEnemyFromCombat: skip merge when zero hp_drop + hints",
                         "date":  "2026-05-09T19:20:50.5699219+03:00"
-                    },
-                    {
-                        "version":  "0.3.13",
-                        "description":  "C4 slice 4: calibrateEnemyFromCombat + rankAttackSkillsByHeuristic",
-                        "date":  "2026-05-09T19:17:30.6227556+03:00"
                     }
                 ]
 }

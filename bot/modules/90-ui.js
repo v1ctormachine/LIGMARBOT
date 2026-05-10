@@ -462,6 +462,11 @@
       }
     }
 
+    // AI CHANGED: if farm is not running, clear leaked stopRequested so TEST hero stats / verifies run full timeouts (same fix as loop exit in 85-combat.js).
+    if (!Runtime.autoFarm.running) {
+      Runtime.autoFarm.stopRequested = false;
+    }
+
     try {
       Logger.log("TEST", `bundle start v${BotVersion.version}`, {
         runQuickCalibration: runCalibration,

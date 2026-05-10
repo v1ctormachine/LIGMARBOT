@@ -724,6 +724,8 @@
     }
 
     Runtime.autoFarm.running = false;
+    // AI CHANGED: consume stop flag when loop ends — if it stays true, waitForCondition (hero stats, verifies) aborts on first tick and leaves profile on wrong tab after TEST.
+    Runtime.autoFarm.stopRequested = false;
     // AI CHANGED: Only set "stopped" if we weren't already halted by failures.
     if (Runtime.status.phase !== "halted") {
       setBotStatus("stopped", `${Runtime.autoFarm.cyclesCompleted} cycles completed`);
