@@ -50,7 +50,7 @@ Design principles:
 ### Repository layout
 
 - Git repo lives at the **project root** (`C:\Users\Victor\.cursor\projects\ligmarbot`).
-- Tracked files: `.gitignore`, `ARCHITECTURE.md`, `bot/build.ps1`, `bot/loader.user.js`, `bot/version.json`, `bot/bot.user.js`, `bot/modules/*.js`.
+- Tracked files: `.gitignore`, `ARCHITECTURE.md`, **`ROADMAP.md`** (prioritized next steps), `bot/build.ps1`, `bot/loader.user.js`, `bot/version.json`, `bot/bot.user.js`, `bot/modules/*.js`.
 - `bot/bot.user.js`, `bot/modules/05-version.js`, `bot/loader.user.js` (`@version` line), and `bot/version.json` are **build artifacts**. **Do not hand-edit them.** They are regenerated from `bot/modules/*.js` and the version state by `bot/build.ps1`.
 - `.gitignore` excludes Cursor tooling artifacts (`mcps/`, `terminals/`, `agent-transcripts/`) and editor scratch files. They live on disk for the IDE but never reach GitHub.
 
