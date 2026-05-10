@@ -34,7 +34,7 @@ Emergency **hotfix** (crash / wrong click): ship immediately, even if tiny.
 
 ## Next (pick order) — milestone-sized
 
-1. **Permanent skill DB (shared)** — **Collector:** paste **`bot/tools/skill-master-collector-console.js`** on `/game/` (bot loaded for **`parseSkillEffects`** parity). Run **`LigmarSkillMasterCollector.runFullRoster`** or **`collectCurrentClass`**. **Next:** lock **effect schema**, commit merged **`bot/data/skills-master.json`**, wire optional planner/loader fallback, diff on patches. See **`ARCHITECTURE.md`** → **Permanent skill database (planned)**.
+1. **Permanent skill DB (shared)** — **Collector:** paste **`bot/tools/skill-master-collector-console.js`** into **DevTools console** on `/game/` (not Tampermonkey; bot loaded for **`parseSkillEffects`** parity). Run **`await lmcAll(0)`** or **`await lmcOne("assassin")`**. **Next:** lock **effect schema**, commit merged **`bot/data/skills-master.json`**, wire optional planner/loader fallback, diff on patches. See **`ARCHITECTURE.md`** → **Permanent skill database (planned)**.
 2. **Soak auto-farm** — Long run; **`TEST`** mid-session with farm ON (stop → run → restart).
 3. **Planner v2** — **openerHorizonSim** shipped (paper window). Next: optional **discrete tick sim** for GCD/channel fidelity, or **two-skill queue** / charge timing when UI signals exist.
 4. **Pack B (parallel):** **loot/settle + inventory** polish, or **neighbor scan** latency + richer **failure logging** (still no prefs-only micro-ships).
