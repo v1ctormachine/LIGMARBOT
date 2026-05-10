@@ -579,16 +579,16 @@
     const testHint = document.createElement("div");
     testHint.textContent =
       "When to run TEST:\n" +
-      "• Move onto a tile, tap Find enemy, then TEST — checks combat/target HP and planner context.\n" +
-      "  [Expected: console TEST logs — bundle start v…; readBasicState; getAutoFarmStatus; summarizePlannerInputs; rankAttackSkillsByHeuristic; charge-cancel-ui (hintVisible false unless a charge-cancel hint is on screen); skills meta; then bundle done / Logger TEST finished after the button re-enables.]\n" + // AI CHANGED: spell out general/diagnostics TEST console output
-      "• Charge skill: wait until “Press to cancel” shows, then TEST — logs map-gap + DOM cancel target.\n" +
-      "  [Expected: TEST charge-cancel-ui with hintVisible true; cancelClickTarget shows tag/id/class of the DOM cancel control; mapGapClientPoint has clientX/clientY when the map/canvas gap can be resolved.]\n" + // AI CHANGED: expected when cancel hint visible (probe only)
-      "• To actually fire cancel on TEST: ligmarBot.Config.ui.testButtonFireChargeCancelWhenHintVisible = true (or runUiTestBundle({ fireChargeCancelIfHint: true })).\n" +
-      "  [Expected: if the hint is visible — a real cancel click runs (often Logger ACTION charge-cancel-map-gap click-at via map-gap, else charge-cancel-ui / COMBAT fallbacks); TEST charge-cancel click (smoke test) { ok: … }; the in-game charge should stop and the cancel hint should clear. If the hint is not visible — TEST charge-cancel click skipped (hint not visible) and no cancel click.]\n" + // AI CHANGED: expected for fireChargeCancelIfHint / testButtonFireChargeCancelWhenHintVisible
-      "• Or right after load for selector/planner-only; leave auto-farm OFF for cleaner console logs.\n" +
-      "  [Expected: same TEST diagnostic sequence as the combat case, but planner/selector-focused; with auto-farm OFF you should see little or no LOOP spam mixed in.]\n" + // AI CHANGED: expected for load/planner-only + auto-farm OFF
+      "• Move onto a tile, tap Find enemy yourself, then TEST — reads combat/target state for diagnostics.\n" +
+      "  [Expected: nothing new happens on screen from TEST — you still see the same map, target, and bars. TEST does not tap Find enemy or skills for you.]\n" + // AI CHANGED: Expected = in-game only (not console)
+      "• Charge skill: wait until “Press to cancel” shows, then TEST — probes where cancel would click.\n" +
+      "  [Expected: game still shows the charge / aim / “Press to cancel” — TEST alone does not stop the skill.]\n" + // AI CHANGED: probe-only = no cancel on screen
+      "• To make TEST issue a cancel click: Config.ui.testButtonFireChargeCancelWhenHintVisible = true (or runUiTestBundle({ fireChargeCancelIfHint: true })).\n" +
+      "  [Expected: one brief click on empty UI (map button vs canvas gap or cancel control) — charge ends, cancel text disappears, skill slot may show cooldown. If no hint was visible, no cancel tap — charge unchanged.]\n" + // AI CHANGED: Expected = visible cancel outcome
+      "• Or right after load for planner-only; leave auto-farm OFF.\n" +
+      "  [Expected: hero and world unchanged — no movement, no Find enemy, no bar casts from TEST.]\n" + // AI CHANGED: idle screen expectation
       "• Optional calibration: Config.ui.testButtonRunQuickCalibration = true (or runUiTestBundle({ runQuickCalibration: true })).\n" + // AI CHANGED: optional calibration bullet
-      "  [Expected: TEST quickCalibrationSession … logged with merge/calibration output; bundle ends after that path instead of only the short “optional observe+merge” reminder.]"; // AI CHANGED: expected when quick calibration flag set
+      "  [Expected: you keep fighting manually — target HP bar and numbers should move while you attack; TEST does not click Find enemy or skills; only observes the UI for ~10s.]"; // AI CHANGED: calibration = in-game fight, no bot clicks
     testHint.style.fontSize = "10px";
     testHint.style.lineHeight = "1.45";
     testHint.style.opacity = "0.72";
