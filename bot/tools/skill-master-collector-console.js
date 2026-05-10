@@ -1,31 +1,89 @@
 // =============================================================================
-// PASTE THIS FILE INTO: Chrome/Edge DevTools → Console tab, on ligmar.io/game/
-// Do NOT install in Tampermonkey — use the normal game tab console only.
-// Bot should be loaded so window.ligmarBot.parseSkillEffects exists (optional).
+// PASTE INTO: DevTools → Console. Pick execution context = same frame as game
+// (or rely on auto iframe detection below). NOT Tampermonkey.
 // =============================================================================
 
 (function () {
   var NAMES = ["assassin", "archer", "mage", "guardian", "warrior", "priest"];
-  var MS = { s: 500, L: 2000, pop: 1200, gap: 350, pick: 4500 };
+  var MS = { s: 500, L: 2000, pop: 2000, gap: 350, pick: 4500 };
+  var DOC = document;
 
   function sleep(ms) {
     return new Promise(function (r) {
       setTimeout(r, ms);
     });
   }
+
+  function walkDocs(rootDoc, depth, acc) {
+    if (!rootDoc || depth > 10 || acc.indexOf(rootDoc) >= 0) {
+      return;
+    }
+    acc.push(rootDoc);
+    var frames = rootDoc.querySelectorAll("iframe");
+    var i;
+    var ch;
+    for (i = 0; i < frames.length; i++) {
+      try {
+        ch = frames[i].contentDocument;
+        if (ch) {
+          walkDocs(ch, depth + 1, acc);
+        }
+      } catch (e) {}
+    }
+  }
+
+  function allSameOriginDocs() {
+    var acc = [];
+    walkDocs(document, 0, acc);
+    return acc;
+  }
+
+  function lmcResolveDoc() {
+    var docs = allSameOriginDocs();
+    var i;
+    for (i = 0; i < docs.length; i++) {
+      if (docs[i].querySelector(".skills-tree")) {
+        DOC = docs[i];
+        return DOC;
+      }
+    }
+    DOC = document;
+    return DOC;
+  }
+
   function qs(s, r) {
-    return (r || document).querySelector(s);
+    return (r || DOC).querySelector(s);
   }
   function qsa(s, r) {
-    return [].slice.call((r || document).querySelectorAll(s));
+    return [].slice.call((r || DOC).querySelectorAll(s));
   }
-  // AI CHANGED: Character-sheet skill popup is <app-modal> (header "Skill") → .modal-body .dialog-action app-action-info — often NOT under .cdk-overlay-container.
+
+  function winFor(el) {
+    return (el && el.ownerDocument && el.ownerDocument.defaultView) || window;
+  }
+  function cStyle(el) {
+    return winFor(el).getComputedStyle(el);
+  }
+
+  function ligmar() {
+    var w = DOC.defaultView || window;
+    if (typeof w.ligmarBot !== "undefined") {
+      return w.ligmarBot;
+    }
+    if (typeof window.ligmarBot !== "undefined") {
+      return window.ligmarBot;
+    }
+    return null;
+  }
+
+  // AI CHANGED: app-modal + .dialog-action app-action-info; header "Skill" optional (i18n).
   function findVisibleSkillPopup(S) {
     var i;
     var modals = qsa("app-modal");
     var modal;
     var mst;
     var hdr;
+    var hdrOk;
     var info;
     var nameEl;
     var infos;
@@ -41,23 +99,19 @@
       if (!modal || !modal.isConnected) {
         continue;
       }
-      mst = window.getComputedStyle(modal);
+      mst = cStyle(modal);
       if (mst.display === "none" || mst.visibility === "hidden" || parseFloat(mst.opacity) < 0.01) {
-        continue;
-      }
-      hdr = modal.querySelector(".modal-header-content");
-      if (!hdr || !/\bskill\b/i.test((hdr.textContent || "").replace(/\s+/g, " ").trim())) {
         continue;
       }
       info = modal.querySelector(".dialog-action app-action-info") || modal.querySelector(S.skillPopup);
       if (!info) {
         continue;
       }
+      hdr = modal.querySelector(".modal-header-content");
+      hdrOk = hdr && /\bskill\b/i.test((hdr.textContent || "").replace(/\s+/g, " ").trim());
       nameEl = info.querySelector(".action-name");
-      if (nameEl && (nameEl.textContent || "").trim().length > 0) {
-        return info;
-      }
-      if (info.querySelector(".header-description, .action-info-params")) {
+      nameText = nameEl ? (nameEl.textContent || "").trim() : "";
+      if (hdrOk || nameText.length > 0 || info.querySelector(".header-description, .action-info-params")) {
         return info;
       }
     }
@@ -68,13 +122,13 @@
       if (!info || !info.isConnected) {
         continue;
       }
-      pst = window.getComputedStyle(info);
+      pst = cStyle(info);
       if (pst.display === "none" || pst.visibility === "hidden") {
         continue;
       }
       modal = info.closest ? info.closest("app-modal") : null;
       if (modal) {
-        mst = window.getComputedStyle(modal);
+        mst = cStyle(modal);
         if (mst.display === "none") {
           continue;
         }
@@ -92,7 +146,7 @@
       if (!el || !el.isConnected) {
         continue;
       }
-      st = window.getComputedStyle(el);
+      st = cStyle(el);
       if (st.display === "none" || st.visibility === "hidden" || parseFloat(st.opacity) < 0.01) {
         continue;
       }
@@ -104,18 +158,67 @@
     }
     return null;
   }
+
   function click(el) {
     if (!el) {
       return;
     }
+    var win = winFor(el);
     try {
       el.click();
     } catch (e) {
-      el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+      el.dispatchEvent(new win.MouseEvent("click", { bubbles: true, cancelable: true, view: win }));
     }
   }
+
+  // AI CHANGED: apptap / Angular often expects pointer + mouse sequence, not only .click().
+  function tapUi(el) {
+    if (!el) {
+      return;
+    }
+    var win = winFor(el);
+    var r = el.getBoundingClientRect();
+    var x = r.left + Math.min(r.width / 2, 40);
+    var y = r.top + Math.min(r.height / 2, 40);
+    var base = { bubbles: true, cancelable: true, view: win, clientX: x, clientY: y, button: 0, buttons: 1 };
+    try {
+      el.dispatchEvent(
+        new win.PointerEvent("pointerdown", {
+          bubbles: true,
+          cancelable: true,
+          view: win,
+          clientX: x,
+          clientY: y,
+          pointerId: 1,
+          pointerType: "mouse",
+          isPrimary: true
+        })
+      );
+    } catch (e1) {}
+    el.dispatchEvent(new win.MouseEvent("mousedown", base));
+    try {
+      el.dispatchEvent(
+        new win.PointerEvent("pointerup", {
+          bubbles: true,
+          cancelable: true,
+          view: win,
+          clientX: x,
+          clientY: y,
+          pointerId: 1,
+          pointerType: "mouse",
+          isPrimary: true
+        })
+      );
+    } catch (e2) {}
+    el.dispatchEvent(new win.MouseEvent("mouseup", { bubbles: true, cancelable: true, view: win, clientX: x, clientY: y, button: 0, buttons: 0 }));
+    el.dispatchEvent(new win.MouseEvent("click", base));
+    try {
+      el.click();
+    } catch (e3) {}
+  }
+
   function sel() {
-    var b = window.ligmarBot;
+    var b = ligmar();
     if (b && b.Config && b.Config.selectors) {
       return b.Config.selectors;
     }
@@ -236,7 +339,7 @@
     return (u.split("/").pop() || "").replace(/\.\w+$/, "") || null;
   }
   function effects(txt) {
-    var b = window.ligmarBot;
+    var b = ligmar();
     if (b && typeof b.parseSkillEffects === "function") {
       try {
         return b.parseSkillEffects(txt || "");
@@ -279,7 +382,7 @@
       cooldownSec: pr.cooldown && pr.cooldown.value != null ? pr.cooldown.value : null,
       manaCost: pr.mana_cost && pr.mana_cost.value != null ? pr.mana_cost.value : null,
       effects: effects(desc),
-      usedBotParser: !!(window.ligmarBot && window.ligmarBot.parseSkillEffects)
+      usedBotParser: !!(ligmar() && ligmar().parseSkillEffects)
     };
   }
   async function waitPop(S, tmax) {
@@ -310,14 +413,14 @@
     var tab;
     var tc;
     var lab;
-    click(footer("character", "Character"));
+    tapUi(footer("character", "Character"));
     await sleep(MS.s);
     for (i = 0; i < qsa("app-tab").length; i++) {
       tab = qsa("app-tab")[i];
       tc = tab.querySelector(".tab-content");
       lab = tc ? (tc.textContent || "").trim() : "";
       if (/^skills$/i.test(lab)) {
-        click(tab);
+        tapUi(tab);
         await sleep(MS.s);
         return true;
       }
@@ -340,8 +443,8 @@
     for (i = 0; i < btns.length; i++) {
       b = btns[i];
       cl = classifyBtn(b);
-      click(b);
-      await sleep(200);
+      tapUi(b);
+      await sleep(280);
       pop = await waitPop(S, MS.pop);
       if (!pop) {
         out.push({ treeIndex: i, classKey: classKey, ok: false, err: "no_popup" });
@@ -365,12 +468,12 @@
     if (findVisibleSkillPopup(sel())) {
       await closePop(sel());
     }
-    click(footer("town", "Town"));
+    tapUi(footer("town", "Town"));
     await sleep(MS.L);
     for (i = 0; i < qsa("app-button").length; i++) {
       el = qsa("app-button")[i];
       if ((el.textContent || "").indexOf("Buildings") !== -1) {
-        click(el);
+        tapUi(el);
         break;
       }
     }
@@ -379,37 +482,60 @@
       el = qsa("app-location-item")[i];
       n = el.querySelector(".location-name");
       if (n && /hall of heroes/i.test(n.textContent || "")) {
-        click(el);
+        tapUi(el);
         break;
       }
     }
     await sleep(MS.L);
     el = qsa("app-tabs app-tab.tab-as-icon")[tabIndex];
     if (el) {
-      click(el);
+      tapUi(el);
       await sleep(MS.s);
     }
-    click(qs("app-button.gear-button-select"));
+    tapUi(qs("app-button.gear-button-select"));
     await sleep(MS.pick);
   }
 
+  window.lmcSetDoc = function (customDoc) {
+    if (customDoc && customDoc.querySelector) {
+      DOC = customDoc;
+    }
+    return DOC;
+  };
+
+  window.lmcProbe = function () {
+    var docs = allSameOriginDocs();
+    return docs.map(function (d, i) {
+      return {
+        index: i,
+        href: d.location ? d.location.href : "",
+        hasSkillsTree: !!d.querySelector(".skills-tree"),
+        appModals: d.querySelectorAll("app-modal").length,
+        isActiveDoc: d === DOC
+      };
+    });
+  };
+
   window.lmcOne = async function (classKey) {
+    lmcResolveDoc();
     var key = classKey || "unknown";
     if (!qs(".skills-tree") && !(await openCharSkills())) {
-      return { ok: false, err: "open_skills_failed" };
+      console.warn("[lmc] No .skills-tree in resolved doc. Run lmcProbe() or lmcSetDoc(iframe.contentDocument).");
+      return { ok: false, err: "open_skills_failed", probe: window.lmcProbe() };
     }
     var skills = await walkTree(key);
-    var payload = { v: 1, classKey: key, at: new Date().toISOString(), skills: skills };
+    var payload = { v: 1, classKey: key, at: new Date().toISOString(), skills: skills, doc: DOC.location ? DOC.location.href : "" };
     console.log(JSON.stringify(payload, null, 2));
     return payload;
   };
 
   window.lmcAll = async function (startIndex) {
+    lmcResolveDoc();
     var s = typeof startIndex === "number" ? startIndex : 0;
     var step;
     var tabIdx;
     var cname;
-    var all = { v: 1, at: new Date().toISOString(), start: s, classes: [] };
+    var all = { v: 1, at: new Date().toISOString(), start: s, classes: [], doc: DOC.location ? DOC.location.href : "" };
     for (step = 0; step < NAMES.length; step++) {
       tabIdx = (s + step) % NAMES.length;
       cname = NAMES[tabIdx];
@@ -434,10 +560,12 @@
     URL.revokeObjectURL(a.href);
   };
 
+  lmcResolveDoc();
   console.log(
-    "lmc ready. DevTools console only — not Tampermonkey.\n" +
+    "[lmc] ready. doc=" +
+      (DOC.location ? DOC.location.href : "?") +
+      "\n  lmcProbe() — which iframe has .skills-tree\n" +
       '  await lmcOne("assassin")\n' +
-      "  await lmcAll(0)\n" +
-      "  lmcDownload(await lmcAll(0))"
+      "  await lmcAll(0)"
   );
 })();
