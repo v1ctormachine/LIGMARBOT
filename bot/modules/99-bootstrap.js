@@ -153,6 +153,9 @@
       getAutoFarmStatus: getAutoFarmStatus,
       createControlPanel: createControlPanel,
       updateControlPanelStatus: updateControlPanelStatus,
+      // AI CHANGED: grouped slice 34 — planner localStorage sync from console (panel had no toggles since slice 29).
+      loadPlannerUiPrefs: loadPlannerUiPrefs,
+      savePlannerUiPrefs: savePlannerUiPrefs,
       // AI CHANGED: Panel TEST (version) and console — same entry point.
       runUiTestBundle: runUiTestBundle,
       // AI CHANGED: Phase C0 -- skill scanner public API. scanSkills() is the only "active" call;
@@ -214,6 +217,17 @@
     Logger.log("BOOT", "Debug API exposed as window.ligmarBot");
     // AI CHANGED: Auto-create GUI control panel at startup.
     createControlPanel();
+
+    // AI CHANGED: grouped slice 34 — obvious console hint when ranked planner is on but scanSkills never ran.
+    if (
+      Config.planner.useRankedAttackSkillsInCombat &&
+      (!Array.isArray(Runtime.skills.slots) || Runtime.skills.slots.length === 0)
+    ) {
+      Logger.warn(
+        "BOOT",
+        "useRankedAttackSkillsInCombat is true but skill slots are empty — openers stay basic until await ligmarBot.scanSkills() (auto-farm OFF). Persist planner tweaks: ligmarBot.savePlannerUiPrefs()"
+      );
+    }
 
     setInterval(() => {
       const state = readBasicState();

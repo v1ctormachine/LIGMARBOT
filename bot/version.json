@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.55",
-    "description":  "slice 33: TEST hint — cancel smoke ends channel by design",
-    "builtAt":  "2026-05-10T18:30:06.7484762+03:00",
+    "version":  "0.3.56",
+    "description":  "slice 34: savePlannerUiPrefs API + boot ranked/skills warn",
+    "builtAt":  "2026-05-10T18:40:46.0411457+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.56",
+                        "description":  "slice 34: savePlannerUiPrefs API + boot ranked/skills warn",
+                        "date":  "2026-05-10T18:40:46.0411457+03:00"
+                    },
                     {
                         "version":  "0.3.55",
                         "description":  "slice 33: TEST hint — cancel smoke ends channel by design",
@@ -247,11 +252,6 @@
                         "version":  "0.3.7",
                         "description":  "Damage observer: coerce HP cur for lethal + non-finite guard",
                         "date":  "2026-05-09T18:32:55.6690620+03:00"
-                    },
-                    {
-                        "version":  "0.3.6",
-                        "description":  "Damage observer: count lethal 0 HP as hp_drop not suspicious",
-                        "date":  "2026-05-09T18:30:08.2545879+03:00"
                     }
                 ]
 }

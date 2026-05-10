@@ -238,6 +238,23 @@
     }
   }
 
+  // AI CHANGED: grouped slice 34 — persist planner flags after console edits (ligmarBot.savePlannerUiPrefs).
+  function savePlannerUiPrefs() {
+    try {
+      window.localStorage.setItem(
+        "ligmarbot.plannerUi.v1",
+        JSON.stringify({
+          recordEnemyDbBeforeAttack: !!Config.planner.recordEnemyDbBeforeAttack,
+          logPlannerAfterSecureTile: !!Config.planner.logPlannerAfterSecureTile,
+          useRankedAttackSkillsInCombat: !!Config.planner.useRankedAttackSkillsInCombat,
+          useRankedSkillOnlyFirstBurstAfterFind: !!Config.planner.useRankedSkillOnlyFirstBurstAfterFind
+        })
+      );
+    } catch (err) {
+      // AI CHANGED: Non-fatal.
+    }
+  }
+
   // AI CHANGED: slice 26 — persist ranked opener timing (slice 25) from panel.
   function loadCombatUiPrefs() {
     try {

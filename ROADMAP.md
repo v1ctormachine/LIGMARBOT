@@ -1,13 +1,13 @@
 # Ligmarbot roadmap
 
-Short plan after **v0.3.55** / **slice 33** (TEST text: mid-channel = **intentional** cancel smoke).
+Short plan after **v0.3.56** / **slice 34** (grouped: **`savePlannerUiPrefs`** + boot **ranked vs empty skills** warn).
 
 ## Done recently
 
 - Stuck ranked opener → cancel charge (hint visible) so cooldown can start; map button / canvas gap click first.
 - **TEST** — single click runs the full diagnostic + calibration path; auto-farm stops first when it was running.
 - **`rankedOpenerChargeGraceMs`** / **`rankedOpenerEarlyCancelIfHintAfterMs`** — panel **Opener timing (ms)** (persisted **`ligmarbot.combatUi.v1`**) or Config.
-- **Planner** — configure via **`ligmarBot.Config.planner`** (or legacy **`ligmarbot.plannerUi.v1`** loaded on boot); no GUI checkboxes.
+- **Planner** — **`ligmarBot.Config.planner`** + boot load from **`ligmarbot.plannerUi.v1`**; **`ligmarBot.savePlannerUiPrefs()`** after console edits; no GUI checkboxes.
 - **TEST** — press **in combat** for calibration (target bar visible, then keep hitting); **mid-charge** if you want cancel smoke; see panel hint / **`ARCHITECTURE.md`**.
 - **TEST + farm** — if auto-farm was **ON**, TEST stops it for the bundle, then **starts the loop again** (stay off: `ligmarBot.runUiTestBundle({ resumeAutoFarm: false })`).
 - **Opener Grace** — new installs default **200 ms**; existing **`combatUi.v1`** saves keep your old values until you change the panel.
