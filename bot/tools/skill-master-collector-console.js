@@ -19,6 +19,39 @@
   function qsa(s, r) {
     return [].slice.call((r || document).querySelectorAll(s));
   }
+  // AI CHANGED: CDK/modals use position:fixed → offsetParent is null even when visible; use bbox + style.
+  function findVisibleSkillPopup(S) {
+    var list = qsa(S.skillPopup);
+    var i;
+    var el;
+    var r;
+    var st;
+    var nameEl;
+    var rn;
+    for (i = 0; i < list.length; i++) {
+      el = list[i];
+      if (!el || !el.isConnected) {
+        continue;
+      }
+      r = el.getBoundingClientRect();
+      if (r.width < 4 || r.height < 4) {
+        continue;
+      }
+      st = window.getComputedStyle(el);
+      if (st.display === "none" || st.visibility === "hidden" || parseFloat(st.opacity) < 0.01) {
+        continue;
+      }
+      nameEl = el.querySelector(".action-name");
+      if (nameEl) {
+        rn = nameEl.getBoundingClientRect();
+        if (rn.width < 1 || rn.height < 1) {
+          continue;
+        }
+      }
+      return el;
+    }
+    return null;
+  }
   function click(el) {
     if (!el) {
       return;
@@ -195,8 +228,8 @@
     var t0 = Date.now();
     var p;
     while (Date.now() - t0 < tmax) {
-      p = qs(S.skillPopup);
-      if (p && p.offsetParent !== null) {
+      p = findVisibleSkillPopup(S);
+      if (p) {
         return p;
       }
       await sleep(80);
@@ -206,7 +239,7 @@
   async function closePop(S) {
     click(qs(S.skillPopupClose) || qs(".modal-header-close"));
     var t0 = Date.now();
-    while (Date.now() - t0 < 2500 && qs(S.skillPopup)) {
+    while (Date.now() - t0 < 2500 && findVisibleSkillPopup(S)) {
       await sleep(60);
     }
     await sleep(MS.gap);
@@ -268,7 +301,7 @@
     var i;
     var el;
     var n;
-    if (qs(sel().skillPopup)) {
+    if (findVisibleSkillPopup(sel())) {
       await closePop(sel());
     }
     click(footer("town", "Town"));
