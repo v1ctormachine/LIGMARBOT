@@ -614,23 +614,34 @@
         Logger.warn("TEST", "getPlannerOpeningPickDiagnostics threw", err);
       }
       const rankedOn = !!Config.planner.useRankedAttackSkillsInCombat;
-      // AI CHANGED: Planner v2 check — opener path should run conception-first rank mode by default.
-      addCheck("planner_conception_path", !!(Config.planner.skillRankUseConception === true), {
-        skillRankUseConception: !!Config.planner.skillRankUseConception,
-        lastReason: diag && diag.lastReason ? diag.lastReason : null,
-        horizonRankMode:
+      // AI CHANGED: Planner v2 check — mark skipped when ranked opener is disabled (path not exercised).
+      if (!rankedOn) {
+        addCheck("planner_conception_path", true, {
+          skipped: true,
+          reason: "ranked_combat_off",
+          skillRankUseConception: !!Config.planner.skillRankUseConception
+        }, false);
+      } else {
+        const conceptionOn = !!(Config.planner.skillRankUseConception === true);
+        const horizonRankMode =
           diag &&
           diag.lastOpenerHorizonSim &&
           diag.lastOpenerHorizonSim.rankMode
             ? diag.lastOpenerHorizonSim.rankMode
-            : null,
-        conceptionGate:
-          diag &&
-          diag.lastOpenerHorizonSim &&
-          diag.lastOpenerHorizonSim.conceptionGate
-            ? diag.lastOpenerHorizonSim.conceptionGate
-            : null
-      }, false);
+            : null;
+        const conceptionModeObserved = horizonRankMode === "conception";
+        addCheck("planner_conception_path", conceptionOn && conceptionModeObserved, {
+          skillRankUseConception: conceptionOn,
+          lastReason: diag && diag.lastReason ? diag.lastReason : null,
+          horizonRankMode: horizonRankMode,
+          conceptionGate:
+            diag &&
+            diag.lastOpenerHorizonSim &&
+            diag.lastOpenerHorizonSim.conceptionGate
+              ? diag.lastOpenerHorizonSim.conceptionGate
+              : null
+        }, false);
+      }
       // AI CHANGED: ranked builds — TEST exercises openerHorizonSim preview (ship rule: new testable behavior via TEST).
       let horizonPreview = null;
       if (rankedOn) {
