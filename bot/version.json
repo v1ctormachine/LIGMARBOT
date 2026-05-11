@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.66",
-    "description":  "Skill conception layer (inferSkillConception, optional rank-by-conception); ignore requirements.",
-    "builtAt":  "2026-05-10T22:15:01.1204032+03:00",
+    "version":  "0.3.67",
+    "description":  "TEST: one-line Test result report for patch verification; HorizonSim skipped when ranked off.",
+    "builtAt":  "2026-05-11T09:52:28.7301221+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.67",
+                        "description":  "TEST: one-line Test result report for patch verification; HorizonSim skipped when ranked off.",
+                        "date":  "2026-05-11T09:52:28.7301221+03:00"
+                    },
                     {
                         "version":  "0.3.66",
                         "description":  "Skill conception layer (inferSkillConception, optional rank-by-conception); ignore requirements.",
@@ -247,11 +252,6 @@
                         "version":  "0.3.18",
                         "description":  "C4 slice 7: planner toggles on panel + plannerUi localStorage",
                         "date":  "2026-05-09T19:44:21.5415188+03:00"
-                    },
-                    {
-                        "version":  "0.3.17",
-                        "description":  "C4 slice 6: planner hooks in secureTile (DB refresh + log)",
-                        "date":  "2026-05-09T19:35:18.3443738+03:00"
                     }
                 ]
 }

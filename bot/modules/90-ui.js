@@ -418,6 +418,51 @@
     Runtime.ui.statusNode.textContent = lines.join("\n");
   }
 
+  // AI CHANGED: Single copy-paste line for patch verification (console + panel); one entry per addCheck step.
+  function buildTestBundleHumanReport(checks, versionSemver) {
+    const labelById = {
+      version: "Version",
+      probe_selectors: "Selector probe",
+      skill_scan: "Skill data",
+      hero_stats: "Hero stats",
+      planner_opener_horizon_preview: "HorizonSim",
+      planner_ranked_openers: "Ranked opener",
+      charge_cancel_smoke: "Charge cancel",
+      calibration_observe: "Calibration"
+    };
+    const segs = [];
+    segs.push("bot v" + String(versionSemver || "?"));
+    for (let i = 0; i < checks.length; i += 1) {
+      const ch = checks[i];
+      const human = labelById[ch.id] || ch.id;
+      let status;
+      if (ch.detail && ch.detail.skipped) {
+        status = "skipped";
+      } else if (ch.ok) {
+        if (ch.id === "charge_cancel_smoke" && ch.detail && ch.detail.attempted === false) {
+          status = "skipped (cancel hint not visible)";
+        } else {
+          status = "successful";
+        }
+      } else {
+        status = "failed";
+      }
+      segs.push(human + " — " + status);
+    }
+    const criticalBad = checks.some(function (c) { return c.critical && !c.ok; });
+    const anyBad = checks.some(function (c) { return !c.ok; });
+    let overall;
+    if (criticalBad) {
+      overall = "OVERALL: FAIL (critical)";
+    } else if (anyBad) {
+      overall = "OVERALL: PASS with warnings";
+    } else {
+      overall = "OVERALL: PASS";
+    }
+    const fullText = "Test result: " + segs.join("; ") + "; " + overall + ".";
+    return { fullText: fullText, overall: overall };
+  }
+
   // AI CHANGED: One-click TEST — auto skill scan when needed, hero stats read, planner dry-run + diagnostics, probes, optional cancel smoke, quickCalibrationSession; console [TEST] SUMMARY + panel line; restarts auto-farm if it was ON (opts.resumeAutoFarm: false to leave stopped).
   async function runUiTestBundle(userOpts) {
     const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
@@ -578,13 +623,15 @@
         } catch (err) {
           Logger.warn("TEST", "previewOpenerHorizonSim threw", err);
         }
+        addCheck(
+          "planner_opener_horizon_preview",
+          !!(horizonPreview && horizonPreview.ok),
+          horizonPreview,
+          false
+        );
+      } else {
+        addCheck("planner_opener_horizon_preview", true, { skipped: true, reason: "ranked_combat_off" }, false);
       }
-      addCheck(
-        "planner_opener_horizon_preview",
-        !rankedOn || !!(horizonPreview && horizonPreview.ok),
-        horizonPreview,
-        false
-      );
       let openerOk = !rankedOn;
       if (rankedOn) {
         openerOk =
@@ -661,11 +708,14 @@
 
       const criticalFail = checks.some(function (c) { return c.critical && !c.ok; });
       const softFail = checks.some(function (c) { return !c.critical && !c.ok; });
+      const humanReport = buildTestBundleHumanReport(checks, BotVersion.version);
+      Logger.log("TEST", humanReport.fullText);
       Logger.log("TEST", "SUMMARY", {
         ok: !criticalFail,
         criticalFail: criticalFail,
         softFail: softFail,
-        checks: checks
+        checks: checks,
+        testReportLine: humanReport.fullText
       });
       /* eslint-disable no-console */
       if (typeof console.table === "function") {
@@ -682,6 +732,8 @@
         criticalOk: !criticalFail,
         softFail: softFail,
         checks: checks,
+        testReportLine: humanReport.fullText,
+        testReportOverall: humanReport.overall,
         runQuickCalibration: runCalibration,
         calibration: calibration,
         calibrationError: calibrationError,
@@ -811,22 +863,22 @@
       Promise.resolve(runUiTestBundle())
         .then(function (res) {
           Logger.log("TEST", "finished", res);
-          // AI CHANGED: auto-check outcome — green only when bundle critical checks pass (`res.ok`).
+          // AI CHANGED: panel mirrors copy-paste `Test result:` line from console (per-step + OVERALL).
           if (testResultLine) {
-            if (res && res.ok) {
-              testResultLine.textContent = "Test result: successful";
-              testResultLine.style.color = "#7dffb3";
-            } else {
-              testResultLine.textContent = "Test result: failed";
-              testResultLine.style.color = "#ff6b6b";
-            }
+            testResultLine.textContent =
+              (res && res.testReportLine) ? res.testReportLine : (res && res.ok ? "Test result: OK (no report line)" : "Test result: failed");
+            testResultLine.style.color = res && res.ok ? "#7dffb3" : "#ff6b6b";
+            testResultLine.style.fontSize = "9px";
           }
         })
         .catch(function (err) {
+          const errLine = "Test result: bundle error — " + String(err && err.message ? err.message : err);
+          Logger.log("TEST", errLine);
           Logger.warn("TEST", "bundle rejected", err);
           if (testResultLine) {
-            testResultLine.textContent = "Test result: failed";
+            testResultLine.textContent = errLine;
             testResultLine.style.color = "#ff6b6b";
+            testResultLine.style.fontSize = "9px";
           }
         })
         .finally(function () {
@@ -843,7 +895,7 @@
 
     // AI CHANGED: last TEST pass/fail line — filled when runUiTestBundle resolves (no manual console steps).
     const testResultLine = document.createElement("div");
-    testResultLine.textContent = "Test result: —";
+    testResultLine.textContent = "Test result: — (see console [TEST] after run)";
     testResultLine.style.fontSize = "10px";
     testResultLine.style.lineHeight = "1.35";
     testResultLine.style.marginBottom = "8px";
@@ -858,7 +910,7 @@
       "When to press:\n" +
       "• Calibration: in combat — target + red HP bar, keep attacking until the observe window ends (town/idle = expect soft calibration warning).\n" +
       "• Cancel: if cancel hint is visible at that step, the bot taps cancel on purpose — or ligmarBot.runUiTestBundle({ fireChargeCancelIfHint: false }).\n" +
-      "Critical pass/fail: panel line + console [TEST] SUMMARY / table. Skip hero sheet: { runHeroStatsInTest: false }. Full rescan: { forceSkillScan: true }.\n" +
+      "Copy the console line starting with \"Test result:\" (full per-step report) to verify a patch. Also [TEST] SUMMARY + table. Skip hero sheet: { runHeroStatsInTest: false }. Full rescan: { forceSkillScan: true }.\n" +
       "If auto-farm was ON, TEST stops it then restarts when done (resumeAutoFarm: false to stay stopped). Lighter: { runQuickCalibration: false }.";
     testHint.style.fontSize = "10px";
     testHint.style.lineHeight = "1.45";
