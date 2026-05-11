@@ -17,6 +17,7 @@ Emergency **hotfix** (crash / wrong click): ship immediately, even if tiny.
 
 ## Done recently
 
+- **UI cleanup (v0.3.76)** — removed TEST description/help text block from panel; GUI now shows controls + test result + runtime status only.
 - **UI cleanup (v0.3.75)** — removed opener timing calibration block from panel; TEST line + phase/status only. Keep patch-specific checks only.
 - **TEST + openerHorizonSim** — **`runUiTestBundle`** calls **`previewOpenerHorizonSim()`** when ranked combat is on (soft check **`planner_opener_horizon_preview`**). Ship rule: extend TEST for any new testable behavior.
 - **Planner — openerHorizonSim (v0.3.64)** — **`plannerPickSkillOpeningPick`**: paper damage over **`openerHorizonSimMs`** vs basics-only; **`previewOpenerHorizonSim`**, **`Config.planner.useOpenerHorizonSim`** / **`openerHorizonMinImprovementFraction`** / **`openerHorizonLog`**.

@@ -930,28 +930,6 @@
     testResultLine.style.wordBreak = "break-word";
     panel.appendChild(testResultLine);
 
-    // AI CHANGED: slice 33 — hint: mid-channel TEST taps cancel on purpose when hint visible; see ARCHITECTURE.md.
-    const testHint = document.createElement("div");
-    testHint.textContent =
-      "TEST runs automatically: skill scan if cache empty, hero sheet stats read, planner opener dry-run, probes, optional cancel tap, ~10s calibration observe.\n" +
-      "When to press:\n" +
-      "• Calibration: in combat — target + red HP bar, keep attacking until the observe window ends (town/idle = expect soft calibration warning).\n" +
-      "• Cancel: TEST does not run charge-cancel anymore by default. On-demand: ligmarBot.runUiTestBundle({ fireChargeCancelIfHint: true }).\n" +
-      "Copy the highlighted console line starting with \"Test result:\" (full per-step report) to verify a patch. Also [TEST] SUMMARY + table. Skip hero sheet: { runHeroStatsInTest: false }. Full rescan: { forceSkillScan: true }.\n" +
-      "If auto-farm was ON, TEST stops it then restarts when done (resumeAutoFarm: false to stay stopped). Lighter: { runQuickCalibration: false }.";
-    testHint.style.fontSize = "10px";
-    testHint.style.lineHeight = "1.45";
-    testHint.style.opacity = "0.72";
-    testHint.style.color = "#b8c4e8";
-    testHint.style.whiteSpace = "pre-wrap";
-    testHint.style.wordBreak = "break-word";
-    testHint.style.marginBottom = "10px";
-    testHint.style.padding = "6px 8px";
-    testHint.style.background = "rgba(0,0,0,0.2)";
-    testHint.style.borderRadius = "6px";
-    testHint.style.border = "1px solid rgba(115, 138, 255, 0.15)";
-    panel.appendChild(testHint);
-
     // ---- Phase block (the "what is the bot doing right now" area) ------
     const phaseWrap = document.createElement("div");
     phaseWrap.style.padding = "10px";

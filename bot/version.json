@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.75",
-    "description":  "GUI cleanup: remove opener timing calibration block; keep TEST-focused panel.",
-    "builtAt":  "2026-05-11T10:48:27.9394492+03:00",
+    "version":  "0.3.76",
+    "description":  "GUI cleanup: remove TEST description block from panel.",
+    "builtAt":  "2026-05-11T10:54:04.8530736+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.76",
+                        "description":  "GUI cleanup: remove TEST description block from panel.",
+                        "date":  "2026-05-11T10:54:04.8530736+03:00"
+                    },
                     {
                         "version":  "0.3.75",
                         "description":  "GUI cleanup: remove opener timing calibration block; keep TEST-focused panel.",
@@ -247,11 +252,6 @@
                         "version":  "0.3.27",
                         "description":  "Combat: ranked opener after re-find when first-burst-only",
                         "date":  "2026-05-09T21:24:53.7051925+03:00"
-                    },
-                    {
-                        "version":  "0.3.26",
-                        "description":  "C4 slice 11: skip ranked opener when action bar shows cooldown",
-                        "date":  "2026-05-09T21:18:23.7159947+03:00"
                     }
                 ]
 }
