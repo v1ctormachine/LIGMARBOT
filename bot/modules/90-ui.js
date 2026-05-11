@@ -469,6 +469,7 @@
       planner_ranked_tuning_hint: "Ranked tuning hint",
       planner_ranked_preflight: "Ranked preflight",
       planner_ranked_soak: "Ranked soak",
+      test_profile: "Test profile",
       planner_class_profile: "Class profile",
       planner_enemy_adaptation: "Enemy adaptation",
       planner_rotation_policy: "Rotation policy",
@@ -509,7 +510,9 @@
   // AI CHANGED: One-click TEST — auto skill scan when needed, hero stats read, planner dry-run + diagnostics, probes, optional cancel smoke, quickCalibrationSession; console [TEST] SUMMARY + panel line; restarts auto-farm if it was ON (opts.resumeAutoFarm: false to leave stopped).
   async function runUiTestBundle(userOpts) {
     const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
-    const runCalibration = opts.runQuickCalibration !== false;
+    const requestedProfile = typeof opts.testProfile === "string" ? opts.testProfile.trim().toLowerCase() : "quick";
+    const isReleaseProfile = requestedProfile === "release" || requestedProfile === "long";
+    const runCalibration = isReleaseProfile ? true : opts.runQuickCalibration !== false;
     // AI CHANGED: Legacy option kept for API compatibility; TEST no longer runs charge-cancel smoke by default.
     const fireChargeCancelIfHint = opts.fireChargeCancelIfHint === true;
     // AI CHANGED: TEST must stop itself when done; only resume auto-farm if caller explicitly requests it.
@@ -517,13 +520,17 @@
     const forceSkillScan = opts.forceSkillScan === true;
     const runSkillScanIfNeeded = opts.runSkillScanIfNeeded !== false;
     const runHeroStatsInTest = opts.runHeroStatsInTest !== false;
-    const strictCalibration = opts.strictCalibration === true;
+    const strictCalibration = isReleaseProfile ? true : opts.strictCalibration === true;
     // AI CHANGED: Enforce ranked-combat validation by default; set strictRankedChecks:false only for ad-hoc smoke.
-    const strictRankedChecks = opts.strictRankedChecks !== false;
+    const strictRankedChecks = isReleaseProfile ? true : opts.strictRankedChecks !== false;
     // AI CHANGED: TEST one-click policy — run short ranked soak automatically unless explicitly disabled.
-    const autoRankedSoak = opts.autoRankedSoak !== false;
-    const rankedSoakMinMs = Number.isFinite(opts.rankedSoakMinMs) ? opts.rankedSoakMinMs : 12000;
-    const rankedSoakMaxMs = Number.isFinite(opts.rankedSoakMaxMs) ? opts.rankedSoakMaxMs : 45000;
+    const autoRankedSoak = isReleaseProfile ? true : opts.autoRankedSoak !== false;
+    const rankedSoakMinMs = Number.isFinite(opts.rankedSoakMinMs)
+      ? opts.rankedSoakMinMs
+      : (isReleaseProfile ? 180000 : 12000);
+    const rankedSoakMaxMs = Number.isFinite(opts.rankedSoakMaxMs)
+      ? opts.rankedSoakMaxMs
+      : (isReleaseProfile ? 360000 : 45000);
     let hadFarmOn = false;
     let bundleResult = null;
     const checks = [];
@@ -588,6 +595,18 @@
         { version: BotVersion.version, description: BotVersion.description, builtAt: BotVersion.builtAt },
         true
       );
+      addCheck(
+        "test_profile",
+        true,
+        {
+          profile: isReleaseProfile ? "release" : "quick",
+          strictRankedChecks: strictRankedChecks,
+          strictCalibration: strictCalibration,
+          rankedSoakMinMs: rankedSoakMinMs,
+          rankedSoakMaxMs: rankedSoakMaxMs
+        },
+        false
+      );
 
       try {
         probeSelectors();
@@ -613,7 +632,7 @@
       const slotCountBefore = Array.isArray(slotsBefore) ? slotsBefore.length : 0;
       const hasNonEmptyBefore =
         Array.isArray(slotsBefore) && slotsBefore.some(function (s) { return s && s.kind !== "empty"; });
-      const needsScan = forceSkillScan || slotCountBefore === 0 || !hasNonEmptyBefore;
+      const needsScan = forceSkillScan || isReleaseProfile || slotCountBefore === 0 || !hasNonEmptyBefore;
       const rankedOn0 = !!Config.planner.useRankedAttackSkillsInCombat;
       let scanRan = false;
       let scanSlots = null;
