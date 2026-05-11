@@ -742,6 +742,44 @@
     Logger.log("SKILLS", "Skill cache cleared");
   }
 
+  // AI CHANGED: Apply master skill DB metadata to scanned slots by normalized name.
+  // This is the bridge from per-character action-bar scan -> level-invariant conception.
+  // Requirements are not used. Caller provides classKey (assassin/archer/mage/guardian/warrior/priest).
+  function applySkillMasterToSlots(classKey) {
+    const slots = Runtime.skills.slots;
+    if (!Array.isArray(slots) || slots.length === 0) {
+      return { ok: false, error: "no_slots", matched: 0, totalSkills: 0 };
+    }
+    if (typeof getSkillMasterEntry !== "function") {
+      return { ok: false, error: "no_master_db", matched: 0, totalSkills: 0 };
+    }
+    const ck = typeof classKey === "string" ? classKey.trim() : "";
+    if (!ck) {
+      return { ok: false, error: "missing_classKey", matched: 0, totalSkills: 0 };
+    }
+    let totalSkills = 0;
+    let matched = 0;
+    for (let i = 0; i < slots.length; i += 1) {
+      const s = slots[i];
+      if (!s || s.kind !== "skill") {
+        continue;
+      }
+      totalSkills += 1;
+      const master = getSkillMasterEntry(ck, s.name || "");
+      if (master) {
+        s.master = {
+          classKey: master.classKey,
+          name: master.name,
+          tags: master.tags,
+          conception: master.conception
+        };
+        matched += 1;
+      }
+    }
+    Logger.log("SKILLS", "Applied skill master DB to slots", { classKey: ck, matched: matched, totalSkills: totalSkills });
+    return { ok: true, classKey: ck, matched: matched, totalSkills: totalSkills };
+  }
+
   // AI CHANGED: Console summary column -- potions both use effect.type "heal"; append resource so the
   // table is not ambiguous (heal_hp vs heal_mp). Runtime still stores full objects for the planner.
   function formatEffectForTable(effect) {

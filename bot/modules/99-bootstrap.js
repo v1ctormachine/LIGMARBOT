@@ -177,6 +177,7 @@
         };
       },
       clearSkillsCache: clearSkillsCache,
+      applySkillMasterToSlots: applySkillMasterToSlots,
       readActionBarLayoutFingerprint: readActionBarLayoutFingerprint,
       parseSkillEffects: parseSkillEffects,
       inferSkillConception: inferSkillConception,

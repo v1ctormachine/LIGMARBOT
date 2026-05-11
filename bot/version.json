@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.70",
-    "description":  "TEST: highlight the exact Test result line to copy-paste.",
-    "builtAt":  "2026-05-11T10:23:52.3573980+03:00",
+    "version":  "0.3.71",
+    "description":  "TEST: remove legacy charge-cancel from default bundle; add applySkillMasterToSlots(classKey).",
+    "builtAt":  "2026-05-11T10:33:39.0737487+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.71",
+                        "description":  "TEST: remove legacy charge-cancel from default bundle; add applySkillMasterToSlots(classKey).",
+                        "date":  "2026-05-11T10:33:39.0737487+03:00"
+                    },
                     {
                         "version":  "0.3.70",
                         "description":  "TEST: highlight the exact Test result line to copy-paste.",
@@ -247,11 +252,6 @@
                         "version":  "0.3.22",
                         "description":  "C4 slice 9: inner combat bursts after find-enemy; ranked opener first burst only",
                         "date":  "2026-05-09T20:10:55.0184593+03:00"
-                    },
-                    {
-                        "version":  "0.3.21",
-                        "description":  "C4 slice 8b: expose plannerSkillHasDirectDamageForOpener",
-                        "date":  "2026-05-09T20:00:24.0353131+03:00"
                     }
                 ]
 }

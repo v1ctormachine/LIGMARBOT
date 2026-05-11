@@ -428,7 +428,6 @@
       hero_stats: "Hero stats",
       planner_opener_horizon_preview: "HorizonSim",
       planner_ranked_openers: "Ranked opener",
-      charge_cancel_smoke: "Charge cancel",
       calibration_observe: "Calibration"
     };
     const segs = [];
@@ -440,11 +439,7 @@
       if (ch.detail && ch.detail.skipped) {
         status = "skipped";
       } else if (ch.ok) {
-        if (ch.id === "charge_cancel_smoke" && ch.detail && ch.detail.attempted === false) {
-          status = "skipped (cancel hint not visible)";
-        } else {
-          status = "successful";
-        }
+        status = "successful";
       } else {
         status = "failed";
       }
@@ -468,7 +463,8 @@
   async function runUiTestBundle(userOpts) {
     const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
     const runCalibration = opts.runQuickCalibration !== false;
-    const fireChargeCancelIfHint = opts.fireChargeCancelIfHint !== false;
+    // AI CHANGED: Legacy option kept for API compatibility; TEST no longer runs charge-cancel smoke by default.
+    const fireChargeCancelIfHint = opts.fireChargeCancelIfHint === true;
     const resumeAfter = opts.resumeAutoFarm !== false;
     const forceSkillScan = opts.forceSkillScan === true;
     const runSkillScanIfNeeded = opts.runSkillScanIfNeeded !== false;
@@ -642,39 +638,24 @@
       }
       addCheck("planner_ranked_openers", openerOk, diag, rankedOn);
 
-      let chargeCancelTest = null;
-      try {
-        const hintVis = isChargingSkillCancelHintVisible();
-        let cancelClickTarget = null;
-        if (hintVis) {
-          const el = getChargingSkillCancelClickTarget();
-          if (el && el.nodeType === 1) {
-            cancelClickTarget = {
-              tag: el.tagName,
-              id: el.id || null,
-              className: typeof el.className === "string" ? el.className : null
-            };
-          }
-        }
-        Logger.log("TEST", "charge-cancel-ui", {
-          hintVisible: hintVis,
-          cancelClickTarget: cancelClickTarget,
-          mapGapClientPoint: getChargeCancelMapGapClientPoint()
-        });
-        if (fireChargeCancelIfHint) {
+      if (fireChargeCancelIfHint) {
+        // AI CHANGED: On-demand only (debugging a charge-cancel patch): run the old smoke probe/click when explicitly requested.
+        let chargeCancelTest = null;
+        try {
+          const hintVis = isChargingSkillCancelHintVisible();
           if (hintVis) {
             const clickedOk = clickChargingSkillCancelUi();
-            Logger.log("TEST", "charge-cancel click (smoke test)", { ok: clickedOk });
+            Logger.log("TEST", "charge-cancel click (on-demand)", { ok: clickedOk });
             chargeCancelTest = { attempted: true, ok: clickedOk };
           } else {
-            Logger.log("TEST", "charge-cancel click skipped (hint not visible)");
+            Logger.log("TEST", "charge-cancel on-demand skipped (hint not visible)");
             chargeCancelTest = { attempted: false, ok: null, reason: "no_hint" };
           }
+          addCheck("charge_cancel_smoke", true, chargeCancelTest, false);
+        } catch (err) {
+          Logger.warn("TEST", "charge-cancel on-demand threw", err);
+          addCheck("charge_cancel_smoke", false, { error: String(err && err.message ? err.message : err) }, false);
         }
-        addCheck("charge_cancel_smoke", true, chargeCancelTest, false);
-      } catch (err) {
-        Logger.warn("TEST", "charge-cancel probe threw", err);
-        addCheck("charge_cancel_smoke", false, { error: String(err && err.message ? err.message : err) }, false);
       }
 
       const skillsMeta = {
@@ -935,8 +916,8 @@
       "TEST runs automatically: skill scan if cache empty, hero sheet stats read, planner opener dry-run, probes, optional cancel tap, ~10s calibration observe.\n" +
       "When to press:\n" +
       "• Calibration: in combat — target + red HP bar, keep attacking until the observe window ends (town/idle = expect soft calibration warning).\n" +
-      "• Cancel: if cancel hint is visible at that step, the bot taps cancel on purpose — or ligmarBot.runUiTestBundle({ fireChargeCancelIfHint: false }).\n" +
-      "Copy the console line starting with \"Test result:\" (full per-step report) to verify a patch. Also [TEST] SUMMARY + table. Skip hero sheet: { runHeroStatsInTest: false }. Full rescan: { forceSkillScan: true }.\n" +
+      "• Cancel: TEST does not run charge-cancel anymore by default. On-demand: ligmarBot.runUiTestBundle({ fireChargeCancelIfHint: true }).\n" +
+      "Copy the highlighted console line starting with \"Test result:\" (full per-step report) to verify a patch. Also [TEST] SUMMARY + table. Skip hero sheet: { runHeroStatsInTest: false }. Full rescan: { forceSkillScan: true }.\n" +
       "If auto-farm was ON, TEST stops it then restarts when done (resumeAutoFarm: false to stay stopped). Lighter: { runQuickCalibration: false }.";
     testHint.style.fontSize = "10px";
     testHint.style.lineHeight = "1.45";
