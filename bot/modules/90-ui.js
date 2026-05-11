@@ -508,7 +508,8 @@
     const runCalibration = opts.runQuickCalibration !== false;
     // AI CHANGED: Legacy option kept for API compatibility; TEST no longer runs charge-cancel smoke by default.
     const fireChargeCancelIfHint = opts.fireChargeCancelIfHint === true;
-    const resumeAfter = opts.resumeAutoFarm !== false;
+    // AI CHANGED: TEST must stop itself when done; only resume auto-farm if caller explicitly requests it.
+    const resumeAfter = opts.resumeAutoFarm === true;
     const forceSkillScan = opts.forceSkillScan === true;
     const runSkillScanIfNeeded = opts.runSkillScanIfNeeded !== false;
     const runHeroStatsInTest = opts.runHeroStatsInTest !== false;
@@ -664,8 +665,9 @@
         }
         try {
           if (!Runtime.autoFarm.running) {
-            const sr = await startAutoFarmLoop();
-            soakStarted = !!(sr && sr.ok);
+            // AI CHANGED: Do not await loop promise here — it resolves only after stop; TEST would hang.
+            startAutoFarmLoop();
+            soakStarted = true;
           } else {
             soakStarted = true;
           }

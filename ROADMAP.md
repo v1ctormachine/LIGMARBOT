@@ -17,6 +17,7 @@ Emergency **hotfix** (crash / wrong click): ship immediately, even if tiny.
 
 ## Done recently
 
+- **TEST auto-soak hang fix (v0.3.89)** — fixed soak start to not await long-running loop; TEST now ends and stays OFF by default.
 - **Ranked soak false-fail guard (v0.3.88)** — soak passes when stop was accepted (even if loop still unwinding), avoiding false critical fails after successful ranked picks.
 - **One-click TEST auto-soak (v0.3.87)** — TEST now auto-enables ranked mode for test scope, runs short farming soak, then performs strict ranked checks with new `Ranked soak` check.
 - **No-skip ranked TEST mode (v0.3.86)** — `runUiTestBundle({ strictRankedChecks: true })` fails ranked checks when ranked combat is OFF (no silent skips).
