@@ -1,8 +1,163 @@
 ﻿{
-    "version":  "0.3.108",
-    "description":  "After charge cancel: immediate basic + shorter progress wait to avoid idle.",
-    "builtAt":  "2026-05-11T18:04:28.8530160+03:00",
+    "version":  "0.3.139",
+    "description":  "planner: add bounded runtime aggression credit",
+    "builtAt":  "2026-05-11T23:31:46.0315085+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.139",
+                        "description":  "planner: add bounded runtime aggression credit",
+                        "date":  "2026-05-11T23:31:46.0315085+03:00"
+                    },
+                    {
+                        "version":  "0.3.138",
+                        "description":  "skills: finish canonical DB mojibake cleanup",
+                        "date":  "2026-05-11T23:20:04.1446237+03:00"
+                    },
+                    {
+                        "version":  "0.3.137",
+                        "description":  "skills: clean canonical DB apostrophes",
+                        "date":  "2026-05-11T23:18:14.7224363+03:00"
+                    },
+                    {
+                        "version":  "0.3.136",
+                        "description":  "skills: fix mojibake apostrophe lookup",
+                        "date":  "2026-05-11T23:12:08.3767255+03:00"
+                    },
+                    {
+                        "version":  "0.3.135",
+                        "description":  "skills: separator-free master lookup",
+                        "date":  "2026-05-11T23:06:02.4163063+03:00"
+                    },
+                    {
+                        "version":  "0.3.134",
+                        "description":  "test: soften partial ranked soak timeout",
+                        "date":  "2026-05-11T22:58:30.4041713+03:00"
+                    },
+                    {
+                        "version":  "0.3.133",
+                        "description":  "test: soften partial ranked soak timeout",
+                        "date":  "2026-05-11T22:58:23.2988777+03:00"
+                    },
+                    {
+                        "version":  "0.3.132",
+                        "description":  "skills: harden master name normalization",
+                        "date":  "2026-05-11T22:53:23.2595197+03:00"
+                    },
+                    {
+                        "version":  "0.3.131",
+                        "description":  "skills: harden master name normalization",
+                        "date":  "2026-05-11T22:53:09.3239070+03:00"
+                    },
+                    {
+                        "version":  "0.3.130",
+                        "description":  "skills: unmatched master DB diagnostics",
+                        "date":  "2026-05-11T22:47:42.2531329+03:00"
+                    },
+                    {
+                        "version":  "0.3.129",
+                        "description":  "planner: cooldown-aware opener forecast",
+                        "date":  "2026-05-11T22:41:25.6894008+03:00"
+                    },
+                    {
+                        "version":  "0.3.128",
+                        "description":  "test: golden comparator payload",
+                        "date":  "2026-05-11T22:33:07.0259339+03:00"
+                    },
+                    {
+                        "version":  "0.3.127",
+                        "description":  "test: opportunity-aware natural sniper probe",
+                        "date":  "2026-05-11T22:24:01.5464002+03:00"
+                    },
+                    {
+                        "version":  "0.3.126",
+                        "description":  "test: live natural sniper probe",
+                        "date":  "2026-05-11T22:16:39.6192171+03:00"
+                    },
+                    {
+                        "version":  "0.3.125",
+                        "description":  "test: cooldown-aware natural sniper probe",
+                        "date":  "2026-05-11T22:10:04.0939446+03:00"
+                    },
+                    {
+                        "version":  "0.3.124",
+                        "description":  "planner: one-way-safe enemy adaptation",
+                        "date":  "2026-05-11T21:58:36.3877635+03:00"
+                    },
+                    {
+                        "version":  "0.3.123",
+                        "description":  "planner: enemy-calibrated basic baseline",
+                        "date":  "2026-05-11T21:40:50.6474562+03:00"
+                    },
+                    {
+                        "version":  "0.3.122",
+                        "description":  "planner: enemy-calibrated basic baseline",
+                        "date":  "2026-05-11T21:40:30.7538489+03:00"
+                    },
+                    {
+                        "version":  "0.3.121",
+                        "description":  "planner: TTK-aware opener horizon",
+                        "date":  "2026-05-11T21:30:11.2660893+03:00"
+                    },
+                    {
+                        "version":  "0.3.120",
+                        "description":  "planner: threshold-aware opener selection",
+                        "date":  "2026-05-11T21:19:57.0487506+03:00"
+                    },
+                    {
+                        "version":  "0.3.119",
+                        "description":  "planner: queue-aware opener scoring",
+                        "date":  "2026-05-11T21:11:43.2918510+03:00"
+                    },
+                    {
+                        "version":  "0.3.118",
+                        "description":  "planner: context-aware dynamic charge",
+                        "date":  "2026-05-11T20:46:57.6429969+03:00"
+                    },
+                    {
+                        "version":  "0.3.117",
+                        "description":  "combat: generic dynamic charge release",
+                        "date":  "2026-05-11T20:30:15.1673686+03:00"
+                    },
+                    {
+                        "version":  "0.3.116",
+                        "description":  "planner: natural Sniper Shot shortlist fix",
+                        "date":  "2026-05-11T20:10:12.5922226+03:00"
+                    },
+                    {
+                        "version":  "0.3.115",
+                        "description":  "planner: natural Sniper Shot tuning",
+                        "date":  "2026-05-11T20:02:25.4029862+03:00"
+                    },
+                    {
+                        "version":  "0.3.114",
+                        "description":  "Sniper Shot uses 75 percent release in normal combat policy",
+                        "date":  "2026-05-11T19:33:47.2529125+03:00"
+                    },
+                    {
+                        "version":  "0.3.113",
+                        "description":  "TEST forces Sniper Shot partial release at 75 percent charge",
+                        "date":  "2026-05-11T19:27:30.0785706+03:00"
+                    },
+                    {
+                        "version":  "0.3.112",
+                        "description":  "full-charge skills verify briefly after auto-fire and never cancel late",
+                        "date":  "2026-05-11T19:11:31.9571987+03:00"
+                    },
+                    {
+                        "version":  "0.3.111",
+                        "description":  "TEST waits for Sniper Shot readiness and requires actual forced use",
+                        "date":  "2026-05-11T18:59:50.8736870+03:00"
+                    },
+                    {
+                        "version":  "0.3.110",
+                        "description":  "TEST forces Sniper Shot opener to verify charge skill flow",
+                        "date":  "2026-05-11T18:51:03.9694647+03:00"
+                    },
+                    {
+                        "version":  "0.3.109",
+                        "description":  "charge skills use planned hold-and-release mechanics",
+                        "date":  "2026-05-11T18:22:55.4505793+03:00"
+                    },
                     {
                         "version":  "0.3.108",
                         "description":  "After charge cancel: immediate basic + shorter progress wait to avoid idle.",
@@ -97,161 +252,6 @@
                         "version":  "0.3.90",
                         "description":  "Per-class planner profiles auto-applied from class icon; TEST class-profile check.",
                         "date":  "2026-05-11T12:36:26.8778275+03:00"
-                    },
-                    {
-                        "version":  "0.3.89",
-                        "description":  "Fix TEST auto-soak hang; TEST now stays OFF by default after completion.",
-                        "date":  "2026-05-11T12:32:18.4139947+03:00"
-                    },
-                    {
-                        "version":  "0.3.88",
-                        "description":  "TEST soak: avoid false fail when stop is accepted but loop still unwinding.",
-                        "date":  "2026-05-11T12:20:34.4788524+03:00"
-                    },
-                    {
-                        "version":  "0.3.87",
-                        "description":  "TEST one-click: auto-ranked soak + strict ranked checks without manual setup.",
-                        "date":  "2026-05-11T12:11:53.8472750+03:00"
-                    },
-                    {
-                        "version":  "0.3.86",
-                        "description":  "TEST strict mode: fail ranked checks when ranked combat is off (no silent skips).",
-                        "date":  "2026-05-11T12:02:28.6921083+03:00"
-                    },
-                    {
-                        "version":  "0.3.85",
-                        "description":  "TEST: add auto-farm session summary snapshot (duration/cycles/failures/exit reason).",
-                        "date":  "2026-05-11T11:55:49.1180291+03:00"
-                    },
-                    {
-                        "version":  "0.3.84",
-                        "description":  "Fix GUI footer live refresh during ON; restore safe status ticker.",
-                        "date":  "2026-05-11T11:53:31.9412082+03:00"
-                    },
-                    {
-                        "version":  "0.3.83",
-                        "description":  "GUI: add live ON duration timer in control panel footer.",
-                        "date":  "2026-05-11T11:46:36.8615309+03:00"
-                    },
-                    {
-                        "version":  "0.3.82",
-                        "description":  "Ranked opener tuning hints from runtime telemetry + TEST tuning check.",
-                        "date":  "2026-05-11T11:40:58.8975415+03:00"
-                    },
-                    {
-                        "version":  "0.3.81",
-                        "description":  "Ranked opener diagnostics: actionable horizon/basic reason metrics + TEST reason quality check.",
-                        "date":  "2026-05-11T11:29:43.3419982+03:00"
-                    },
-                    {
-                        "version":  "0.3.80",
-                        "description":  "Ranked opener soak telemetry: runtime event counters + TEST runtime check.",
-                        "date":  "2026-05-11T11:17:07.3959352+03:00"
-                    },
-                    {
-                        "version":  "0.3.79",
-                        "description":  "TEST: mark conception path skipped when ranked opener is off; validate only when exercised.",
-                        "date":  "2026-05-11T11:12:38.1096572+03:00"
-                    },
-                    {
-                        "version":  "0.3.78",
-                        "description":  "Planner v2: conception-first opener ranking with horizon tie-break and TEST conception check.",
-                        "date":  "2026-05-11T11:08:44.0890772+03:00"
-                    },
-                    {
-                        "version":  "0.3.77",
-                        "description":  "Skill master class auto-sync from profile icon; stricter TEST skill-master check.",
-                        "date":  "2026-05-11T11:01:48.4778941+03:00"
-                    },
-                    {
-                        "version":  "0.3.76",
-                        "description":  "GUI cleanup: remove TEST description block from panel.",
-                        "date":  "2026-05-11T10:54:04.8530736+03:00"
-                    },
-                    {
-                        "version":  "0.3.75",
-                        "description":  "GUI cleanup: remove opener timing calibration block; keep TEST-focused panel.",
-                        "date":  "2026-05-11T10:48:27.9394492+03:00"
-                    },
-                    {
-                        "version":  "0.3.74",
-                        "description":  "Auto-apply master DB conception on skills cache/scan; TEST uses configured class key and policy.",
-                        "date":  "2026-05-11T10:44:49.1921119+03:00"
-                    },
-                    {
-                        "version":  "0.3.73",
-                        "description":  "TEST: treat calibration with no enemy key as skipped (unless strictCalibration).",
-                        "date":  "2026-05-11T10:40:44.7543747+03:00"
-                    },
-                    {
-                        "version":  "0.3.72",
-                        "description":  "Fix TEST rejection: define chargeCancelTest at bundle scope; keep charge-cancel on-demand only.",
-                        "date":  "2026-05-11T10:38:10.2959313+03:00"
-                    },
-                    {
-                        "version":  "0.3.71",
-                        "description":  "TEST: remove legacy charge-cancel from default bundle; add applySkillMasterToSlots(classKey).",
-                        "date":  "2026-05-11T10:33:39.0737487+03:00"
-                    },
-                    {
-                        "version":  "0.3.70",
-                        "description":  "TEST: highlight the exact Test result line to copy-paste.",
-                        "date":  "2026-05-11T10:23:52.3573980+03:00"
-                    },
-                    {
-                        "version":  "0.3.69",
-                        "description":  "Embed master hero skill DB into bundle + TEST smoke for master lookup.",
-                        "date":  "2026-05-11T10:19:47.8791762+03:00"
-                    },
-                    {
-                        "version":  "0.3.68",
-                        "description":  "Embed hero skill master DB (no requirements) into bundle; expose getSkillMasterEntry/conception.",
-                        "date":  "2026-05-11T10:19:16.6921494+03:00"
-                    },
-                    {
-                        "version":  "0.3.67",
-                        "description":  "TEST: one-line Test result report for patch verification; HorizonSim skipped when ranked off.",
-                        "date":  "2026-05-11T09:52:28.7301221+03:00"
-                    },
-                    {
-                        "version":  "0.3.66",
-                        "description":  "Skill conception layer (inferSkillConception, optional rank-by-conception); ignore requirements.",
-                        "date":  "2026-05-10T22:15:01.1204032+03:00"
-                    },
-                    {
-                        "version":  "0.3.65",
-                        "description":  "headline: TEST runs previewOpenerHorizonSim; ship rule TEST coverage",
-                        "date":  "2026-05-10T19:38:30.8741778+03:00"
-                    },
-                    {
-                        "version":  "0.3.64",
-                        "description":  "headline: openerHorizonSim paper window ranked opener pick",
-                        "date":  "2026-05-10T19:35:16.0107248+03:00"
-                    },
-                    {
-                        "version":  "0.3.63",
-                        "description":  "fix: clear stopRequested after farm exit so TEST hero stats works",
-                        "date":  "2026-05-10T19:19:15.8387956+03:00"
-                    },
-                    {
-                        "version":  "0.3.62",
-                        "description":  "fix: TEST wait loop sleep bypassStop (tab freeze)",
-                        "date":  "2026-05-10T19:09:35.5917740+03:00"
-                    },
-                    {
-                        "version":  "0.3.61",
-                        "description":  "headline: TEST panel shows successful vs failed",
-                        "date":  "2026-05-10T19:05:43.4748227+03:00"
-                    },
-                    {
-                        "version":  "0.3.60",
-                        "description":  "headline: TEST runs scan hero planner checks SUMMARY",
-                        "date":  "2026-05-10T19:02:11.0128278+03:00"
-                    },
-                    {
-                        "version":  "0.3.59",
-                        "description":  "headline: ranked opener logs when skill cache empty or all skills gated",
-                        "date":  "2026-05-10T18:57:39.5289933+03:00"
                     }
                 ]
 }

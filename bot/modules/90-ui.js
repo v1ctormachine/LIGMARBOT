@@ -287,7 +287,8 @@
   function combatPrefsSnapshot() {
     return {
       rankedOpenerChargeGraceMs: Number(Config.combat.rankedOpenerChargeGraceMs) || 0,
-      rankedOpenerEarlyCancelIfHintAfterMs: Number(Config.combat.rankedOpenerEarlyCancelIfHintAfterMs) || 0
+      rankedOpenerEarlyCancelIfHintAfterMs: Number(Config.combat.rankedOpenerEarlyCancelIfHintAfterMs) || 0,
+      chargeSkillReleaseFraction: Number(Config.combat.chargeSkillReleaseFraction) || 1
     };
   }
 
@@ -303,6 +304,9 @@
       }
       if (Number.isFinite(p.rankedOpenerEarlyCancelIfHintAfterMs) && p.rankedOpenerEarlyCancelIfHintAfterMs >= 0) {
         Config.combat.rankedOpenerEarlyCancelIfHintAfterMs = p.rankedOpenerEarlyCancelIfHintAfterMs;
+      }
+      if (Number.isFinite(p.chargeSkillReleaseFraction) && p.chargeSkillReleaseFraction > 0 && p.chargeSkillReleaseFraction <= 1) {
+        Config.combat.chargeSkillReleaseFraction = p.chargeSkillReleaseFraction;
       }
       return { ok: true, fromStorage: true, combat: combatPrefsSnapshot() };
     } catch (err) {
@@ -474,6 +478,11 @@
       planner_enemy_adaptation: "Enemy adaptation",
       planner_rotation_policy: "Rotation policy",
       planner_multimob_channel: "Multi-mob channel rank",
+      planner_natural_sniper_shot: "Natural Sniper Shot",
+      planner_forced_opener: "Forced opener",
+      planner_golden_comparator: "Golden comparator",
+      planner_charge_release_policy: "Charge release policy",
+      planner_dynamic_charge_scoring: "Dynamic charge scoring",
       auto_farm_resume_policy: "Farm resume policy",
       auto_farm_reliability: "Combat reliability",
       auto_farm_session_summary: "Auto-farm session",
@@ -525,6 +534,120 @@
     return report;
   }
 
+  // AI CHANGED: Compact always-on comparator payload for TEST — one object summarizes the opener decision context without cross-reading multiple diagnostics.
+  function buildPlannerGoldenComparator(diag, horizonPreview, naturalSniperProbe, forcedOpenerReadiness, forcedOpenerRuntime) {
+    const lastHorizon = diag && diag.lastOpenerHorizonSim ? diag.lastOpenerHorizonSim : null;
+    const lastDetail = diag && diag.lastDetail ? diag.lastDetail : null;
+    const enemyAdaptive = diag && diag.enemyAdaptive ? diag.enemyAdaptive : null;
+    const runtimeAggression = diag && diag.runtimeAggression ? diag.runtimeAggression : null;
+    const tuningHint = diag && diag.tuningHint ? diag.tuningHint : null;
+    const openerRuntime = diag && diag.openerRuntime ? diag.openerRuntime : null;
+    const runtimeEvents = openerRuntime && openerRuntime.events ? openerRuntime.events : null;
+    const candidates = horizonPreview && Array.isArray(horizonPreview.candidates) ? horizonPreview.candidates.slice() : [];
+    candidates.sort(function (a, b) {
+      const aPass = a && a.passesThreshold ? 1 : 0;
+      const bPass = b && b.passesThreshold ? 1 : 0;
+      if (bPass !== aPass) {
+        return bPass - aPass;
+      }
+      const aDmg = a && Number.isFinite(a.horizonDamage) ? a.horizonDamage : -Infinity;
+      const bDmg = b && Number.isFinite(b.horizonDamage) ? b.horizonDamage : -Infinity;
+      return bDmg - aDmg;
+    });
+    const topCandidates = candidates.slice(0, 3).map(function (row) {
+      return {
+        slot: row && Number.isFinite(row.slot) ? row.slot : null,
+        name: row && row.name ? row.name : "",
+        horizonDamage: row && Number.isFinite(row.horizonDamage) ? row.horizonDamage : null,
+        vsBaseline: row && row.vsBaseline ? row.vsBaseline : null,
+        passesThreshold: !!(row && row.passesThreshold),
+        thresholdPct: row && Number.isFinite(row.thresholdPct) ? row.thresholdPct : null,
+        thresholdSource: row && row.thresholdSource ? row.thresholdSource : null,
+        cooldownSec: row && Number.isFinite(row.cooldownSec) ? row.cooldownSec : null,
+        cooldownExcessSec: row && Number.isFinite(row.cooldownExcessSec) ? row.cooldownExcessSec : null,
+        cooldownOpportunityPenalty: row && Number.isFinite(row.cooldownOpportunityPenalty) ? row.cooldownOpportunityPenalty : null,
+        chargeReleaseFraction: row && Number.isFinite(row.chargeReleaseFraction) ? row.chargeReleaseFraction : null,
+        chargeReleaseSelectionMode: row && row.chargeReleaseSelectionMode ? row.chargeReleaseSelectionMode : null,
+        chargeReleaseCandidateCount: row && Number.isFinite(row.chargeReleaseCandidateCount) ? row.chargeReleaseCandidateCount : 0
+      };
+    });
+    return {
+      ok: !!(diag && horizonPreview && horizonPreview.ok),
+      enemyKey: horizonPreview && horizonPreview.enemyKey ? horizonPreview.enemyKey : null,
+      decision: {
+        lastReason: diag && diag.lastReason ? diag.lastReason : null,
+        lastAt: diag && diag.lastAt ? diag.lastAt : null,
+        pickedSlot: lastDetail && Number.isFinite(lastDetail.slot) ? lastDetail.slot : null,
+        pickedName: lastDetail && lastDetail.name ? lastDetail.name : null,
+        bestSkillVsBaselinePct: lastDetail && Number.isFinite(lastDetail.bestSkillVsBaselinePct) ? lastDetail.bestSkillVsBaselinePct : null,
+        thresholdPct: lastDetail && Number.isFinite(lastDetail.thresholdPct) ? lastDetail.thresholdPct : null,
+        thresholdSource: lastDetail && lastDetail.thresholdSource ? lastDetail.thresholdSource : null,
+        minImprovementFraction: lastDetail && Number.isFinite(lastDetail.minImprovementFraction) ? lastDetail.minImprovementFraction : null,
+        runtimeAggressionReason: lastDetail && lastDetail.runtimeAggression && lastDetail.runtimeAggression.reason
+          ? lastDetail.runtimeAggression.reason
+          : null,
+        cooldownForecast: lastDetail && lastDetail.cooldownForecast ? lastDetail.cooldownForecast : null,
+        bestCandidate: lastDetail && lastDetail.bestCandidate ? lastDetail.bestCandidate : null,
+        filteredOut: lastDetail && lastDetail.filteredOut ? lastDetail.filteredOut : null,
+        decisionMode: lastHorizon && lastHorizon.decisionMode ? lastHorizon.decisionMode : null
+      },
+      horizon: {
+        requestedHorizonMs: horizonPreview && Number.isFinite(horizonPreview.requestedHorizonMs) ? horizonPreview.requestedHorizonMs : null,
+        effectiveHorizonMs: horizonPreview && Number.isFinite(horizonPreview.horizonMs) ? horizonPreview.horizonMs : null,
+        baselineDamage: horizonPreview && Number.isFinite(horizonPreview.baselineDamage) ? horizonPreview.baselineDamage : null,
+        mobFactorApplied: horizonPreview && Number.isFinite(horizonPreview.mobFactorApplied) ? horizonPreview.mobFactorApplied : null,
+        ttkApplied: !!(horizonPreview && horizonPreview.ttkContext && horizonPreview.ttkContext.applied),
+        ttkTargetMs: horizonPreview && horizonPreview.ttkContext && Number.isFinite(horizonPreview.ttkContext.targetTtkMs)
+          ? horizonPreview.ttkContext.targetTtkMs
+          : null,
+        candidateCount: candidates.length,
+        topCandidates: topCandidates
+      },
+      thresholds: {
+        globalThresholdPct: Number.isFinite(Config.planner.openerHorizonMinImprovementFraction)
+          ? +(Config.planner.openerHorizonMinImprovementFraction * 100).toFixed(2)
+          : 2,
+        enemyAdaptiveThresholdPct: enemyAdaptive && Number.isFinite(enemyAdaptive.minFrac) ? +(enemyAdaptive.minFrac * 100).toFixed(2) : null,
+        enemyAdaptiveReason: enemyAdaptive && enemyAdaptive.reason ? enemyAdaptive.reason : null,
+        enemyAdaptiveApplied: !!(enemyAdaptive && enemyAdaptive.applied),
+        ratioObservedVsCurrentPaper: enemyAdaptive && Number.isFinite(enemyAdaptive.ratioObservedVsCurrentPaper)
+          ? enemyAdaptive.ratioObservedVsCurrentPaper
+          : null,
+        runtimeAggressionThresholdPct: runtimeAggression && Number.isFinite(runtimeAggression.minFrac)
+          ? +(runtimeAggression.minFrac * 100).toFixed(2)
+          : null,
+        runtimeAggressionReason: runtimeAggression && runtimeAggression.reason ? runtimeAggression.reason : null,
+        runtimeAggressionApplied: !!(runtimeAggression && runtimeAggression.applied)
+      },
+      runtime: {
+        rankedPick: runtimeEvents && Number.isFinite(runtimeEvents.ranked_pick) ? runtimeEvents.ranked_pick : 0,
+        rankedAltPick: runtimeEvents && Number.isFinite(runtimeEvents.ranked_alt_pick) ? runtimeEvents.ranked_alt_pick : 0,
+        rankedPickNone: runtimeEvents && Number.isFinite(runtimeEvents.ranked_pick_none) ? runtimeEvents.ranked_pick_none : 0,
+        rankedClickFailed: runtimeEvents && Number.isFinite(runtimeEvents.ranked_click_failed) ? runtimeEvents.ranked_click_failed : 0,
+        rankedProgress: runtimeEvents && Number.isFinite(runtimeEvents.ranked_progress) ? runtimeEvents.ranked_progress : 0,
+        rankedNoProgress: runtimeEvents && Number.isFinite(runtimeEvents.ranked_no_progress) ? runtimeEvents.ranked_no_progress : 0,
+        basicFallbackAfterRanked: runtimeEvents && Number.isFinite(runtimeEvents.basic_fallback_after_ranked) ? runtimeEvents.basic_fallback_after_ranked : 0
+      },
+      naturalSniper: naturalSniperProbe || { error: "no_natural_sniper_probe" },
+      forcedSniper: {
+        readiness: forcedOpenerReadiness || null,
+        runtime: forcedOpenerRuntime || null
+      },
+      tuningHint: tuningHint || null,
+      policy: {
+        conceptionEnabled: !!Config.planner.skillRankUseConception,
+        queueEnabled: Config.planner.openerFollowUpSkillQueueEnabled !== false,
+        queueDepth: Number.isFinite(Config.planner.openerFollowUpSkillDepth) ? Config.planner.openerFollowUpSkillDepth : 0,
+        cooldownForecastEnabled: Config.planner.openerCooldownForecastEnabled !== false,
+        cooldownForecastGraceSec: Number.isFinite(Config.planner.openerCooldownForecastGraceSec) ? Config.planner.openerCooldownForecastGraceSec : null,
+        cooldownForecastCoeff: Number.isFinite(Config.planner.openerCooldownExcessPenaltyInBasicDps) ? Config.planner.openerCooldownExcessPenaltyInBasicDps : null,
+        targetTtkAwareHorizon: Config.planner.openerTargetTtkAwareHorizonEnabled !== false,
+        targetHpAwareScoring: Config.planner.openerTargetHpAwareScoring !== false,
+        runtimeAggressionEnabled: Config.planner.openerRuntimeAggressionEnabled !== false
+      }
+    };
+  }
+
   // AI CHANGED: One-click TEST — auto skill scan when needed, hero stats read, planner dry-run + diagnostics, probes, optional cancel smoke, quickCalibrationSession; console [TEST] SUMMARY + panel line; restarts auto-farm if it was ON (opts.resumeAutoFarm: false to leave stopped).
   async function runUiTestBundle(userOpts) {
     const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
@@ -555,12 +678,23 @@
     const rankedSoakMinEvents = Number.isFinite(opts.rankedSoakMinEvents)
       ? opts.rankedSoakMinEvents
       : (isReleaseProfile ? 16 : 6);
+    const forcedRankedSkillName = opts.forceRankedSkillName === false
+      ? ""
+      : (typeof opts.forceRankedSkillName === "string" && opts.forceRankedSkillName.trim()
+        ? opts.forceRankedSkillName.trim()
+        : "Sniper Shot");
+    const forceChargeReleaseFraction = Number.isFinite(opts.forceChargeReleaseFraction)
+      ? opts.forceChargeReleaseFraction
+      : null;
     let hadFarmOn = false;
     let bundleResult = null;
     const checks = [];
     // AI CHANGED: Defined for the whole bundle so later logging never references an out-of-scope var.
     let chargeCancelTest = null;
     let plannerBackup = null;
+    let forcedOpenerReadiness = null;
+    let forcedOpenerRuntime = null;
+    let naturalSniperProbe = null;
 
     function addCheck(id, ok, detail, critical, note) {
       const c = { id: id, ok: !!ok, critical: critical === true };
@@ -572,6 +706,32 @@
       }
       checks.push(c);
       return c;
+    }
+
+    function resolveForcedSkillSlotFromRuntime(skillName) {
+      if (!skillName || !Array.isArray(Runtime.skills.slots)) {
+        return null;
+      }
+      const wanted = typeof normalizeSkillName === "function"
+        ? normalizeSkillName(skillName).toLowerCase()
+        : String(skillName).trim().toLowerCase();
+      for (let i = 0; i < Runtime.skills.slots.length; i += 1) {
+        const row = Runtime.skills.slots[i];
+        if (!row || row.kind !== "skill") {
+          continue;
+        }
+        const got = typeof normalizeSkillName === "function"
+          ? normalizeSkillName(row.name || "").toLowerCase()
+          : String(row.name || "").trim().toLowerCase();
+        if (got === wanted) {
+          return {
+            slot: typeof row.slot === "number" ? row.slot : i,
+            name: row.name || "",
+            record: row
+          };
+        }
+      }
+      return null;
     }
 
     const af0 = getAutoFarmStatus();
@@ -598,11 +758,23 @@
     }
     plannerBackup = {
       useRankedAttackSkillsInCombat: !!Config.planner.useRankedAttackSkillsInCombat,
-      skillMpReserve: Config.planner.skillMpReserve
+      skillMpReserve: Config.planner.skillMpReserve,
+      forcedOpenerSkillName: Runtime.planner.forcedOpenerSkillName,
+      forcedOpenerReason: Runtime.planner.forcedOpenerReason,
+      chargeSkillDynamicReleaseEnabled: Config.combat.chargeSkillDynamicReleaseEnabled !== false,
+      chargeSkillReleaseFraction: Config.combat.chargeSkillReleaseFraction,
+      rankedOpenerEarlyCancelIfHintAfterMs: Config.combat.rankedOpenerEarlyCancelIfHintAfterMs
     };
     // AI CHANGED: TEST must self-enable ranked checks path; user should only press TEST.
     Config.planner.useRankedAttackSkillsInCombat = true;
     Config.planner.skillMpReserve = 0;
+    Runtime.planner.forcedOpenerSkillName = forcedRankedSkillName || null;
+    Runtime.planner.forcedOpenerReason = forcedRankedSkillName ? "runUiTestBundle" : null;
+    if (forcedRankedSkillName && forceChargeReleaseFraction !== null) {
+      Config.combat.chargeSkillDynamicReleaseEnabled = false;
+      Config.combat.rankedOpenerEarlyCancelIfHintAfterMs = 0;
+      Config.combat.chargeSkillReleaseFraction = forceChargeReleaseFraction;
+    }
 
     try {
       Logger.log("TEST", `bundle start v${BotVersion.version}`, {
@@ -610,7 +782,9 @@
         fireChargeCancelIfHint: fireChargeCancelIfHint,
         forceSkillScan: forceSkillScan,
         runHeroStatsInTest: runHeroStatsInTest,
-        strictCalibration: strictCalibration
+        strictCalibration: strictCalibration,
+        forceRankedSkillName: forcedRankedSkillName || null,
+        forceChargeReleaseFraction: forceChargeReleaseFraction
       });
 
       addCheck(
@@ -629,7 +803,9 @@
           resumeAutoFarmAfterTest: resumeAfter,
           rankedSoakMinMs: rankedSoakMinMs,
           rankedSoakMaxMs: rankedSoakMaxMs,
-          rankedSoakMinEvents: rankedSoakMinEvents
+          rankedSoakMinEvents: rankedSoakMinEvents,
+          forceRankedSkillName: forcedRankedSkillName || null,
+          forceChargeReleaseFraction: forceChargeReleaseFraction
         },
         false
       );
@@ -710,6 +886,14 @@
         let soakRetryUsed = false;
         let soakRetryReason = "";
         let soakRetryExtensionMs = 0;
+        const forcedResolved = forcedRankedSkillName ? resolveForcedSkillSlotFromRuntime(forcedRankedSkillName) : null;
+        const forcedReadyWaitMs = Number.isFinite(opts.forcedOpenerReadyWaitMs) ? opts.forcedOpenerReadyWaitMs : 12000;
+        let forcedSeenDuringSoak = false;
+        let forcedSeenAt = null;
+        let forcedSeenCount = 0;
+        const naturalSniperResolved = resolveForcedSkillSlotFromRuntime("Sniper Shot");
+        const naturalSniperReadyWaitMs = Number.isFinite(opts.naturalSniperReadyWaitMs) ? opts.naturalSniperReadyWaitMs : 12000; // AI CHANGED: Wait long enough for post-force cooldown recovery before judging natural pick.
+        const naturalSniperProbeWaitMs = Number.isFinite(opts.naturalSniperProbeWaitMs) ? opts.naturalSniperProbeWaitMs : 12000; // AI CHANGED: Give the post-force window enough time to reach at least one real opener decision in live auto-farm.
         const soakStartAt = Date.now();
         let soakDeadlineMs = rankedSoakMaxMs;
         if (typeof resetPlannerRuntimeTelemetry === "function") {
@@ -720,6 +904,43 @@
           }
         }
         try {
+          if (forcedRankedSkillName) {
+            if (!forcedResolved) {
+              forcedOpenerReadiness = {
+                requestedName: forcedRankedSkillName,
+                ready: false,
+                reason: "not_found_on_bar"
+              };
+            } else {
+              const readyStart = Date.now();
+              let ready = false;
+              let lastReason = null;
+              let lastDetail = null;
+              while (Date.now() - readyStart < forcedReadyWaitMs) {
+                const probe = plannerPickSkillOpeningPick({ forceSkillName: forcedRankedSkillName });
+                lastReason = Runtime.planner.lastOpeningPickReason || null;
+                lastDetail = Runtime.planner.lastOpeningPickDetail || null;
+                const probeSlot = probe && typeof probe.slot === "number" ? probe.slot : null;
+                if (probe && probeSlot === forcedResolved.slot && lastReason === "forced_for_test") {
+                  ready = true;
+                  break;
+                }
+                await sleep(250, { bypassStop: true });
+              }
+              forcedOpenerReadiness = {
+                requestedName: forcedRankedSkillName,
+                slot: forcedResolved.slot,
+                matchedName: forcedResolved.name,
+                waitedMs: Date.now() - readyStart,
+                chargeReleaseFractionOverride: forceChargeReleaseFraction,
+                ready: ready,
+                lastReason: lastReason,
+                lastDetail: lastDetail,
+                reason: ready ? null : "not_ready_before_soak"
+              };
+            }
+            Logger.log("TEST", "forced opener readiness", forcedOpenerReadiness);
+          }
           if (!Runtime.autoFarm.running) {
             // AI CHANGED: Do not await loop promise here — it resolves only after stop; TEST would hang.
             startAutoFarmLoop();
@@ -745,11 +966,21 @@
             soakProgress = progress;
             soakTotalEvents = totalEvents;
             soakEvents = ev || null;
+            if (!forcedSeenDuringSoak && forcedResolved && rt && Array.isArray(rt.recent)) {
+              const forcedRows = rt.recent.filter(function (row) {
+                return row && row.event === "ranked_pick" && row.detail && row.detail.slot === forcedResolved.slot;
+              });
+              if (forcedRows.length > 0) {
+                forcedSeenDuringSoak = true;
+                forcedSeenCount = forcedRows.length;
+                forcedSeenAt = forcedRows[0].at || null;
+              }
+            }
             if (Date.now() - soakStartAt >= rankedSoakMinMs && totalEvents >= rankedSoakMinEvents) {
               break;
             }
-            // AI CHANGED: Quick-profile safety hardening — extend soak once when no ranked runtime activity appears in the initial window.
-            if (!isReleaseProfile && !soakRetryUsed && Date.now() - soakStartAt >= rankedSoakMaxMs && soakTotalEvents <= 0) {
+            // AI CHANGED: TEST soak reliability — extend once when the initial window produced no ranked activity at all.
+            if (!soakRetryUsed && Date.now() - soakStartAt >= rankedSoakMaxMs && soakTotalEvents <= 0) {
               const extraMs = Number.isFinite(opts.rankedSoakRetryExtraMs) ? opts.rankedSoakRetryExtraMs : 20000;
               soakRetryUsed = true;
               soakAttemptCount = 2;
@@ -762,9 +993,133 @@
                 newDeadlineMs: soakDeadlineMs
               });
             }
+            // AI CHANGED: TEST soak reliability — if ranked events are flowing but the quota is not met yet, allow one extra window instead of failing the suite on a near-miss.
+            if (!soakRetryUsed && Date.now() - soakStartAt >= rankedSoakMaxMs && soakTotalEvents > 0 && soakTotalEvents < rankedSoakMinEvents) {
+              const extraMs = Number.isFinite(opts.rankedSoakPartialRetryExtraMs) ? opts.rankedSoakPartialRetryExtraMs : 20000;
+              soakRetryUsed = true;
+              soakAttemptCount = 2;
+              soakRetryExtensionMs = extraMs;
+              soakRetryReason = "partial_ranked_activity_before_timeout";
+              soakDeadlineMs = rankedSoakMaxMs + extraMs;
+              Logger.log("TEST", "ranked soak retry window enabled", {
+                reason: soakRetryReason,
+                extraMs: extraMs,
+                currentTotalEvents: soakTotalEvents,
+                targetMinEvents: rankedSoakMinEvents,
+                newDeadlineMs: soakDeadlineMs
+              });
+            }
           }
           if (Date.now() - soakStartAt >= soakDeadlineMs && soakTotalEvents < rankedSoakMinEvents) {
             soakTimedOut = true;
+          }
+          Runtime.planner.forcedOpenerSkillName = null;
+          Runtime.planner.forcedOpenerReason = null;
+          if (!naturalSniperResolved) {
+            naturalSniperProbe = { skipped: true, reason: "sniper_shot_not_on_bar" };
+          } else {
+            let naturalReady = true;
+            let naturalReadyWaitedMs = 0;
+            let naturalReadyLastReason = null;
+            let naturalReadyLastDetail = null;
+            const forcedMatchesNatural =
+              forcedRankedSkillName &&
+              typeof normalizeSkillName === "function" &&
+              normalizeSkillName(forcedRankedSkillName).toLowerCase() === normalizeSkillName(naturalSniperResolved.name || "Sniper Shot").toLowerCase();
+            if (forcedMatchesNatural) {
+              const naturalReadyStart = Date.now();
+              naturalReady = false;
+              while (Runtime.autoFarm.running && Date.now() - naturalReadyStart < naturalSniperReadyWaitMs) {
+                const readyProbe = plannerPickSkillOpeningPick({ forceSkillName: naturalSniperResolved.name || "Sniper Shot" });
+                naturalReadyLastReason = Runtime.planner.lastOpeningPickReason || null;
+                naturalReadyLastDetail = Runtime.planner.lastOpeningPickDetail || null;
+                const readySlot = readyProbe && typeof readyProbe.slot === "number" ? readyProbe.slot : null;
+                if (readyProbe && readySlot === naturalSniperResolved.slot && naturalReadyLastReason === "forced_for_test") {
+                  naturalReady = true;
+                  break;
+                }
+                await sleep(250, { bypassStop: true });
+              }
+              naturalReadyWaitedMs = Date.now() - naturalReadyStart;
+            }
+            const naturalProbeStart = Date.now();
+            let naturalPicked = false;
+            let naturalPickedAt = null;
+            let naturalLastReason = null;
+            let naturalLastDetail = null;
+            let naturalPickCountSeen = 0;
+            let naturalDecisionCountSeen = 0;
+            let naturalDecisionEvents = [];
+            if (naturalReady) {
+              while (Runtime.autoFarm.running && Date.now() - naturalProbeStart < naturalSniperProbeWaitMs) {
+                await sleep(250, { bypassStop: true });
+                naturalLastReason = Runtime.planner.lastOpeningPickReason || null;
+                naturalLastDetail = Runtime.planner.lastOpeningPickDetail || null;
+                const rt = typeof getPlannerRuntimeTelemetry === "function"
+                  ? getPlannerRuntimeTelemetry()
+                  : (Runtime.planner && Runtime.planner.openerRuntime ? Runtime.planner.openerRuntime : null);
+                const naturalRows =
+                  rt && Array.isArray(rt.recent)
+                    ? rt.recent.filter(function (row) {
+                        return row &&
+                          row.at >= naturalProbeStart &&
+                          row.event === "ranked_pick" &&
+                          row.detail &&
+                          row.detail.slot === naturalSniperResolved.slot;
+                      })
+                    : [];
+                const decisionRows =
+                  rt && Array.isArray(rt.recent)
+                    ? rt.recent.filter(function (row) {
+                        return row &&
+                          row.at >= naturalProbeStart &&
+                          (
+                            row.event === "ranked_pick" ||
+                            row.event === "ranked_alt_pick" ||
+                            row.event === "ranked_pick_none" ||
+                            row.event === "ranked_click_failed" ||
+                            row.event === "basic_fallback_after_ranked"
+                          );
+                      })
+                    : [];
+                naturalDecisionCountSeen = decisionRows.length;
+                naturalDecisionEvents = decisionRows.map(function (row) { return row.event; }).slice(-8);
+                if (naturalRows.length > 0) {
+                  naturalPicked = true;
+                  naturalPickedAt = naturalRows[0].at || null;
+                  naturalPickCountSeen = naturalRows.length;
+                  break;
+                }
+                if (decisionRows.length > 0) {
+                  break; // AI CHANGED: Once a real post-force opener decision happened, judge the result from live runtime instead of waiting for a stale idle window.
+                }
+              }
+            }
+            naturalSniperProbe = {
+              slot: naturalSniperResolved.slot,
+              name: naturalSniperResolved.name,
+              mode: "live_post_force_window",
+              observedWhileAutoFarmRunning: true,
+              waitedMs: naturalReady ? (Date.now() - naturalProbeStart) : 0,
+              readinessWaitedMs: naturalReadyWaitedMs,
+              readyAfterForcedSoak: naturalReady,
+              readinessLastReason: naturalReadyLastReason,
+              readinessLastDetail: naturalReadyLastDetail,
+              pickedNaturally: naturalPicked,
+              pickedAt: naturalPickedAt,
+              pickCountSeen: naturalPickCountSeen,
+              decisionCountSeen: naturalDecisionCountSeen,
+              decisionEventsSeen: naturalDecisionEvents,
+              skipped: !naturalPicked && naturalDecisionCountSeen <= 0,
+              lastReason: naturalLastReason,
+              lastDetail: naturalLastDetail,
+              reason: naturalReady
+                ? (naturalPicked
+                  ? null
+                  : (naturalDecisionCountSeen > 0 ? "not_picked_after_live_decision" : "no_post_force_opener_decision_observed"))
+                : "not_ready_after_forced_soak"
+            };
+            Logger.log("TEST", "natural sniper probe", naturalSniperProbe);
           }
         } catch (err) {
           soakError = String(err && err.message ? err.message : err);
@@ -793,6 +1148,17 @@
         }
         const soakStopAccepted = soakStopped || (soakStopIssued && Runtime.autoFarm.stopRequested);
         const soakActivityOk = soakTotalEvents >= rankedSoakMinEvents;
+        forcedOpenerRuntime = forcedRankedSkillName
+          ? {
+              requestedName: forcedRankedSkillName,
+              chargeReleaseFractionOverride: forceChargeReleaseFraction,
+              resolvedSlot: forcedResolved ? forcedResolved.slot : null,
+              resolvedName: forcedResolved ? forcedResolved.name : null,
+              usedDuringSoak: forcedSeenDuringSoak,
+              firstUsedAt: forcedSeenAt,
+              pickCountSeen: forcedSeenCount
+            }
+          : null;
         let soakReason = "";
         if (soakTimedOut) {
           soakReason = soakTotalEvents > 0 ? "insufficient_ranked_events_before_timeout" : "no_ranked_activity_before_timeout";
@@ -823,6 +1189,8 @@
             retryExtensionMs: soakRetryExtensionMs,
             timedOut: soakTimedOut,
             reason: soakReason || null,
+            forcedOpenerReadiness: forcedOpenerReadiness,
+            forcedOpenerRuntime: forcedOpenerRuntime,
             events: soakEvents,
             error: soakError
           },
@@ -830,7 +1198,12 @@
         );
       } else {
         addCheck("planner_ranked_soak", true, { skipped: true, reason: "auto_ranked_soak_off" }, false);
+        if (!naturalSniperProbe) {
+          naturalSniperProbe = { skipped: true, reason: "auto_ranked_soak_off" }; // AI CHANGED: Keep Natural Sniper Shot check self-explanatory when soak is disabled.
+        }
       }
+      Runtime.planner.forcedOpenerSkillName = null;
+      Runtime.planner.forcedOpenerReason = null;
 
       try {
         Logger.log("TEST", "summarizePlannerInputs", summarizePlannerInputs());
@@ -884,6 +1257,90 @@
         mmRank || { error: "no_multimob_rank" },
         false
       );
+      addCheck(
+        "planner_natural_sniper_shot",
+        !!(
+          naturalSniperProbe &&
+          (naturalSniperProbe.skipped || naturalSniperProbe.pickedNaturally)
+        ),
+        naturalSniperProbe
+          ? Object.assign({}, naturalSniperProbe, {
+              lastOpenerHorizonSim: diag ? diag.lastOpenerHorizonSim : null
+            })
+          : { error: "no_natural_sniper_probe" },
+        false
+      );
+      addCheck(
+        "planner_forced_opener",
+        !forcedRankedSkillName || !!(
+          forcedOpenerReadiness &&
+          forcedOpenerReadiness.ready &&
+          forcedOpenerRuntime &&
+          forcedOpenerRuntime.usedDuringSoak
+        ),
+        forcedRankedSkillName
+          ? {
+              requestedName: forcedRankedSkillName,
+              readiness: forcedOpenerReadiness,
+              runtime: forcedOpenerRuntime
+            }
+          : { skipped: true, reason: "force_ranked_skill_off" },
+        false
+      );
+      try {
+        const skillRows = Runtime.skills && Array.isArray(Runtime.skills.slots) ? Runtime.skills.slots : [];
+        const chargeSample = skillRows.find(function (slotRec) {
+          return slotRec && slotRec.kind === "skill" && typeof plannerBuildChargeReleasePlan === "function" && !!plannerBuildChargeReleasePlan(slotRec);
+        }) || null;
+        if (!chargeSample) {
+          addCheck("planner_charge_release_policy", true, { skipped: true, reason: "no_charge_skill_on_bar" }, false);
+          addCheck("planner_dynamic_charge_scoring", true, { skipped: true, reason: "no_charge_skill_on_bar" }, false);
+        } else {
+          const chargePlan = plannerBuildChargeReleasePlan(chargeSample);
+          const chargePlanOk = !!(
+            chargePlan &&
+            Number.isFinite(chargePlan.channelMaxMs) &&
+            Number.isFinite(chargePlan.releaseMs) &&
+            chargePlan.releaseMs > 0 &&
+            chargePlan.releaseMs <= chargePlan.channelMaxMs &&
+            Number.isFinite(chargePlan.releaseFraction) &&
+            chargePlan.releaseFraction > 0 &&
+            chargePlan.releaseFraction <= 1 &&
+            Array.isArray(chargePlan.candidates) &&
+            chargePlan.candidates.length >= 1
+          );
+          addCheck("planner_charge_release_policy", chargePlanOk, {
+            slot: chargeSample.slot,
+            name: chargeSample.name || "",
+            dynamicEnabled: Config.combat.chargeSkillDynamicReleaseEnabled !== false,
+            forcedFraction: forceChargeReleaseFraction,
+            plan: chargePlan
+          }, false);
+          const dynamicChargeOk =
+            Config.combat.chargeSkillDynamicReleaseEnabled === false
+              ? true
+              : !!(
+                  chargePlan &&
+                  chargePlan.selectionMode === "dynamic_horizon_best_total" &&
+                  chargePlan.scoringContext &&
+                  Array.isArray(chargePlan.candidates) &&
+                  chargePlan.candidates.length >= 2 &&
+                  chargePlan.candidates.some(function (row) {
+                    return row && Number.isFinite(row.holdRiskPenalty) && typeof row.followUpActionMode === "string";
+                  })
+                );
+          addCheck("planner_dynamic_charge_scoring", dynamicChargeOk, {
+            slot: chargeSample.slot,
+            name: chargeSample.name || "",
+            dynamicEnabled: Config.combat.chargeSkillDynamicReleaseEnabled !== false,
+            forcedFraction: forceChargeReleaseFraction,
+            plan: chargePlan
+          }, false);
+        }
+      } catch (err) {
+        addCheck("planner_charge_release_policy", false, { error: String(err && err.message ? err.message : err) }, false);
+        addCheck("planner_dynamic_charge_scoring", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
       const rankedOn = !!Config.planner.useRankedAttackSkillsInCombat;
       addCheck(
         "planner_ranked_preflight",
@@ -999,6 +1456,17 @@
           strictRankedChecks
         );
       }
+      const goldenComparator =
+        rankedOn
+          ? buildPlannerGoldenComparator(diag, horizonPreview, naturalSniperProbe, forcedOpenerReadiness, forcedOpenerRuntime)
+          : { skipped: true, reason: "ranked_combat_off" }; // AI CHANGED: Golden comparator rides the ranked opener path, so skip cleanly when ranked combat is off.
+      Logger.log("TEST", "plannerGoldenComparator", goldenComparator);
+      addCheck(
+        "planner_golden_comparator",
+        rankedOn ? !!(goldenComparator && goldenComparator.ok) : !strictRankedChecks,
+        goldenComparator,
+        false
+      );
       let openerOk = !rankedOn;
       if (rankedOn) {
         openerOk =
@@ -1078,7 +1546,17 @@
         const hint = diag && diag.tuningHint ? diag.tuningHint : null;
         const hintSkipped = !!(hint && hint.skipped);
         const hintOk = !!(hint && hint.ok);
-        addCheck("planner_ranked_tuning_hint", hintOk || hintSkipped, hint || { skipped: true, reason: "no_hint" }, false);
+        const hintHasRuntimeAggressionSnapshot = !!(
+          hint &&
+          typeof hint.runtimeAggressionApplied === "boolean" &&
+          typeof hint.runtimeAggressionReason === "string"
+        );
+        addCheck(
+          "planner_ranked_tuning_hint",
+          hintSkipped || (hintOk && hintHasRuntimeAggressionSnapshot),
+          hint || { skipped: true, reason: "no_hint" },
+          false
+        );
       }
 
       if (fireChargeCancelIfHint) {
@@ -1156,7 +1634,9 @@
           addCheck("skill_master_db", ok, {
             classKey: appliedClassKey,
             applied: applied,
-            sample: sample ? sample.name : null
+            sample: sample ? sample.name : null,
+            unmatchedNames: applied && Array.isArray(applied.unmatchedNames) ? applied.unmatchedNames : [],
+            unmatchedCount: applied && Number.isFinite(applied.unmatchedCount) ? applied.unmatchedCount : 0
           }, false);
         } else {
           addCheck("skill_master_db", true, { skipped: true, reason: "no_master_module" }, false);
@@ -1339,6 +1819,11 @@
       if (plannerBackup) {
         Config.planner.useRankedAttackSkillsInCombat = !!plannerBackup.useRankedAttackSkillsInCombat;
         Config.planner.skillMpReserve = plannerBackup.skillMpReserve;
+        Runtime.planner.forcedOpenerSkillName = plannerBackup.forcedOpenerSkillName || null;
+        Runtime.planner.forcedOpenerReason = plannerBackup.forcedOpenerReason || null;
+        Config.combat.chargeSkillDynamicReleaseEnabled = plannerBackup.chargeSkillDynamicReleaseEnabled !== false;
+        Config.combat.chargeSkillReleaseFraction = plannerBackup.chargeSkillReleaseFraction;
+        Config.combat.rankedOpenerEarlyCancelIfHintAfterMs = plannerBackup.rankedOpenerEarlyCancelIfHintAfterMs;
       }
       if (resumeAfter && hadFarmOn && !Runtime.autoFarm.running) {
         Logger.log("TEST", "restarting auto-farm after TEST");

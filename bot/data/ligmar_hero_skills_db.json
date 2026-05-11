@@ -66,7 +66,7 @@
                                       "Support",
                                       "Self"
                                   ],
-                         "description":  "Increases the assassinвЂ™s critical hit damage by 16 в†’ 18% for 30 s.",
+                        "description":  "Increases the assassin's critical hit damage by 16 в†’ 18% for 30 s.",
                          "params":  {
                                         "Range":  "Ranged",
                                         "Weapon":  "Any",
@@ -211,7 +211,7 @@
                                     }
                      },
                      {
-                         "name":  "AssassinвЂ™s Gambit (0/10)",
+                        "name":  "Assassin's Gambit (0/10)",
                          "tags":  [
                                       "Support",
                                       "Self"
@@ -348,7 +348,7 @@
                                   }
                    },
                    {
-                       "name":  "HunterвЂ™s Tread (0/10)",
+                       "name":  "Hunter's Tread (0/10)",
                        "tags":  [
                                     "Support",
                                     "Party"
@@ -892,7 +892,7 @@
                                     }
                      },
                      {
-                         "name":  "WarвЂ™s Embrace (0/10)",
+                        "name":  "War's Embrace (0/10)",
                          "tags":  [
                                       "Support",
                                       "Self"
@@ -1209,7 +1209,7 @@
                                    }
                     },
                     {
-                        "name":  "BladeвЂ™s Grace (0/10)",
+                        "name":  "Blade's Grace (0/10)",
                         "tags":  [
                                      "Attack",
                                      "Target"

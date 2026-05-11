@@ -124,6 +124,9 @@
       // AI CHANGED: active class-profile applied to planner knobs for current runtime.
       activeClassProfile: null,
       // AI CHANGED: last enemy-aware threshold adaptation snapshot (86-planner.js).
-      lastEnemyAdaptiveThreshold: null
+      lastEnemyAdaptiveThreshold: null,
+      // AI CHANGED: TEST/debug-only opener override — force a named skill when present/feasible, without changing normal combat policy.
+      forcedOpenerSkillName: null,
+      forcedOpenerReason: null
     }
   };

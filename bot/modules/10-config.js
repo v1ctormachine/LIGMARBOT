@@ -31,15 +31,33 @@
       attackTickMs: 350,
       // AI CHANGED: slice 8b — attackUntilProgress waits for enemy kill OR target HP drop (same max).
       attackProgressTimeoutMs: 6500,
-      // AI CHANGED: After charge-cancel UI — shorter verify + immediate basic (see 85-combat attackUntilProgress); avoids long AFK while mob still hits.
+      // AI CHANGED: Legacy stuck-charge fallback only — after forced cancel of an unplanned / unparsed charge opener, verify briefly before deeper fallback.
       attackProgressAfterChargeCancelTimeoutMs: 3200,
-      // AI CHANGED: slice 23 — first ranked opener only: shorter wait before alternate/basic (avoids ~6.5s idle when top-ranked skill whiffs or is slow to register). Alternate openers still use attackProgressTimeoutMs.
+      // AI CHANGED: Charge skills can now evaluate several release fractions and pick the best opener horizon result; false falls back to the fixed configured fraction below.
+      chargeSkillDynamicReleaseEnabled: true,
+      // AI CHANGED: Generic dynamic release candidates for parsed channel_gear skills. Verified per-skill fractions are added on top so known-good timings still participate.
+      chargeSkillDynamicCandidateFractions: [0.25, 0.5, 0.75, 1],
+      // AI CHANGED: Fallback fixed fraction when dynamic scoring is off/unavailable; default stays full charge unless a per-skill override says otherwise.
+      chargeSkillReleaseFraction: 1,
+      // AI CHANGED: Normalized skill-name fallback/preferred fractions for known charge-release skills. Sniper Shot is verified at ~75% release in live TEST.
+      chargeSkillReleaseFractionsByName: {
+        "sniper shot": 0.75
+      },
+      // AI CHANGED: Clamp planned charge release to at least this much hold time so we never instant-cancel by accident.
+      chargeSkillReleaseMinHoldMs: 150,
+      // AI CHANGED: Intentional cancel-release should show HP/count progress quickly; if not, fallback logic may continue.
+      chargeSkillReleaseProgressTimeoutMs: 2200,
+      // AI CHANGED: Full-charge skills may auto-fire on the last frame; give the client a short pad before we judge progress/fallback.
+      chargeSkillFullReleasePaddingMs: 180,
+      // AI CHANGED: After a full-charge auto-fire, verify only briefly; if no progress appears fast, fall back — never "wait then cancel" after the shot already fired.
+      chargeSkillFullChargeProgressTimeoutMs: 650,
+      // AI CHANGED: slice 23 — first non-charge ranked opener only: shorter wait before alternate/basic (avoids ~6.5s idle when top-ranked skill whiffs or is slow to register). Alternate openers still use attackProgressTimeoutMs.
       rankedOpenerFirstProgressTimeoutMs: 4200,
       // AI CHANGED: slice 23 — brief pause after bar skill click before polling HP/count (reduces one-frame false “no progress”).
       postRankedSkillClickSettleMs: 120,
       // AI CHANGED: slice 32 — default 200ms grace before first HP poll on ranked opener (reduces false “no progress” vs 0; panel/combatUi.v1 overrides when saved).
       rankedOpenerChargeGraceMs: 200,
-      // AI CHANGED: slice 25 — if > 0 and < rankedOpenerFirstProgressTimeoutMs: after this many ms with no progress, cancel charge when hint visible (else keep waiting until full first wait). 0 = legacy (cancel only after full first wait).
+      // AI CHANGED: Legacy/manual charge-release timing override. If > 0 and the opener is a parsed charge skill, release at this many ms (clamped to full charge). 0 = use chargeSkillReleaseFraction.
       rankedOpenerEarlyCancelIfHintAfterMs: 0,
       // AI CHANGED: slice 24b — charge skills (e.g. Sniper Shot): CD does not start until cancel UI tap or full charge fires. Only if first progress wait fails, click the cancel control (not the bar slot).
       rankedOpenerClickCancelUiIfChargeStuck: true,
@@ -83,14 +101,62 @@
       useOpenerHorizonSim: true,
       openerHorizonSimMs: 5000,
       openerHorizonMinImprovementFraction: 0.02,
+      // AI CHANGED: Verified opener-specific gate overrides. Lower than the global threshold means "we trust this skill more once its release policy is verified."
+      openerMinImprovementFractionByName: {
+        "sniper shot": 0.01
+      },
       openerHorizonLog: false,
       // AI CHANGED: Step 3 combat teaching — adapt opener threshold by enemy calibration ratio (from enemy DB).
       enemyAdaptiveOpenerThreshold: true,
+      // AI CHANGED: One-way-safe default — low observed ratios should not make the planner more conservative unless explicitly re-enabled.
+      enemyAdaptiveRaiseThresholdWhenRatioLow: false,
       enemyAdaptiveRatioLow: 0.85,
       enemyAdaptiveRatioHigh: 1.15,
       enemyAdaptiveThresholdStep: 0.004,
       // AI CHANGED: Auto-tune diagnostics only (no behavior mutation) — planner emits threshold suggestions from runtime telemetry.
       autoTuneHints: true,
+      // AI CHANGED: Mild runtime aggression credit — if recent ranked telemetry shows large headroom with low fallback/no-progress, lower the generic opener threshold a little.
+      openerRuntimeAggressionEnabled: true,
+      // AI CHANGED: Do not use runtime aggression on tiny samples; wait for at least this many ranked runtime events first.
+      openerRuntimeAggressionMinEvents: 6,
+      // AI CHANGED: Require this much extra headroom above the current threshold before the planner becomes more aggressive.
+      openerRuntimeAggressionHeadroomPct: 8,
+      // AI CHANGED: Keep the planner conservative if ranked openers still fall back too often.
+      openerRuntimeAggressionMaxFallbackRate: 0.15,
+      // AI CHANGED: Also require a low ranked no-progress rate before lowering the generic opener gate.
+      openerRuntimeAggressionMaxNoProgressRate: 0.15,
+      // AI CHANGED: Runtime aggression lowers the generic threshold by one small bounded step, not an open-ended auto-tune.
+      openerRuntimeAggressionStep: 0.003,
+      // AI CHANGED: Runtime aggression can never lower the generic threshold below this floor on its own.
+      openerRuntimeAggressionMinFraction: 0.005,
+      // AI CHANGED: Rotation-aware opener scoring — after the opener, allow one queued follow-up skill instead of assuming basics-only.
+      openerFollowUpSkillQueueEnabled: true,
+      // AI CHANGED: Queue depth 1 = opener plus one follow-up skill. Keep small for speed/stability.
+      openerFollowUpSkillDepth: 1,
+      // AI CHANGED: Mild cooldown-aware forecast — penalize very long-cooldown openers a little when their cooldown extends far beyond the simulated horizon.
+      openerCooldownForecastEnabled: true,
+      // AI CHANGED: Small grace so skills only slightly above the horizon are not taxed for noise / scan rounding.
+      openerCooldownForecastGraceSec: 1,
+      // AI CHANGED: Penalty coefficient in basic-DPS units per excess cooldown second beyond the horizon (0.03 = 3% of basic DPS per sec).
+      openerCooldownExcessPenaltyInBasicDps: 0.03,
+      // AI CHANGED: Keep cooldown tax bounded so it only nudges close decisions instead of dominating the opener score.
+      openerCooldownForecastMaxPenaltyAsBaselineFraction: 0.2,
+      // AI CHANGED: Shrink opener horizon against nearly-dead targets so the planner does not overvalue long 5s sequences when the target should die much sooner.
+      openerTargetTtkAwareHorizonEnabled: true,
+      // AI CHANGED: Never shrink the effective opener horizon below this floor; still gives room for short opener + follow-up comparisons.
+      openerTargetTtkMinMs: 1800,
+      // AI CHANGED: Small pad on top of estimated target TTK so the planner can still value one short follow-up after the expected kill point.
+      openerTargetTtkPaddingMs: 500,
+      // AI CHANGED: Generic opener scoring can cap immediate skill damage to the live target HP so near-dead targets do not overvalue long/large skills.
+      openerTargetHpAwareScoring: true,
+      // AI CHANGED: Dynamic charge scoring can cap opener release damage to the live target HP so later release time is not rewarded for wasted overkill.
+      chargeSkillTargetOverkillCapEnabled: true,
+      // AI CHANGED: Per extra active enemy, longer charge holds get a small risk penalty scaled by basic DPS (0.08 = 8% of basic DPS per sec held per extra enemy).
+      chargeSkillHoldExtraEnemyPenaltyInBasicDps: 0.08,
+      // AI CHANGED: When player HP falls below this pct, longer charge holds get an extra scaled risk penalty.
+      chargeSkillHoldLowHpThresholdPct: 0.6,
+      // AI CHANGED: Additional hold-risk coefficient at 0 HP deficit, scaled by basic DPS and by how far below threshold the player is.
+      chargeSkillHoldLowHpPenaltyInBasicDps: 0.12,
       // AI CHANGED: When true, attack-skill rank order uses conception first (master/scanned role model) instead of parsed effect magnitudes.
       skillRankUseConception: true,
       // AI CHANGED: Conception-first opener gate — allow horizon tie-break only within this score distance from best conception score.

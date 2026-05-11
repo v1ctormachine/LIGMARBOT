@@ -40,7 +40,7 @@
         if (ok) {
           plannerRecordOpenerRuntimeEvent("ranked_pick", { slot: opening.slot, excluded: (excludeSlots || []).slice(0, 8) });
           Logger.log("PLANNER", "Opening attack used ranked skill slot", { slot: opening.slot });
-          return { ok: true, skillSlot: opening.slot };
+          return { ok: true, skillSlot: opening.slot, skillRecord: opening.record || null };
         }
         plannerRecordOpenerRuntimeEvent("ranked_click_failed", { slot: opening.slot });
         Logger.warn("PLANNER", "Ranked skill slot click failed; falling back to basic attack", { slot: opening.slot });
@@ -51,7 +51,7 @@
       }
     }
     const basicOk = clickBasicAttack();
-    return { ok: basicOk, skillSlot: null };
+    return { ok: basicOk, skillSlot: null, skillRecord: null };
   }
 
   // AI CHANGED: slice 8b — true if enemy died (count) or target red bar dropped (same max HP baseline).
@@ -72,6 +72,86 @@
       }
       return false;
     };
+  }
+
+  // AI CHANGED: Charge skills land damage on release (cancel/full charge), not during the hold itself. Run a dedicated release plan before generic "no progress" fallback logic.
+  async function handleChargeSkillOpener(beforeState, open, settleRanked, pollMs, fullTimeoutMs) {
+    const chargePlan =
+      open && open.skillRecord && typeof plannerBuildChargeReleasePlan === "function"
+        ? plannerBuildChargeReleasePlan(open.skillRecord)
+        : null;
+    if (!chargePlan) {
+      return { handled: false, progressed: false };
+    }
+    Logger.log("LOOP", "Charge skill opener plan", {
+      slot: open.skillSlot,
+      releaseMs: chargePlan.releaseMs,
+      releaseFraction: chargePlan.releaseFraction,
+      strategy: chargePlan.strategy,
+      source: chargePlan.releaseSource,
+      selectionMode: chargePlan.selectionMode || null,
+      candidateCount: Array.isArray(chargePlan.candidates) ? chargePlan.candidates.length : 0
+    });
+    if (chargePlan.releaseMs > 0) {
+      await sleep(chargePlan.releaseMs);
+    }
+    if (Runtime.autoFarm.stopRequested) {
+      Logger.log("LOOP", "attackUntilProgress: stop requested during charge hold");
+      return { handled: true, progressed: false };
+    }
+    const cancelReleaseTimeoutRaw = Config.combat.chargeSkillReleaseProgressTimeoutMs;
+    const cancelReleaseTimeout =
+      Number.isFinite(cancelReleaseTimeoutRaw) && cancelReleaseTimeoutRaw > 0
+        ? Math.min(cancelReleaseTimeoutRaw, fullTimeoutMs)
+        : Math.min(2200, fullTimeoutMs);
+    if (chargePlan.strategy === "cancel_release") {
+      if (isChargingSkillCancelHintVisible()) {
+        Logger.log("LOOP", "Charge skill release via cancel UI", {
+          slot: open.skillSlot,
+          releaseMs: chargePlan.releaseMs,
+          releaseFraction: chargePlan.releaseFraction
+        });
+        clickChargingSkillCancelUi();
+        if (settleRanked > 0) {
+          await sleep(settleRanked);
+        }
+        if (Runtime.autoFarm.stopRequested) {
+          return { handled: true, progressed: false };
+        }
+      } else {
+        Logger.warn("LOOP", "Charge release hint missing at planned release time", {
+          slot: open.skillSlot,
+          releaseMs: chargePlan.releaseMs,
+          releaseFraction: chargePlan.releaseFraction
+        });
+      }
+    } else {
+      const fullPadRaw = Config.combat.chargeSkillFullReleasePaddingMs;
+      const fullPadMs = Number.isFinite(fullPadRaw) && fullPadRaw >= 0 ? fullPadRaw : 180;
+      if (fullPadMs > 0) {
+        await sleep(fullPadMs);
+      }
+      if (Runtime.autoFarm.stopRequested) {
+        return { handled: true, progressed: false };
+      }
+    }
+    const fullChargeTimeoutRaw = Config.combat.chargeSkillFullChargeProgressTimeoutMs;
+    const fullChargeTimeout =
+      Number.isFinite(fullChargeTimeoutRaw) && fullChargeTimeoutRaw > 0
+        ? Math.min(fullChargeTimeoutRaw, fullTimeoutMs)
+        : Math.min(650, fullTimeoutMs);
+    const progressed = await waitForCondition(
+      chargePlan.strategy === "full_charge" ? "attack progress after full charge" : "attack progress after charge release",
+      hasCombatProgressSince(beforeState),
+      { timeoutMs: chargePlan.strategy === "full_charge" ? fullChargeTimeout : cancelReleaseTimeout, pollMs: pollMs }
+    );
+    if (progressed) {
+      plannerRecordOpenerRuntimeEvent("ranked_progress", {
+        slot: open.skillSlot,
+        stage: chargePlan.strategy === "full_charge" ? "after_full_charge" : "after_charge_release"
+      });
+    }
+    return { handled: true, progressed: progressed };
   }
 
   // AI CHANGED: Added helper to verify attack effect by enemy count drop or target HP change.
@@ -103,10 +183,22 @@
       await sleep(settleRanked);
     }
 
+    const chargeOutcome = await handleChargeSkillOpener(beforeState, open, settleRanked, pollMs, fullTimeoutMs);
+    const chargeSkillHandled = !!(chargeOutcome && chargeOutcome.handled);
+    if (chargeSkillHandled) {
+      if (chargeOutcome.progressed) {
+        return true;
+      }
+      if (Runtime.autoFarm.stopRequested) {
+        Logger.log("LOOP", "attackUntilProgress: stop requested after charge-skill handling");
+        return false;
+      }
+    }
+
     // AI CHANGED: slice 25 — optional grace so slow-starting charge skills register before HP polling.
     const chargeGraceRaw = Config.combat.rankedOpenerChargeGraceMs;
     const chargeGraceMs =
-      open.skillSlot != null && Number.isFinite(chargeGraceRaw) && chargeGraceRaw > 0 ? chargeGraceRaw : 0;
+      !chargeSkillHandled && open.skillSlot != null && Number.isFinite(chargeGraceRaw) && chargeGraceRaw > 0 ? chargeGraceRaw : 0;
     if (chargeGraceMs > 0) {
       await sleep(chargeGraceMs);
     }
@@ -115,93 +207,94 @@
       return false;
     }
 
-    const firstWaitTimeoutMs =
-      open.skillSlot != null ? firstRankedTimeoutMs : fullTimeoutMs; // AI CHANGED: slice 23 — fast fallback when first ranked pick does nothing observable
-    if (open.skillSlot != null && firstWaitTimeoutMs < fullTimeoutMs) {
-      Logger.log("LOOP", "attack progress wait (first ranked opener)", {
-        timeoutMs: firstWaitTimeoutMs,
-        fullTimeoutMs: fullTimeoutMs,
-        slot: open.skillSlot
-      });
-    }
-
-    const earlyCancelRaw = Config.combat.rankedOpenerEarlyCancelIfHintAfterMs;
-    const earlyCancelMs =
-      open.skillSlot != null &&
-      Number.isFinite(earlyCancelRaw) &&
-      earlyCancelRaw > 0 &&
-      earlyCancelRaw < firstWaitTimeoutMs
-        ? earlyCancelRaw
-        : 0;
-
     let chargeCancelAttempted = false;
     let progressed = false;
-
-    if (earlyCancelMs > 0) {
-      progressed = await waitForCondition(
-        "attack progress (early window)",
-        hasCombatProgressSince(beforeState),
-        { timeoutMs: earlyCancelMs, pollMs: pollMs }
-      );
-      if (progressed) {
-        if (open.skillSlot != null) {
-          plannerRecordOpenerRuntimeEvent("ranked_progress", { slot: open.skillSlot, stage: "early_or_late_wait" });
-        }
-        return true;
-      }
-      if (Runtime.autoFarm.stopRequested) {
-        Logger.log("LOOP", "attackUntilProgress: stop requested after early opener wait");
-        return false;
-      }
-      if (
-        Config.combat.rankedOpenerClickCancelUiIfChargeStuck !== false &&
-        isChargingSkillCancelHintVisible()
-      ) {
-        Logger.log("LOOP", "ranked opener early charge cancel (hint after partial wait)", {
-          earlyCancelMs: earlyCancelMs,
+    if (!chargeSkillHandled) {
+      const firstWaitTimeoutMs =
+        open.skillSlot != null ? firstRankedTimeoutMs : fullTimeoutMs; // AI CHANGED: slice 23 — fast fallback when first ranked pick does nothing observable
+      if (open.skillSlot != null && firstWaitTimeoutMs < fullTimeoutMs) {
+        Logger.log("LOOP", "attack progress wait (first ranked opener)", {
+          timeoutMs: firstWaitTimeoutMs,
+          fullTimeoutMs: fullTimeoutMs,
           slot: open.skillSlot
         });
-        clickChargingSkillCancelUi();
-        chargeCancelAttempted = true;
-        if (settleRanked > 0) {
-          await sleep(settleRanked);
-        }
-        if (Runtime.autoFarm.stopRequested) {
-          return false;
-        }
+      }
+
+      const earlyCancelRaw = Config.combat.rankedOpenerEarlyCancelIfHintAfterMs;
+      const earlyCancelMs =
+        open.skillSlot != null &&
+        Number.isFinite(earlyCancelRaw) &&
+        earlyCancelRaw > 0 &&
+        earlyCancelRaw < firstWaitTimeoutMs
+          ? earlyCancelRaw
+          : 0;
+
+      if (earlyCancelMs > 0) {
         progressed = await waitForCondition(
-          "attack progress after early charge cancel",
+          "attack progress (early window)",
           hasCombatProgressSince(beforeState),
-          { timeoutMs: fullTimeoutMs, pollMs: pollMs }
-        );
-        if (progressed) {
-          plannerRecordOpenerRuntimeEvent("ranked_progress", { slot: open.skillSlot, stage: "after_early_cancel" });
-          return true;
-        }
-      } else {
-        progressed = await waitForCondition(
-          "attack progress (late window)",
-          hasCombatProgressSince(beforeState),
-          { timeoutMs: firstWaitTimeoutMs - earlyCancelMs, pollMs: pollMs }
+          { timeoutMs: earlyCancelMs, pollMs: pollMs }
         );
         if (progressed) {
           if (open.skillSlot != null) {
-            plannerRecordOpenerRuntimeEvent("ranked_progress", { slot: open.skillSlot, stage: "late_window" });
+            plannerRecordOpenerRuntimeEvent("ranked_progress", { slot: open.skillSlot, stage: "early_or_late_wait" });
           }
           return true;
         }
-      }
-    } else {
-      progressed = await waitForCondition(
-        "attack progress",
-        hasCombatProgressSince(beforeState),
-        { timeoutMs: firstWaitTimeoutMs, pollMs: pollMs }
-      );
-      if (progressed) {
-        if (open.skillSlot != null) {
-          plannerRecordOpenerRuntimeEvent("ranked_progress", { slot: open.skillSlot, stage: "first_wait" });
+        if (Runtime.autoFarm.stopRequested) {
+          Logger.log("LOOP", "attackUntilProgress: stop requested after early opener wait");
+          return false;
         }
-        return true;
+        if (
+          Config.combat.rankedOpenerClickCancelUiIfChargeStuck !== false &&
+          isChargingSkillCancelHintVisible()
+        ) {
+          Logger.log("LOOP", "ranked opener early charge cancel (hint after partial wait)", {
+            earlyCancelMs: earlyCancelMs,
+            slot: open.skillSlot
+          });
+          clickChargingSkillCancelUi();
+          chargeCancelAttempted = true;
+          if (settleRanked > 0) {
+            await sleep(settleRanked);
+          }
+          if (Runtime.autoFarm.stopRequested) {
+            return false;
+          }
+          progressed = await waitForCondition(
+            "attack progress after early charge cancel",
+            hasCombatProgressSince(beforeState),
+            { timeoutMs: fullTimeoutMs, pollMs: pollMs }
+          );
+          if (progressed) {
+            plannerRecordOpenerRuntimeEvent("ranked_progress", { slot: open.skillSlot, stage: "after_early_cancel" });
+            return true;
+          }
+        } else {
+          progressed = await waitForCondition(
+            "attack progress (late window)",
+            hasCombatProgressSince(beforeState),
+            { timeoutMs: firstWaitTimeoutMs - earlyCancelMs, pollMs: pollMs }
+          );
+          if (progressed) {
+            if (open.skillSlot != null) {
+              plannerRecordOpenerRuntimeEvent("ranked_progress", { slot: open.skillSlot, stage: "late_window" });
+            }
+            return true;
+          }
+        }
+      } else {
+        progressed = await waitForCondition(
+          "attack progress",
+          hasCombatProgressSince(beforeState),
+          { timeoutMs: firstWaitTimeoutMs, pollMs: pollMs }
+        );
+        if (progressed) {
+          if (open.skillSlot != null) {
+            plannerRecordOpenerRuntimeEvent("ranked_progress", { slot: open.skillSlot, stage: "first_wait" });
+          }
+          return true;
+        }
       }
     }
 
@@ -213,6 +306,7 @@
 
     // AI CHANGED: slice 24b — charge skill stuck: first wait saw no HP/count (CD not running until cancel or full shot). Tap cancel UI only when needed, not a second bar click.
     if (
+      !chargeSkillHandled &&
       !chargeCancelAttempted &&
       open.skillSlot != null &&
       Config.combat.rankedOpenerClickCancelUiIfChargeStuck !== false &&

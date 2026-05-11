@@ -287,13 +287,23 @@
     return effects;
   }
 
-  // AI CHANGED: Strip "(4/10)" suffix so master DB keys match across upgrade levels.
+  // AI CHANGED: Strip "(4/10)" suffix and collapse punctuation/encoding variants so master DB keys match across upgrade levels and apostrophe mojibake.
   function normalizeSkillName(rawName) {
     if (typeof rawName !== "string") {
       return "";
     }
     const m = rawName.match(/^(.*?)\s*\(\d+\/\d+\)\s*$/);
-    return (m ? m[1] : rawName).trim();
+    const base = (m ? m[1] : rawName).trim();
+    const precleaned = base
+      // AI CHANGED: Common apostrophe mojibake sequences should behave like a plain apostrophe before Unicode normalization.
+      .replace(/\u0432\u0402\u2122/g, "'")
+      .replace(/\u00E2\u20AC\u2122/g, "'")
+      .replace(/[\u2018\u2019\u201A\u201B\u02BC\uFF07\u0060\u00B4]/g, "'");
+    const folded = typeof precleaned.normalize === "function" ? precleaned.normalize("NFKD") : precleaned;
+    return folded
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^A-Za-z0-9]+/g, "")
+      .trim();
   }
 
   // AI CHANGED: Semantic skill shape for planning — effect *types* and text *shape*, not scaled tooltip numbers.
@@ -772,17 +782,17 @@
   function applySkillMasterToSlots(classKey) {
     const slots = Runtime.skills.slots;
     if (!Array.isArray(slots) || slots.length === 0) {
-      return { ok: false, error: "no_slots", matched: 0, totalSkills: 0 };
+      return { ok: false, error: "no_slots", matched: 0, totalSkills: 0, unmatchedNames: [] };
     }
     if (typeof getSkillMasterEntry !== "function") {
-      return { ok: false, error: "no_master_db", matched: 0, totalSkills: 0 };
+      return { ok: false, error: "no_master_db", matched: 0, totalSkills: 0, unmatchedNames: [] };
     }
     const preferred = typeof classKey === "string" ? classKey.trim() : "";
     const detected = detectProfileClassKey();
     const configured = typeof Config.skills.masterClassKey === "string" ? Config.skills.masterClassKey.trim() : "";
     const ck = preferred || detected || configured;
     if (!ck) {
-      return { ok: false, error: "missing_classKey", matched: 0, totalSkills: 0 };
+      return { ok: false, error: "missing_classKey", matched: 0, totalSkills: 0, unmatchedNames: [] };
     }
     if (!preferred && detected && configured !== detected) {
       Config.skills.masterClassKey = detected;
@@ -793,6 +803,8 @@
     }
     let totalSkills = 0;
     let matched = 0;
+    const matchedNames = [];
+    const unmatchedNames = [];
     for (let i = 0; i < slots.length; i += 1) {
       const s = slots[i];
       if (!s || s.kind !== "skill") {
@@ -808,10 +820,27 @@
           conception: master.conception
         };
         matched += 1;
+        matchedNames.push(master.name || s.name || "");
+      } else {
+        unmatchedNames.push(s.name || ("slot_" + i));
       }
     }
-    Logger.log("SKILLS", "Applied skill master DB to slots", { classKey: ck, matched: matched, totalSkills: totalSkills });
-    return { ok: true, classKey: ck, matched: matched, totalSkills: totalSkills };
+    Logger.log("SKILLS", "Applied skill master DB to slots", {
+      classKey: ck,
+      matched: matched,
+      totalSkills: totalSkills,
+      unmatchedNames: unmatchedNames,
+      matchedSample: matchedNames.slice(0, 5)
+    });
+    return {
+      ok: true,
+      classKey: ck,
+      matched: matched,
+      totalSkills: totalSkills,
+      unmatchedCount: unmatchedNames.length,
+      unmatchedNames: unmatchedNames,
+      matchedSample: matchedNames.slice(0, 5)
+    };
   }
 
   // AI CHANGED: Console summary column -- potions both use effect.type "heal"; append resource so the
