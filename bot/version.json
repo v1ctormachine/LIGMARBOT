@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.74",
-    "description":  "Auto-apply master DB conception on skills cache/scan; TEST uses configured class key and policy.",
-    "builtAt":  "2026-05-11T10:44:49.1921119+03:00",
+    "version":  "0.3.75",
+    "description":  "GUI cleanup: remove opener timing calibration block; keep TEST-focused panel.",
+    "builtAt":  "2026-05-11T10:48:27.9394492+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.75",
+                        "description":  "GUI cleanup: remove opener timing calibration block; keep TEST-focused panel.",
+                        "date":  "2026-05-11T10:48:27.9394492+03:00"
+                    },
                     {
                         "version":  "0.3.74",
                         "description":  "Auto-apply master DB conception on skills cache/scan; TEST uses configured class key and policy.",
@@ -247,11 +252,6 @@
                         "version":  "0.3.26",
                         "description":  "C4 slice 11: skip ranked opener when action bar shows cooldown",
                         "date":  "2026-05-09T21:18:23.7159947+03:00"
-                    },
-                    {
-                        "version":  "0.3.25",
-                        "description":  "Fix tile scoring: other_loot tier + broader grey chest detection",
-                        "date":  "2026-05-09T21:04:43.9655680+03:00"
                     }
                 ]
 }

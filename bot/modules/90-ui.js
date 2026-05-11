@@ -787,7 +787,6 @@
     }
 
     loadPlannerUiPrefs();
-    loadCombatUiPrefs();
 
     const panel = document.createElement("div");
     panel.id = "ligmar-bot-panel";
@@ -952,68 +951,6 @@
     testHint.style.borderRadius = "6px";
     testHint.style.border = "1px solid rgba(115, 138, 255, 0.15)";
     panel.appendChild(testHint);
-
-    // AI CHANGED: slice 26 — ranked opener timing (slice 25); persisted ligmarbot.combatUi.v1
-    const combatTuneWrap = document.createElement("div");
-    combatTuneWrap.style.marginBottom = "10px";
-    combatTuneWrap.style.padding = "8px 10px";
-    combatTuneWrap.style.background = "rgba(0,0,0,0.22)";
-    combatTuneWrap.style.borderRadius = "6px";
-    combatTuneWrap.style.border = "1px solid rgba(115, 138, 255, 0.2)";
-    const combatTuneTitle = document.createElement("div");
-    combatTuneTitle.textContent = "Opener timing (ms)";
-    combatTuneTitle.style.fontSize = "10.5px";
-    combatTuneTitle.style.fontWeight = "700";
-    combatTuneTitle.style.opacity = "0.75";
-    combatTuneTitle.style.marginBottom = "6px";
-    combatTuneTitle.style.letterSpacing = "0.4px";
-    combatTuneWrap.appendChild(combatTuneTitle);
-
-    function makeMsRow(labelText, initialVal) {
-      const row = document.createElement("div");
-      row.style.display = "flex";
-      row.style.alignItems = "center";
-      row.style.justifyContent = "space-between";
-      row.style.gap = "8px";
-      row.style.marginBottom = "4px";
-      row.style.fontSize = "11px";
-      const lab = document.createElement("span");
-      lab.textContent = labelText;
-      lab.style.opacity = "0.9";
-      lab.style.lineHeight = "1.35";
-      const inp = document.createElement("input");
-      inp.type = "number";
-      inp.min = "0";
-      inp.step = "50";
-      inp.value = String(initialVal);
-      inp.style.width = "72px";
-      inp.style.padding = "4px 6px";
-      inp.style.borderRadius = "4px";
-      inp.style.border = "1px solid rgba(115, 138, 255, 0.35)";
-      inp.style.background = "rgba(14, 18, 30, 0.9)";
-      inp.style.color = "#dce3ff";
-      inp.style.fontFamily = "inherit";
-      inp.style.fontSize = "11px";
-      inp.style.userSelect = "text";
-      row.appendChild(lab);
-      row.appendChild(inp);
-      combatTuneWrap.appendChild(row);
-      return inp;
-    }
-
-    const graceInput = makeMsRow(
-      "Grace",
-      Number.isFinite(Config.combat.rankedOpenerChargeGraceMs) ? Config.combat.rankedOpenerChargeGraceMs : 0
-    );
-    const earlyClamped = clampEarlyCancelToFirstWaitMs(Config.combat.rankedOpenerEarlyCancelIfHintAfterMs);
-    Config.combat.rankedOpenerEarlyCancelIfHintAfterMs = earlyClamped;
-    const earlyInput = makeMsRow("Early cancel", earlyClamped);
-    function onCombatTuneCommit() {
-      applyCombatTuneInputsAndSave(graceInput, earlyInput);
-    }
-    graceInput.addEventListener("change", onCombatTuneCommit);
-    earlyInput.addEventListener("change", onCombatTuneCommit);
-    panel.appendChild(combatTuneWrap);
 
     // ---- Phase block (the "what is the bot doing right now" area) ------
     const phaseWrap = document.createElement("div");
