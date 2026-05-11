@@ -471,6 +471,7 @@
       planner_ranked_soak: "Ranked soak",
       planner_class_profile: "Class profile",
       planner_enemy_adaptation: "Enemy adaptation",
+      planner_rotation_policy: "Rotation policy",
       auto_farm_session_summary: "Auto-farm session",
       planner_ranked_openers: "Ranked opener",
       calibration_observe: "Calibration"
@@ -760,6 +761,12 @@
         "planner_enemy_adaptation",
         !!(enemyAdaptive && Number.isFinite(enemyAdaptive.minFrac)),
         enemyAdaptive || { error: "no_enemy_adaptation" },
+        false
+      );
+      addCheck(
+        "planner_rotation_policy",
+        !!(diag && Number.isFinite(diag.rankedBurstsPerFindEffective) && diag.rankedBurstsPerFindEffective >= 1),
+        diag ? { rankedBurstsPerFindEffective: diag.rankedBurstsPerFindEffective } : { error: "no_diag" },
         false
       );
       const rankedOn = !!Config.planner.useRankedAttackSkillsInCombat;

@@ -337,6 +337,17 @@
     }
   }
 
+  // AI CHANGED: Step 4 — effective ranked bursts per find cycle with legacy fallback.
+  function getRankedBurstsPerFindEffective() {
+    if (!Config.planner.useRankedAttackSkillsInCombat) {
+      return 0;
+    }
+    if (Number.isFinite(Config.planner.rankedBurstsPerFind) && Config.planner.rankedBurstsPerFind >= 0) {
+      return Math.floor(Config.planner.rankedBurstsPerFind);
+    }
+    return Config.planner.useRankedSkillOnlyFirstBurstAfterFind ? 1 : Number.MAX_SAFE_INTEGER;
+  }
+
   // AI CHANGED: Phase C4 -- one-line hint after combat clears (Config.planner.logPlannerAfterSecureTile).
   function plannerMaybeLogAfterSecureCombat() {
     if (!Config.planner.logPlannerAfterSecureTile) {
@@ -434,17 +445,8 @@
         ? Config.combat.maxCombatAttackBurstsPerFind
         : 24;
       let attackBursts = 0;
-      // AI CHANGED: slice 9+ — "first burst after find" means after each find-enemy (including re-find
-      // after a kill), not only attackBursts===1; otherwise multi-mob pulls never ranked-open on mob 2+.
-      let allowRankedOpeningHit =
-        !!Config.planner.useRankedAttackSkillsInCombat &&
-        !Config.planner.useRankedSkillOnlyFirstBurstAfterFind;
-      if (
-        Config.planner.useRankedAttackSkillsInCombat &&
-        Config.planner.useRankedSkillOnlyFirstBurstAfterFind
-      ) {
-        allowRankedOpeningHit = true;
-      }
+      // AI CHANGED: Step 4 — allow configurable number of ranked bursts per find cycle.
+      let rankedBurstsLeft = getRankedBurstsPerFindEffective();
       while (
         typeof current.combat.enemyCount === "number" &&
         current.combat.enemyCount > 0 &&
@@ -466,7 +468,7 @@
         attackBursts += 1;
         plannerMaybeRecordEnemyBeforeAttack();
 
-        const useRankedBurst = !!allowRankedOpeningHit;
+        const useRankedBurst = rankedBurstsLeft > 0;
 
         // AI CHANGED: Surface attack as live status (slice 9 — burst index for multi-mob pulls).
         setBotStatus(
@@ -495,8 +497,8 @@
           break;
         }
 
-        if (Config.planner.useRankedSkillOnlyFirstBurstAfterFind) {
-          allowRankedOpeningHit = false;
+        if (useRankedBurst && rankedBurstsLeft > 0) {
+          rankedBurstsLeft -= 1;
         }
 
         current = readBasicState();
@@ -573,12 +575,7 @@
             Logger.log("LOOP", "Enemies cleared during re-find after kill");
             break;
           }
-          if (
-            Config.planner.useRankedAttackSkillsInCombat &&
-            Config.planner.useRankedSkillOnlyFirstBurstAfterFind
-          ) {
-            allowRankedOpeningHit = true;
-          }
+          rankedBurstsLeft = getRankedBurstsPerFindEffective();
         }
       }
     }

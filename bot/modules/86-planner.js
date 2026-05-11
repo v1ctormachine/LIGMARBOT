@@ -729,6 +729,10 @@
     const classProfile = plannerApplyClassProfile();
     const pr = Runtime.planner;
     const slots = Runtime.skills.slots || [];
+    const rankedBurstsPerFindEffective =
+      Number.isFinite(Config.planner.rankedBurstsPerFind) && Config.planner.rankedBurstsPerFind >= 0
+        ? Math.floor(Config.planner.rankedBurstsPerFind)
+        : (Config.planner.useRankedSkillOnlyFirstBurstAfterFind ? 1 : Number.MAX_SAFE_INTEGER);
     return {
       rankedCombatEnabled: !!Config.planner.useRankedAttackSkillsInCombat,
       lastReason: pr.lastOpeningPickReason,
@@ -740,7 +744,8 @@
       openerRuntime: pr.openerRuntime || null,
       tuningHint: plannerBuildRankedTuningHint(),
       classProfile: classProfile,
-      enemyAdaptive: pr.lastEnemyAdaptiveThreshold || null
+      enemyAdaptive: pr.lastEnemyAdaptiveThreshold || null,
+      rankedBurstsPerFindEffective: rankedBurstsPerFindEffective
     };
   }
 
