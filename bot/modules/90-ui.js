@@ -467,6 +467,7 @@
       planner_ranked_runtime: "Ranked runtime",
       planner_ranked_reason_quality: "Ranked reason quality",
       planner_ranked_tuning_hint: "Ranked tuning hint",
+      planner_ranked_preflight: "Ranked preflight",
       auto_farm_session_summary: "Auto-farm session",
       planner_ranked_openers: "Ranked opener",
       calibration_observe: "Calibration"
@@ -511,6 +512,8 @@
     const runSkillScanIfNeeded = opts.runSkillScanIfNeeded !== false;
     const runHeroStatsInTest = opts.runHeroStatsInTest !== false;
     const strictCalibration = opts.strictCalibration === true;
+    // AI CHANGED: Enforce ranked-combat validation: if ranked is OFF, mark ranked checks as failed (not skipped).
+    const strictRankedChecks = opts.strictRankedChecks === true;
     let hadFarmOn = false;
     let bundleResult = null;
     const checks = [];
@@ -654,13 +657,34 @@
         Logger.warn("TEST", "getPlannerOpeningPickDiagnostics threw", err);
       }
       const rankedOn = !!Config.planner.useRankedAttackSkillsInCombat;
+      addCheck(
+        "planner_ranked_preflight",
+        rankedOn || !strictRankedChecks,
+        rankedOn
+          ? { rankedCombatEnabled: true, strictRankedChecks: strictRankedChecks }
+          : (strictRankedChecks
+            ? { rankedCombatEnabled: false, strictRankedChecks: true, error: "ranked_combat_off" }
+            : { skipped: true, reason: "ranked_combat_off", strictRankedChecks: false }),
+        strictRankedChecks
+      );
       // AI CHANGED: Planner v2 check — mark skipped when ranked opener is disabled (path not exercised).
       if (!rankedOn) {
-        addCheck("planner_conception_path", true, {
-          skipped: true,
-          reason: "ranked_combat_off",
-          skillRankUseConception: !!Config.planner.skillRankUseConception
-        }, false);
+        addCheck(
+          "planner_conception_path",
+          !strictRankedChecks,
+          strictRankedChecks
+            ? {
+              error: "ranked_combat_off",
+              strictRankedChecks: true,
+              skillRankUseConception: !!Config.planner.skillRankUseConception
+            }
+            : {
+              skipped: true,
+              reason: "ranked_combat_off",
+              skillRankUseConception: !!Config.planner.skillRankUseConception
+            },
+          strictRankedChecks
+        );
       } else {
         const conceptionOn = !!(Config.planner.skillRankUseConception === true);
         const horizonRankMode =
@@ -684,10 +708,14 @@
       }
       // AI CHANGED: Ranked-opener soak telemetry check — skipped unless ranked is ON and runtime events exist.
       if (!rankedOn) {
-        addCheck("planner_ranked_runtime", true, {
-          skipped: true,
-          reason: "ranked_combat_off"
-        }, false);
+        addCheck(
+          "planner_ranked_runtime",
+          !strictRankedChecks,
+          strictRankedChecks
+            ? { error: "ranked_combat_off", strictRankedChecks: true }
+            : { skipped: true, reason: "ranked_combat_off" },
+          strictRankedChecks
+        );
       } else {
         const rt =
           diag &&
@@ -734,7 +762,14 @@
           false
         );
       } else {
-        addCheck("planner_opener_horizon_preview", true, { skipped: true, reason: "ranked_combat_off" }, false);
+        addCheck(
+          "planner_opener_horizon_preview",
+          !strictRankedChecks,
+          strictRankedChecks
+            ? { error: "ranked_combat_off", strictRankedChecks: true }
+            : { skipped: true, reason: "ranked_combat_off" },
+          strictRankedChecks
+        );
       }
       let openerOk = !rankedOn;
       if (rankedOn) {
@@ -746,7 +781,14 @@
       addCheck("planner_ranked_openers", openerOk, diag, rankedOn);
       // AI CHANGED: Decision-quality check — when horizon prefers basic, detail must explain by pct + threshold and filtered-out counts.
       if (!rankedOn) {
-        addCheck("planner_ranked_reason_quality", true, { skipped: true, reason: "ranked_combat_off" }, false);
+        addCheck(
+          "planner_ranked_reason_quality",
+          !strictRankedChecks,
+          strictRankedChecks
+            ? { error: "ranked_combat_off", strictRankedChecks: true }
+            : { skipped: true, reason: "ranked_combat_off" },
+          strictRankedChecks
+        );
       } else {
         const lastReason = diag && diag.lastReason ? diag.lastReason : null;
         const d = diag && diag.lastDetail ? diag.lastDetail : null;
@@ -796,7 +838,14 @@
       }
       // AI CHANGED: Tuning-hint check — soft diagnostics only; skipped when ranked is off or not enough runtime telemetry.
       if (!rankedOn) {
-        addCheck("planner_ranked_tuning_hint", true, { skipped: true, reason: "ranked_combat_off" }, false);
+        addCheck(
+          "planner_ranked_tuning_hint",
+          !strictRankedChecks,
+          strictRankedChecks
+            ? { error: "ranked_combat_off", strictRankedChecks: true }
+            : { skipped: true, reason: "ranked_combat_off" },
+          strictRankedChecks
+        );
       } else {
         const hint = diag && diag.tuningHint ? diag.tuningHint : null;
         const hintSkipped = !!(hint && hint.skipped);

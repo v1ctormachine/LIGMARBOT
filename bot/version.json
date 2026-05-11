@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.85",
-    "description":  "TEST: add auto-farm session summary snapshot (duration/cycles/failures/exit reason).",
-    "builtAt":  "2026-05-11T11:55:49.1180291+03:00",
+    "version":  "0.3.86",
+    "description":  "TEST strict mode: fail ranked checks when ranked combat is off (no silent skips).",
+    "builtAt":  "2026-05-11T12:02:28.6921083+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.86",
+                        "description":  "TEST strict mode: fail ranked checks when ranked combat is off (no silent skips).",
+                        "date":  "2026-05-11T12:02:28.6921083+03:00"
+                    },
                     {
                         "version":  "0.3.85",
                         "description":  "TEST: add auto-farm session summary snapshot (duration/cycles/failures/exit reason).",
@@ -247,11 +252,6 @@
                         "version":  "0.3.37",
                         "description":  "slice 20 pointer bar press + scoped basic attack + holdCast result + popup cleanup",
                         "date":  "2026-05-09T23:15:48.9602492+03:00"
-                    },
-                    {
-                        "version":  "0.3.36",
-                        "description":  "slice 19b hard cap bar hold + holdCast defense; fix opener tooltip long-press",
-                        "date":  "2026-05-09T23:09:29.4895378+03:00"
                     }
                 ]
 }
