@@ -639,6 +639,26 @@
     return parts.join("|");
   }
 
+  // AI CHANGED: Detect selected hero class from profile icon (`icon-src-archer` etc.) so master DB class key auto-follows UI.
+  function detectProfileClassKey() {
+    const sel = Config.selectors && Config.selectors.heroProfileClassIcon
+      ? Config.selectors.heroProfileClassIcon
+      : "app-icon.profile-class";
+    const icon = document.querySelector(sel);
+    if (!icon) {
+      return "";
+    }
+    const cls = (icon.className || "").toString().toLowerCase();
+    const classMatch = cls.match(/\bicon-src-([a-z0-9_-]+)\b/);
+    if (classMatch && classMatch[1]) {
+      return classMatch[1].trim();
+    }
+    const tui = icon.querySelector("tui-icon");
+    const styleAttr = tui ? (tui.getAttribute("style") || "") : "";
+    const styleMatch = styleAttr.match(/assets\/icons\/([a-z0-9_-]+)\.svg/i);
+    return styleMatch && styleMatch[1] ? styleMatch[1].trim().toLowerCase() : "";
+  }
+
   // AI CHANGED: Persist the parsed slot array to localStorage so subsequent page reloads can skip
   // the rescan. Versioned key (Config.skills.storageKey) so a parser-schema change forces fresh scan.
   function saveSkillsToCache(slots) {
@@ -716,12 +736,9 @@
           row.conception = inferSkillConception(row);
         }
       }
-      // AI CHANGED: Auto-attach master DB conception after cache load (configured class only).
+      // AI CHANGED: Auto-attach master DB conception after cache load (class auto-detected from profile icon when available).
       if (Config.skills.autoApplyMasterOnCacheLoad !== false && typeof applySkillMasterToSlots === "function") {
-        const ck = typeof Config.skills.masterClassKey === "string" ? Config.skills.masterClassKey.trim() : "";
-        if (ck) {
-          applySkillMasterToSlots(ck);
-        }
+        applySkillMasterToSlots();
       }
       Runtime.skills.cacheLoadedAt = Date.now();
       Runtime.skills.scannedAt = payload.savedAt || null;
@@ -751,7 +768,7 @@
 
   // AI CHANGED: Apply master skill DB metadata to scanned slots by normalized name.
   // This is the bridge from per-character action-bar scan -> level-invariant conception.
-  // Requirements are not used. Caller provides classKey (assassin/archer/mage/guardian/warrior/priest).
+  // Requirements are not used. classKey is optional: when missing, we auto-detect via profile icon and sync Config.skills.masterClassKey.
   function applySkillMasterToSlots(classKey) {
     const slots = Runtime.skills.slots;
     if (!Array.isArray(slots) || slots.length === 0) {
@@ -760,9 +777,19 @@
     if (typeof getSkillMasterEntry !== "function") {
       return { ok: false, error: "no_master_db", matched: 0, totalSkills: 0 };
     }
-    const ck = typeof classKey === "string" ? classKey.trim() : "";
+    const preferred = typeof classKey === "string" ? classKey.trim() : "";
+    const detected = detectProfileClassKey();
+    const configured = typeof Config.skills.masterClassKey === "string" ? Config.skills.masterClassKey.trim() : "";
+    const ck = preferred || detected || configured;
     if (!ck) {
       return { ok: false, error: "missing_classKey", matched: 0, totalSkills: 0 };
+    }
+    if (!preferred && detected && configured !== detected) {
+      Config.skills.masterClassKey = detected;
+      Logger.log("SKILLS", "Auto-synced masterClassKey from profile icon", {
+        previous: configured || null,
+        next: detected
+      });
     }
     let totalSkills = 0;
     let matched = 0;
@@ -893,12 +920,9 @@
     Runtime.skills.slots = slots;
     Runtime.skills.scannedAt = Date.now();
     Runtime.skills.lastError = null;
-    // AI CHANGED: Auto-attach master DB conception after fresh scan (configured class only).
+    // AI CHANGED: Auto-attach master DB conception after fresh scan (class auto-detected from profile icon when available).
     if (Config.skills.autoApplyMasterOnScan !== false) {
-      const ck = typeof Config.skills.masterClassKey === "string" ? Config.skills.masterClassKey.trim() : "";
-      if (ck) {
-        applySkillMasterToSlots(ck);
-      }
+      applySkillMasterToSlots();
     }
     saveSkillsToCache(slots);
 

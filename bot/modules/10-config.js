@@ -283,6 +283,8 @@
       // AI CHANGED: Phase C1 -- open profile -> Stats tab -> read combat stats -> Battle footer.
       heroProfileAvatar: "app-profile-avatar",
       heroProfileAvatarFallback: ".profile-avatar app-profile-avatar",
+      // AI CHANGED: Current selected class icon (e.g. class="profile-class icon-src-archer") for auto skill-master class sync.
+      heroProfileClassIcon: "app-icon.profile-class",
       heroBattleFooterButton: ".footer-button .footer-button-text",
       // Icon on the Battle footer button (close profile / return to game).
       heroBattleFooterIcon: ".footer-button .icon-src-swords",

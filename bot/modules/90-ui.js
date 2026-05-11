@@ -667,18 +667,29 @@
       };
       Logger.log("TEST", "skills meta", skillsMeta);
 
-      // AI CHANGED: Master skill DB smoke — verify lookup exists and returns a known entry.
+      // AI CHANGED: Master skill DB smoke — auto-detect class from profile icon via applySkillMasterToSlots();
+      // fail the check when there are scanned skills but zero master matches.
       try {
         if (typeof getSkillMasterEntry === "function" && typeof applySkillMasterToSlots === "function") {
-          const ck = typeof Config.skills.masterClassKey === "string" ? Config.skills.masterClassKey.trim() : "";
-          if (ck) {
-            const applied = applySkillMasterToSlots(ck);
-            const sample = getSkillMasterEntry(ck, "Blade Dance");
-            const ok = !!(applied && applied.ok);
-            addCheck("skill_master_db", ok, { classKey: ck, applied: applied, sample: sample ? sample.name : null }, false);
-          } else {
-            addCheck("skill_master_db", true, { skipped: true, reason: "master_classKey_empty" }, false);
+          const applied = applySkillMasterToSlots();
+          const appliedClassKey = applied && applied.classKey ? applied.classKey : null;
+          let sample = null;
+          if (appliedClassKey) {
+            const firstSkill = Runtime.skills && Array.isArray(Runtime.skills.slots)
+              ? Runtime.skills.slots.find((s) => s && s.kind === "skill" && s.name)
+              : null;
+            if (firstSkill) {
+              sample = getSkillMasterEntry(appliedClassKey, firstSkill.name || "");
+            }
           }
+          const hasSkills = !!(applied && Number.isFinite(applied.totalSkills) && applied.totalSkills > 0);
+          const hasMatch = !!(applied && Number.isFinite(applied.matched) && applied.matched > 0);
+          const ok = !!(applied && applied.ok && (!hasSkills || hasMatch));
+          addCheck("skill_master_db", ok, {
+            classKey: appliedClassKey,
+            applied: applied,
+            sample: sample ? sample.name : null
+          }, false);
         } else {
           addCheck("skill_master_db", true, { skipped: true, reason: "no_master_module" }, false);
         }
