@@ -473,6 +473,8 @@
     let hadFarmOn = false;
     let bundleResult = null;
     const checks = [];
+    // AI CHANGED: Defined for the whole bundle so later logging never references an out-of-scope var.
+    let chargeCancelTest = null;
 
     function addCheck(id, ok, detail, critical, note) {
       const c = { id: id, ok: !!ok, critical: critical === true };
@@ -640,7 +642,6 @@
 
       if (fireChargeCancelIfHint) {
         // AI CHANGED: On-demand only (debugging a charge-cancel patch): run the old smoke probe/click when explicitly requested.
-        let chargeCancelTest = null;
         try {
           const hintVis = isChargingSkillCancelHintVisible();
           if (hintVis) {
