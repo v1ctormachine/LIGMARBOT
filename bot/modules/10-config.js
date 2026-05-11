@@ -80,6 +80,8 @@
       openerHorizonSimMs: 5000,
       openerHorizonMinImprovementFraction: 0.02,
       openerHorizonLog: false,
+      // AI CHANGED: Auto-tune diagnostics only (no behavior mutation) — planner emits threshold suggestions from runtime telemetry.
+      autoTuneHints: true,
       // AI CHANGED: When true, attack-skill rank order uses conception first (master/scanned role model) instead of parsed effect magnitudes.
       skillRankUseConception: true,
       // AI CHANGED: Conception-first opener gate — allow horizon tie-break only within this score distance from best conception score.

@@ -585,6 +585,51 @@
     };
   }
 
+  // AI CHANGED: Diagnostics-only threshold hint from live ranked runtime telemetry + latest horizon decision detail.
+  function plannerBuildRankedTuningHint() {
+    if (Config.planner.autoTuneHints === false) {
+      return { skipped: true, reason: "auto_tune_hints_off" };
+    }
+    const rt = getPlannerRuntimeTelemetry();
+    if (!rt || !rt.events) {
+      return { skipped: true, reason: "no_runtime_telemetry" };
+    }
+    const picks = Number.isFinite(rt.events.ranked_pick) ? rt.events.ranked_pick : 0;
+    const noProgress = Number.isFinite(rt.events.ranked_no_progress) ? rt.events.ranked_no_progress : 0;
+    const fallbacks = Number.isFinite(rt.events.basic_fallback_after_ranked) ? rt.events.basic_fallback_after_ranked : 0;
+    const total = picks + noProgress + fallbacks;
+    if (total < 5) {
+      return { skipped: true, reason: "insufficient_runtime_events", totalEvents: total };
+    }
+    const current = Number.isFinite(Config.planner.openerHorizonMinImprovementFraction)
+      ? Config.planner.openerHorizonMinImprovementFraction
+      : 0.02;
+    const fallbackRate = picks > 0 ? fallbacks / picks : 0;
+    const noProgressRate = picks > 0 ? noProgress / picks : 0;
+    const detail = Runtime.planner && Runtime.planner.lastOpeningPickDetail ? Runtime.planner.lastOpeningPickDetail : null;
+    const lastPct = detail && Number.isFinite(detail.bestSkillVsBaselinePct) ? detail.bestSkillVsBaselinePct : null;
+    const thresholdPct = detail && Number.isFinite(detail.thresholdPct) ? detail.thresholdPct : +(current * 100).toFixed(2);
+    let suggest = current;
+    let reason = "stable";
+    if (fallbackRate > 0.35 || noProgressRate > 0.35) {
+      suggest = Math.min(0.08, current + 0.005);
+      reason = "too_many_ranked_fallbacks";
+    } else if (lastPct !== null && lastPct > thresholdPct + 8 && fallbackRate < 0.15) {
+      suggest = Math.max(0.005, current - 0.003);
+      reason = "headroom_for_more_aggressive_skill_openers";
+    }
+    return {
+      ok: true,
+      reason: reason,
+      currentMinImprovementFraction: +current.toFixed(4),
+      suggestedMinImprovementFraction: +suggest.toFixed(4),
+      fallbackRate: +fallbackRate.toFixed(3),
+      noProgressRate: +noProgressRate.toFixed(3),
+      totalEvents: total,
+      lastBestSkillVsBaselinePct: lastPct
+    };
+  }
+
   // AI CHANGED: Pack A — read-only snapshot for console after a fight / when debugging openers.
   function getPlannerOpeningPickDiagnostics() {
     const pr = Runtime.planner;
@@ -597,7 +642,8 @@
       cacheSlotCount: Array.isArray(slots) ? slots.length : 0,
       attackSkillsRanked: rankAttackSkillsByHeuristic({}).order.length,
       lastOpenerHorizonSim: pr.lastOpenerHorizonSim || null,
-      openerRuntime: pr.openerRuntime || null
+      openerRuntime: pr.openerRuntime || null,
+      tuningHint: plannerBuildRankedTuningHint()
     };
   }
 

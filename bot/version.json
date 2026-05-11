@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.81",
-    "description":  "Ranked opener diagnostics: actionable horizon/basic reason metrics + TEST reason quality check.",
-    "builtAt":  "2026-05-11T11:29:43.3419982+03:00",
+    "version":  "0.3.82",
+    "description":  "Ranked opener tuning hints from runtime telemetry + TEST tuning check.",
+    "builtAt":  "2026-05-11T11:40:58.8975415+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.82",
+                        "description":  "Ranked opener tuning hints from runtime telemetry + TEST tuning check.",
+                        "date":  "2026-05-11T11:40:58.8975415+03:00"
+                    },
                     {
                         "version":  "0.3.81",
                         "description":  "Ranked opener diagnostics: actionable horizon/basic reason metrics + TEST reason quality check.",
@@ -247,11 +252,6 @@
                         "version":  "0.3.33",
                         "description":  "slice 16 strict skill cache fingerprint + boot retry; two-skill queue doc",
                         "date":  "2026-05-09T22:43:48.9178736+03:00"
-                    },
-                    {
-                        "version":  "0.3.32",
-                        "description":  "C4 slice 15 multi-ranked opener + ARCHITECTURE",
-                        "date":  "2026-05-09T22:21:23.4944175+03:00"
                     }
                 ]
 }

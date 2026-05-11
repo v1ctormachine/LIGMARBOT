@@ -17,6 +17,7 @@ Emergency **hotfix** (crash / wrong click): ship immediately, even if tiny.
 
 ## Done recently
 
+- **Ranked tuning hints (v0.3.82)** — diagnostics suggest horizon threshold tuning from runtime telemetry; TEST adds `Ranked tuning hint` soft check.
 - **Ranked reason quality (v0.3.81)** — opener diagnostics now include `% vs baseline`, threshold %, and filtered-out buckets; TEST adds `Ranked reason quality`.
 - **Ranked opener soak telemetry (v0.3.80)** — added runtime opener event counters + TEST `Ranked runtime` check; exposes `getPlannerRuntimeTelemetry()` / `resetPlannerRuntimeTelemetry()`.
 - **TEST honesty tweak (v0.3.79)** — `Conception path` now reports `skipped` when ranked opener is OFF, and only passes when conception mode is actually exercised.

@@ -430,6 +430,7 @@
       planner_conception_path: "Conception path",
       planner_ranked_runtime: "Ranked runtime",
       planner_ranked_reason_quality: "Ranked reason quality",
+      planner_ranked_tuning_hint: "Ranked tuning hint",
       planner_ranked_openers: "Ranked opener",
       calibration_observe: "Calibration"
     };
@@ -755,6 +756,15 @@
           };
         }
         addCheck("planner_ranked_reason_quality", qualityOk, qualityDetail, false);
+      }
+      // AI CHANGED: Tuning-hint check — soft diagnostics only; skipped when ranked is off or not enough runtime telemetry.
+      if (!rankedOn) {
+        addCheck("planner_ranked_tuning_hint", true, { skipped: true, reason: "ranked_combat_off" }, false);
+      } else {
+        const hint = diag && diag.tuningHint ? diag.tuningHint : null;
+        const hintSkipped = !!(hint && hint.skipped);
+        const hintOk = !!(hint && hint.ok);
+        addCheck("planner_ranked_tuning_hint", hintOk || hintSkipped, hint || { skipped: true, reason: "no_hint" }, false);
       }
 
       if (fireChargeCancelIfHint) {
