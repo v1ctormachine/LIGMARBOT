@@ -17,6 +17,7 @@ Emergency **hotfix** (crash / wrong click): ship immediately, even if tiny.
 
 ## Done recently
 
+- **Release calibration tier-2 + default ranked bursts (v0.3.107)** — `rankedBurstsPerFind` default `3`; second calibration retry path (`retryPasses`) when first seed still has no hp drops.
 - **Multi-mob channel rank deprioritization (v0.3.106)** — heuristic rank penalizes channel skills when `enemyCount` exceeds threshold; TEST reports `Multi-mob channel rank` diagnostics.
 - **Release calibration retry hardening (v0.3.105)** — if release calibration has `skipped_no_hp_drops`, TEST seeds one short combat attempt and retries calibration once with longer observe.
 - **Calibration observe attribution fix (v0.3.104)** — damage observe late-binds enemy key when target appears mid-window; release calibration observe 15s; TEST shows real merge error in `reason`.
@@ -70,8 +71,9 @@ Emergency **hotfix** (crash / wrong click): ship immediately, even if tiny.
 2. **Soak auto-farm** — Long run; **`TEST`** mid-session with farm ON (stop → run → restart).
 3. **Planner v2** — **openerHorizonSim** shipped (paper window). Next: optional **discrete tick sim** for GCD/channel fidelity, or **two-skill queue** / charge timing when UI signals exist.
 4. **Pack B (parallel):** **loot/settle + inventory** polish, or **neighbor scan** latency + richer **failure logging** (still no prefs-only micro-ships).
-5. **Future: optimal charge %** — Needs a visible charge meter or timed release in-game.
-6. **Future: two-skill queue** — Planner does not model B-while-A (`ARCHITECTURE.md`).
+5. **Potions in combat** — Use scanned HP/MP potion slots: survival thresholds, respect cooldowns, optional TEST line; not wired in `85-combat.js` yet.
+6. **Future: optimal charge %** — Needs a visible charge meter or timed release in-game.
+7. **Future: two-skill queue** — Planner does not model B-while-A (`ARCHITECTURE.md`).
 
 ## Parking lot
 

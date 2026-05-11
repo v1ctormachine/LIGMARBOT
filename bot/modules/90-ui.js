@@ -1176,13 +1176,14 @@
       } else {
         try {
           let calibrationRetried = false;
+          let calibrationRetryPasses = 0;
           let calibrationRetryError = null;
           calibration = await quickCalibrationSession(
             isReleaseProfile
               ? { observe: { totalMs: 15000 } }
               : {}
           );
-          // AI CHANGED: Release-profile strict calibration hardening — if observe saw no hp drops, seed one short combat attempt and retry once.
+          // AI CHANGED: Release strict calibration — tier-1 retry: find + one basic, then longer observe.
           if (
             isReleaseProfile &&
             strictCalibration &&
@@ -1191,6 +1192,7 @@
             calibration.enemyDbMerge.error === "skipped_no_hp_drops"
           ) {
             calibrationRetried = true;
+            calibrationRetryPasses = 1;
             try {
               await clickFindEnemyVerified();
               await sleep(450, { bypassStop: true });
@@ -1200,6 +1202,29 @@
             } catch (retryErr) {
               calibrationRetryError = String(retryErr && retryErr.message ? retryErr.message : retryErr);
               Logger.warn("TEST", "release calibration retry failed", retryErr);
+            }
+          }
+          // AI CHANGED: Tier-2 retry — still no hp drops after soak/off-combat gap: stronger combat seed + longest observe.
+          if (
+            isReleaseProfile &&
+            strictCalibration &&
+            calibration &&
+            calibration.enemyDbMerge &&
+            calibration.enemyDbMerge.error === "skipped_no_hp_drops"
+          ) {
+            calibrationRetryPasses = 2;
+            try {
+              await clickFindEnemyVerified();
+              await sleep(600, { bypassStop: true });
+              for (let bi = 0; bi < 3; bi += 1) {
+                clickBasicAttack();
+                await sleep(520, { bypassStop: true });
+              }
+              await sleep(900, { bypassStop: true });
+              calibration = await quickCalibrationSession({ observe: { totalMs: 28000 } });
+            } catch (retry2Err) {
+              calibrationRetryError = String(retry2Err && retry2Err.message ? retry2Err.message : retry2Err);
+              Logger.warn("TEST", "release calibration retry-2 failed", retry2Err);
             }
           }
           Logger.log("TEST", "quickCalibrationSession", calibration);
@@ -1220,12 +1245,14 @@
               lastFoughtKey: calibration ? calibration.lastFoughtKey : null,
               enemyDbMerge: calibration ? calibration.enemyDbMerge : null,
               retried: calibrationRetried,
+              retryPasses: calibrationRetryPasses,
               retryError: calibrationRetryError
             };
             addCheck("calibration_observe", !strictCalibration, detail, strictCalibration);
           } else {
             addCheck("calibration_observe", true, Object.assign({}, calibration || {}, {
               retried: calibrationRetried,
+              retryPasses: calibrationRetryPasses,
               retryError: calibrationRetryError
             }), strictCalibration);
           }

@@ -71,8 +71,8 @@
       skipOpenerWhenActionBarShowsCooldown: true,
       // AI CHANGED: Phase C4 slice 15 — after first ranked opener fails verify, try up to N more ranked picks (same burst, same beforeState baseline) before basic fallback.
       openerExtraRankedSkills: 1,
-      // AI CHANGED: Step 4 combat teaching — number of ranked opener bursts allowed per find cycle (1 = opener only).
-      rankedBurstsPerFind: 2,
+      // AI CHANGED: Step 4 combat teaching — ranked bursts per find before re-find (higher = more skills in multi-mob pulls).
+      rankedBurstsPerFind: 3,
       // AI CHANGED: Pack A — console visibility when ranked openers are ON but no slot is eligible (empty cache, MP gate, cooldown hints, etc.).
       logOpeningPickFailures: true,
       // AI CHANGED: Pack A — min ms between repeated [PLANNER] logs for the same failure class (still updates Runtime.planner every pick).

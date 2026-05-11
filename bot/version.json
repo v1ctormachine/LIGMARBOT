@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.106",
-    "description":  "Deprioritize channel skills in rank when multiple enemies; TEST multimob diagnostic.",
-    "builtAt":  "2026-05-11T17:39:35.1719436+03:00",
+    "version":  "0.3.107",
+    "description":  "Default 3 ranked bursts per find; release calibration tier-2 retry for hp drops.",
+    "builtAt":  "2026-05-11T17:53:04.9005252+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.107",
+                        "description":  "Default 3 ranked bursts per find; release calibration tier-2 retry for hp drops.",
+                        "date":  "2026-05-11T17:53:04.9005252+03:00"
+                    },
                     {
                         "version":  "0.3.106",
                         "description":  "Deprioritize channel skills in rank when multiple enemies; TEST multimob diagnostic.",
@@ -247,11 +252,6 @@
                         "version":  "0.3.58",
                         "description":  "slice 36: prefs helpers return objects + saveAll/loadAll",
                         "date":  "2026-05-10T18:53:19.8577481+03:00"
-                    },
-                    {
-                        "version":  "0.3.57",
-                        "description":  "slice 35: ligmarBot save/load combatUi prefs API",
-                        "date":  "2026-05-10T18:49:41.1522893+03:00"
                     }
                 ]
 }
