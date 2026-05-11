@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.77",
-    "description":  "Skill master class auto-sync from profile icon; stricter TEST skill-master check.",
-    "builtAt":  "2026-05-11T11:01:48.4778941+03:00",
+    "version":  "0.3.78",
+    "description":  "Planner v2: conception-first opener ranking with horizon tie-break and TEST conception check.",
+    "builtAt":  "2026-05-11T11:08:44.0890772+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.78",
+                        "description":  "Planner v2: conception-first opener ranking with horizon tie-break and TEST conception check.",
+                        "date":  "2026-05-11T11:08:44.0890772+03:00"
+                    },
                     {
                         "version":  "0.3.77",
                         "description":  "Skill master class auto-sync from profile icon; stricter TEST skill-master check.",
@@ -247,11 +252,6 @@
                         "version":  "0.3.29",
                         "description":  "Fix opener hold: cap below long-press; boot hint after class change",
                         "date":  "2026-05-09T22:00:00.0213521+03:00"
-                    },
-                    {
-                        "version":  "0.3.28",
-                        "description":  "C4 slice 12: hold-cast opener for channel/cast-time skills",
-                        "date":  "2026-05-09T21:53:23.7623763+03:00"
                     }
                 ]
 }

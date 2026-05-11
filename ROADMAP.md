@@ -17,6 +17,7 @@ Emergency **hotfix** (crash / wrong click): ship immediately, even if tiny.
 
 ## Done recently
 
+- **Planner v2 (v0.3.78)** — conception-first opener selection: rank by master/scanned conception, then horizon DPS tie-break inside conception gate; TEST adds `Conception path` check.
 - **Master DB class sync (v0.3.77)** — auto-detect class from profile icon and auto-sync `masterClassKey`; TEST now fails `Skill master DB` when matched=0 on non-empty skill bars.
 - **UI cleanup (v0.3.76)** — removed TEST description/help text block from panel; GUI now shows controls + test result + runtime status only.
 - **UI cleanup (v0.3.75)** — removed opener timing calibration block from panel; TEST line + phase/status only. Keep patch-specific checks only.

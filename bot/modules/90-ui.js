@@ -427,6 +427,7 @@
       skill_master_db: "Skill master DB",
       hero_stats: "Hero stats",
       planner_opener_horizon_preview: "HorizonSim",
+      planner_conception_path: "Conception path",
       planner_ranked_openers: "Ranked opener",
       calibration_observe: "Calibration"
     };
@@ -613,6 +614,23 @@
         Logger.warn("TEST", "getPlannerOpeningPickDiagnostics threw", err);
       }
       const rankedOn = !!Config.planner.useRankedAttackSkillsInCombat;
+      // AI CHANGED: Planner v2 check — opener path should run conception-first rank mode by default.
+      addCheck("planner_conception_path", !!(Config.planner.skillRankUseConception === true), {
+        skillRankUseConception: !!Config.planner.skillRankUseConception,
+        lastReason: diag && diag.lastReason ? diag.lastReason : null,
+        horizonRankMode:
+          diag &&
+          diag.lastOpenerHorizonSim &&
+          diag.lastOpenerHorizonSim.rankMode
+            ? diag.lastOpenerHorizonSim.rankMode
+            : null,
+        conceptionGate:
+          diag &&
+          diag.lastOpenerHorizonSim &&
+          diag.lastOpenerHorizonSim.conceptionGate
+            ? diag.lastOpenerHorizonSim.conceptionGate
+            : null
+      }, false);
       // AI CHANGED: ranked builds — TEST exercises openerHorizonSim preview (ship rule: new testable behavior via TEST).
       let horizonPreview = null;
       if (rankedOn) {

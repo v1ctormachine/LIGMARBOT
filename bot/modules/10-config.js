@@ -80,8 +80,10 @@
       openerHorizonSimMs: 5000,
       openerHorizonMinImprovementFraction: 0.02,
       openerHorizonLog: false,
-      // AI CHANGED: When true, attack-skill rank order uses inferSkillConception() (level-invariant roles) instead of parsed effect magnitudes.
-      skillRankUseConception: false
+      // AI CHANGED: When true, attack-skill rank order uses conception first (master/scanned role model) instead of parsed effect magnitudes.
+      skillRankUseConception: true,
+      // AI CHANGED: Conception-first opener gate — allow horizon tie-break only within this score distance from best conception score.
+      conceptionOpenerGateDelta: 1.5
     },
     // AI CHANGED: Added runtime logging flags so noisy snapshot logs can be disabled quickly.
     logging: {

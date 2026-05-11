@@ -209,6 +209,25 @@
     return { score: score, parts: parts };
   }
 
+  // AI CHANGED: Prefer canonical master conception when available; fallback to scanned conception.
+  function plannerResolveSlotConception(slotRec) {
+    if (!slotRec || typeof slotRec !== "object") {
+      return null;
+    }
+    if (slotRec.master && slotRec.master.conception && typeof slotRec.master.conception === "object") {
+      return slotRec.master.conception;
+    }
+    if (slotRec.conception && typeof slotRec.conception === "object") {
+      return slotRec.conception;
+    }
+    if (typeof inferSkillConception === "function") {
+      const conc = inferSkillConception(slotRec);
+      slotRec.conception = conc;
+      return conc;
+    }
+    return null;
+  }
+
   // AI CHANGED: Phase C4 slice 4 -- rough effect weights for ranking (console-only; no live CDs).
   function plannerSkillEffectHeuristicScore(effects) {
     if (!Array.isArray(effects)) {
@@ -269,11 +288,7 @@
       }
       let eff;
       if (useConcRank) {
-        let conc = s.conception;
-        if (!conc && typeof inferSkillConception === "function") {
-          conc = inferSkillConception(s);
-          s.conception = conc;
-        }
+        const conc = plannerResolveSlotConception(s);
         eff = plannerConceptionHeuristicScore(conc);
       } else {
         eff = plannerSkillEffectHeuristicScore(s.effects);
@@ -717,8 +732,63 @@
       let bestIdx = null;
       let bestDmg = baselineTotal;
       const scored = [];
-      for (let c = 0; c < candidates.length; c += 1) {
-        const cand = candidates[c];
+      // AI CHANGED: Conception-first opener — gate to top conception-priority candidates, then use horizon paper DPS as tie-breaker.
+      let horizonCandidates = candidates;
+      let conceptionGate = null;
+      if (rank.rankMode === "conception") {
+        const bySlot = new Map();
+        if (rank && Array.isArray(rank.ranked)) {
+          for (let ri = 0; ri < rank.ranked.length; ri += 1) {
+            const rr = rank.ranked[ri];
+            if (!rr || typeof rr.slot !== "number") {
+              continue;
+            }
+            bySlot.set(rr.slot, rr);
+          }
+        }
+        const scoredConc = [];
+        for (let cc = 0; cc < candidates.length; cc += 1) {
+          const cand = candidates[cc];
+          const rr = bySlot.get(cand.idx);
+          if (!rr || !Number.isFinite(rr.heuristicScore)) {
+            continue;
+          }
+          scoredConc.push({ idx: cand.idx, score: rr.heuristicScore, rank: rr });
+        }
+        if (scoredConc.length > 1) {
+          scoredConc.sort(function (a, b) { return b.score - a.score; });
+          const bestConcScore = scoredConc[0].score;
+          const conceptionGateDeltaRaw = Config.planner.conceptionOpenerGateDelta;
+          const conceptionGateDelta =
+            Number.isFinite(conceptionGateDeltaRaw) && conceptionGateDeltaRaw >= 0
+              ? conceptionGateDeltaRaw
+              : 1.5;
+          const allowed = new Set();
+          for (let ci = 0; ci < scoredConc.length; ci += 1) {
+            const row = scoredConc[ci];
+            if (bestConcScore - row.score <= conceptionGateDelta) {
+              allowed.add(row.idx);
+            }
+          }
+          const gated = [];
+          for (let gc = 0; gc < candidates.length; gc += 1) {
+            if (allowed.has(candidates[gc].idx)) {
+              gated.push(candidates[gc]);
+            }
+          }
+          if (gated.length > 0) {
+            horizonCandidates = gated;
+            conceptionGate = {
+              bestScore: +bestConcScore.toFixed(3),
+              delta: conceptionGateDelta,
+              allowedSlots: gated.map(function (g) { return g.idx; }),
+              ranked: scoredConc.map(function (r) { return { slot: r.idx, score: +r.score.toFixed(3) }; })
+            };
+          }
+        }
+      }
+      for (let c = 0; c < horizonCandidates.length; c += 1) {
+        const cand = horizonCandidates[c];
         const d = plannerOpenerHorizonSkillPlusBasics(cand.record, horizonSec, key);
         scored.push({ slot: cand.idx, name: cand.record.name || "", damage: +d.toFixed(2) });
         if (d > bestDmg) {
@@ -731,7 +801,9 @@
         baselineDamage: +baselineTotal.toFixed(2),
         bestDamage: +bestDmg.toFixed(2),
         bestSlot: bestIdx,
-        scored: scored
+        scored: scored,
+        rankMode: rank.rankMode || null,
+        conceptionGate: conceptionGate
       };
       if (Config.planner.openerHorizonLog) {
         Logger.log("PLANNER", "openerHorizonSim", pr.lastOpenerHorizonSim);
