@@ -550,6 +550,10 @@
     const rankedSoakMaxMs = Number.isFinite(opts.rankedSoakMaxMs)
       ? opts.rankedSoakMaxMs
       : (isReleaseProfile ? 360000 : 45000);
+    // AI CHANGED: Planner-tuning reliability — require a minimum runtime event budget so tuning hints are less often skipped.
+    const rankedSoakMinEvents = Number.isFinite(opts.rankedSoakMinEvents)
+      ? opts.rankedSoakMinEvents
+      : (isReleaseProfile ? 16 : 6);
     let hadFarmOn = false;
     let bundleResult = null;
     const checks = [];
@@ -623,7 +627,8 @@
           strictCalibration: strictCalibration,
           resumeAutoFarmAfterTest: resumeAfter,
           rankedSoakMinMs: rankedSoakMinMs,
-          rankedSoakMaxMs: rankedSoakMaxMs
+          rankedSoakMaxMs: rankedSoakMaxMs,
+          rankedSoakMinEvents: rankedSoakMinEvents
         },
         false
       );
@@ -739,7 +744,7 @@
             soakProgress = progress;
             soakTotalEvents = totalEvents;
             soakEvents = ev || null;
-            if (Date.now() - soakStartAt >= rankedSoakMinMs && totalEvents > 0) {
+            if (Date.now() - soakStartAt >= rankedSoakMinMs && totalEvents >= rankedSoakMinEvents) {
               break;
             }
             // AI CHANGED: Quick-profile safety hardening — extend soak once when no ranked runtime activity appears in the initial window.
@@ -757,7 +762,7 @@
               });
             }
           }
-          if (Date.now() - soakStartAt >= soakDeadlineMs && soakTotalEvents <= 0) {
+          if (Date.now() - soakStartAt >= soakDeadlineMs && soakTotalEvents < rankedSoakMinEvents) {
             soakTimedOut = true;
           }
         } catch (err) {
@@ -786,10 +791,10 @@
           soakStopped = !Runtime.autoFarm.running;
         }
         const soakStopAccepted = soakStopped || (soakStopIssued && Runtime.autoFarm.stopRequested);
-        const soakActivityOk = soakTotalEvents > 0;
+        const soakActivityOk = soakTotalEvents >= rankedSoakMinEvents;
         let soakReason = "";
         if (soakTimedOut) {
-          soakReason = "no_ranked_activity_before_timeout";
+          soakReason = soakTotalEvents > 0 ? "insufficient_ranked_events_before_timeout" : "no_ranked_activity_before_timeout";
         } else if (!soakActivityOk) {
           soakReason = "no_ranked_activity";
         } else if (soakError) {
@@ -809,6 +814,8 @@
             rankedPicks: soakPicks,
             rankedProgressEvents: soakProgress,
             totalRankedEvents: soakTotalEvents,
+            targetMinEvents: rankedSoakMinEvents,
+            minEventsReached: soakTotalEvents >= rankedSoakMinEvents,
             attemptCount: soakAttemptCount,
             retryUsed: soakRetryUsed,
             retryReason: soakRetryReason || null,
