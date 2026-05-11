@@ -228,10 +228,23 @@
       if (Runtime.autoFarm.stopRequested) {
         return false;
       }
+      // AI CHANGED: Resume damage immediately after cancel — don't stand idle for full attackProgressTimeoutMs (hero takes free hits).
+      clickBasicAttack();
+      if (settleRanked > 0) {
+        await sleep(settleRanked);
+      }
+      if (Runtime.autoFarm.stopRequested) {
+        return false;
+      }
+      const postCancelTimeoutRaw = Config.combat.attackProgressAfterChargeCancelTimeoutMs;
+      const postCancelTimeout =
+        Number.isFinite(postCancelTimeoutRaw) && postCancelTimeoutRaw > 0
+          ? Math.min(postCancelTimeoutRaw, fullTimeoutMs)
+          : Math.min(3200, fullTimeoutMs);
       progressed = await waitForCondition(
         "attack progress after charge cancel ui",
         hasCombatProgressSince(beforeState),
-        { timeoutMs: fullTimeoutMs, pollMs: pollMs }
+        { timeoutMs: postCancelTimeout, pollMs: pollMs }
       );
       if (progressed) {
         plannerRecordOpenerRuntimeEvent("ranked_progress", { slot: open.skillSlot, stage: "after_charge_cancel" });

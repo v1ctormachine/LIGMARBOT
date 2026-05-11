@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.107",
-    "description":  "Default 3 ranked bursts per find; release calibration tier-2 retry for hp drops.",
-    "builtAt":  "2026-05-11T17:53:04.9005252+03:00",
+    "version":  "0.3.108",
+    "description":  "After charge cancel: immediate basic + shorter progress wait to avoid idle.",
+    "builtAt":  "2026-05-11T18:04:28.8530160+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.108",
+                        "description":  "After charge cancel: immediate basic + shorter progress wait to avoid idle.",
+                        "date":  "2026-05-11T18:04:28.8530160+03:00"
+                    },
                     {
                         "version":  "0.3.107",
                         "description":  "Default 3 ranked bursts per find; release calibration tier-2 retry for hp drops.",
@@ -247,11 +252,6 @@
                         "version":  "0.3.59",
                         "description":  "headline: ranked opener logs when skill cache empty or all skills gated",
                         "date":  "2026-05-10T18:57:39.5289933+03:00"
-                    },
-                    {
-                        "version":  "0.3.58",
-                        "description":  "slice 36: prefs helpers return objects + saveAll/loadAll",
-                        "date":  "2026-05-10T18:53:19.8577481+03:00"
                     }
                 ]
 }

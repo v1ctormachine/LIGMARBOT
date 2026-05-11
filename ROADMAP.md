@@ -17,6 +17,7 @@ Emergency **hotfix** (crash / wrong click): ship immediately, even if tiny.
 
 ## Done recently
 
+- **Post–charge-cancel idle fix (v0.3.108)** — immediate basic after charge cancel + shorter verify timeout (`attackProgressAfterChargeCancelTimeoutMs`).
 - **Release calibration tier-2 + default ranked bursts (v0.3.107)** — `rankedBurstsPerFind` default `3`; second calibration retry path (`retryPasses`) when first seed still has no hp drops.
 - **Multi-mob channel rank deprioritization (v0.3.106)** — heuristic rank penalizes channel skills when `enemyCount` exceeds threshold; TEST reports `Multi-mob channel rank` diagnostics.
 - **Release calibration retry hardening (v0.3.105)** — if release calibration has `skipped_no_hp_drops`, TEST seeds one short combat attempt and retries calibration once with longer observe.

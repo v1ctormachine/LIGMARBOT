@@ -31,6 +31,8 @@
       attackTickMs: 350,
       // AI CHANGED: slice 8b — attackUntilProgress waits for enemy kill OR target HP drop (same max).
       attackProgressTimeoutMs: 6500,
+      // AI CHANGED: After charge-cancel UI — shorter verify + immediate basic (see 85-combat attackUntilProgress); avoids long AFK while mob still hits.
+      attackProgressAfterChargeCancelTimeoutMs: 3200,
       // AI CHANGED: slice 23 — first ranked opener only: shorter wait before alternate/basic (avoids ~6.5s idle when top-ranked skill whiffs or is slow to register). Alternate openers still use attackProgressTimeoutMs.
       rankedOpenerFirstProgressTimeoutMs: 4200,
       // AI CHANGED: slice 23 — brief pause after bar skill click before polling HP/count (reduces one-frame false “no progress”).
