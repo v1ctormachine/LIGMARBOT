@@ -473,6 +473,7 @@
       planner_class_profile: "Class profile",
       planner_enemy_adaptation: "Enemy adaptation",
       planner_rotation_policy: "Rotation policy",
+      planner_multimob_channel: "Multi-mob channel rank",
       auto_farm_resume_policy: "Farm resume policy",
       auto_farm_reliability: "Combat reliability",
       auto_farm_session_summary: "Auto-farm session",
@@ -873,6 +874,14 @@
         "planner_rotation_policy",
         !!(diag && Number.isFinite(diag.rankedBurstsPerFindEffective) && diag.rankedBurstsPerFindEffective >= 1),
         diag ? { rankedBurstsPerFindEffective: diag.rankedBurstsPerFindEffective } : { error: "no_diag" },
+        false
+      );
+      // AI CHANGED: Combat teaching — diagnostics for multi-mob channel deprioritization in heuristic rank.
+      const mmRank = diag && diag.multiMobChannelRank ? diag.multiMobChannelRank : null;
+      addCheck(
+        "planner_multimob_channel",
+        !!(mmRank && typeof mmRank.enemyCount === "number"),
+        mmRank || { error: "no_multimob_rank" },
         false
       );
       const rankedOn = !!Config.planner.useRankedAttackSkillsInCombat;

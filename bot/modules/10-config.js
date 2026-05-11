@@ -93,6 +93,9 @@
       skillRankUseConception: true,
       // AI CHANGED: Conception-first opener gate — allow horizon tie-break only within this score distance from best conception score.
       conceptionOpenerGateDelta: 1.5,
+      // AI CHANGED: Multi-mob combat teaching — when live enemyCount > threshold, deprioritize channel skills in heuristic rank (pulls with 2+ mobs favor faster/safer openers).
+      conceptionMultiMobEnemyCountThreshold: 1,
+      conceptionChannelMultiMobPenalty: 28,
       // AI CHANGED: Step 2 combat teaching — per-class planner profiles (auto-applied from profile icon class).
       classProfiles: {
         default: {

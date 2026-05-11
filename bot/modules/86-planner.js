@@ -270,6 +270,9 @@
     applyNum("openerHorizonMinImprovementFraction", 0);
     applyNum("openerExtraRankedSkills", 0);
     applyNum("conceptionOpenerGateDelta", 0);
+    // AI CHANGED: Class profiles may tune multi-mob channel deprioritization.
+    applyNum("conceptionMultiMobEnemyCountThreshold", 0);
+    applyNum("conceptionChannelMultiMobPenalty", 0);
     const out = {
       ok: true,
       classKey: classKey,
@@ -332,6 +335,16 @@
 
     const slots = Runtime.skills.slots || [];
     const useConcRank = Config.planner.skillRankUseConception === true;
+    const stRank = readBasicState();
+    const enemyCountLive =
+      stRank && stRank.combat && typeof stRank.combat.enemyCount === "number"
+        ? stRank.combat.enemyCount
+        : 0;
+    const mobThreshRaw = Config.planner.conceptionMultiMobEnemyCountThreshold;
+    const mobThresh = Number.isFinite(mobThreshRaw) && mobThreshRaw >= 0 ? mobThreshRaw : 1;
+    const chanPenRaw = Config.planner.conceptionChannelMultiMobPenalty;
+    const chanPen = Number.isFinite(chanPenRaw) && chanPenRaw >= 0 ? chanPenRaw : 28;
+    const multiMobChannelActive = enemyCountLive > mobThresh;
     const ranked = [];
     for (let i = 0; i < slots.length; i += 1) {
       const s = slots[i];
@@ -339,9 +352,10 @@
         continue;
       }
       let eff;
+      let concResolved = null;
       if (useConcRank) {
-        const conc = plannerResolveSlotConception(s);
-        eff = plannerConceptionHeuristicScore(conc);
+        concResolved = plannerResolveSlotConception(s);
+        eff = plannerConceptionHeuristicScore(concResolved);
       } else {
         eff = plannerSkillEffectHeuristicScore(s.effects);
       }
@@ -352,6 +366,15 @@
       score -= cd * 0.15;
       score -= mana * 0.02;
       score -= cast * 3;
+      // AI CHANGED: Multi-mob — channel skills are easy to interrupt or wasteful when other mobs are hitting; rank them lower unless solo context.
+      if (multiMobChannelActive) {
+        const isChannel = useConcRank
+          ? !!(concResolved && concResolved.flags && concResolved.flags.channel)
+          : Array.isArray(s.effects) && s.effects.some((x) => x && x.type === "channel_gear");
+        if (isChannel) {
+          score -= chanPen;
+        }
+      }
       const basicProc =
         Array.isArray(s.effects) && s.effects.some((x) => x && x.type === "basic_proc");
       if (mobFactor && mobFactor > 0 && basicProc) {
@@ -375,6 +398,12 @@
       enemyKeyUsed: enemyKey,
       mobFactorApplied: mobFactor,
       rankMode: useConcRank ? "conception" : "effect_magnitude",
+      multiMobChannel: {
+        enemyCount: enemyCountLive,
+        threshold: mobThresh,
+        penalty: chanPen,
+        active: multiMobChannelActive
+      },
       note:
         "Heuristic rank only — weights are guesses; opener picks also skip slots when isActionBarSlotShowingCooldown(slot) is true. Pass enemyKey to nudge basic_proc skills using calibration ratio. Set Config.planner.skillRankUseConception=true for level-invariant role-based rank (openerHorizonSim still uses magnitudes unless disabled)."
     };
@@ -733,6 +762,7 @@
     const classProfile = plannerApplyClassProfile();
     const pr = Runtime.planner;
     const slots = Runtime.skills.slots || [];
+    const rankSnap = rankAttackSkillsByHeuristic({});
     const rankedBurstsPerFindEffective =
       Number.isFinite(Config.planner.rankedBurstsPerFind) && Config.planner.rankedBurstsPerFind >= 0
         ? Math.floor(Config.planner.rankedBurstsPerFind)
@@ -743,7 +773,8 @@
       lastDetail: pr.lastOpeningPickDetail,
       lastAt: pr.lastOpeningPickAt,
       cacheSlotCount: Array.isArray(slots) ? slots.length : 0,
-      attackSkillsRanked: rankAttackSkillsByHeuristic({}).order.length,
+      attackSkillsRanked: rankSnap.order.length,
+      multiMobChannelRank: rankSnap.multiMobChannel || null,
       lastOpenerHorizonSim: pr.lastOpenerHorizonSim || null,
       openerRuntime: pr.openerRuntime || null,
       tuningHint: plannerBuildRankedTuningHint(),

@@ -17,6 +17,7 @@ Emergency **hotfix** (crash / wrong click): ship immediately, even if tiny.
 
 ## Done recently
 
+- **Multi-mob channel rank deprioritization (v0.3.106)** — heuristic rank penalizes channel skills when `enemyCount` exceeds threshold; TEST reports `Multi-mob channel rank` diagnostics.
 - **Release calibration retry hardening (v0.3.105)** — if release calibration has `skipped_no_hp_drops`, TEST seeds one short combat attempt and retries calibration once with longer observe.
 - **Calibration observe attribution fix (v0.3.104)** — damage observe late-binds enemy key when target appears mid-window; release calibration observe 15s; TEST shows real merge error in `reason`.
 - **Canonical skill DB path + release TEST button (v0.3.103)** — `bot/data/ligmar_hero_skills_db.json` is the canonical embedded master export (`build.ps1` fallback to legacy root path). Panel **`TEST (release)`** runs `testProfile: "release"` without DevTools.
