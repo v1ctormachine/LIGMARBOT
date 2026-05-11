@@ -213,6 +213,25 @@
     return `${hr}h ${restMin}m`;
   }
 
+  // AI CHANGED: Format auto-farm ON duration for GUI footer (live while running).
+  function formatOnDuration(ms) {
+    if (!Number.isFinite(ms) || ms < 0) {
+      return "0s";
+    }
+    const totalSec = Math.floor(ms / 1000);
+    const sec = totalSec % 60;
+    const totalMin = Math.floor(totalSec / 60);
+    const min = totalMin % 60;
+    const hr = Math.floor(totalMin / 60);
+    if (hr > 0) {
+      return `${hr}h ${min}m ${sec}s`;
+    }
+    if (min > 0) {
+      return `${min}m ${sec}s`;
+    }
+    return `${sec}s`;
+  }
+
   // AI CHANGED: Boot-only + console — apply saved planner flags; returns a result object (slice 36).
   function plannerPrefsSnapshot() {
     return {
@@ -410,10 +429,12 @@
     const coordsText = Runtime.exploration.lastKnownCoords
       ? `[${Runtime.exploration.lastKnownCoords.x};${Runtime.exploration.lastKnownCoords.y}]`
       : "unknown";
+    const onMs = auto.running && Number.isFinite(auto.startedAt) ? (Date.now() - auto.startedAt) : 0;
+    const onText = formatOnDuration(onMs);
     const lines = [
       `HP ${hpPct !== null ? hpPct + "%" : "?"} · MP ${mpPct !== null ? mpPct + "%" : "?"} · Ping ${state.network.pingMs !== null ? state.network.pingMs + "ms" : "?"}`,
       `Enemies: ${enemyText} · Coords: ${coordsText}`,
-      `Cycles: ${auto.cyclesCompleted} · Failures: ${auto.consecutiveFailures}`
+      `Cycles: ${auto.cyclesCompleted} · Failures: ${auto.consecutiveFailures} · ON: ${onText}`
     ];
     Runtime.ui.statusNode.textContent = lines.join("\n");
   }

@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.82",
-    "description":  "Ranked opener tuning hints from runtime telemetry + TEST tuning check.",
-    "builtAt":  "2026-05-11T11:40:58.8975415+03:00",
+    "version":  "0.3.83",
+    "description":  "GUI: add live ON duration timer in control panel footer.",
+    "builtAt":  "2026-05-11T11:46:36.8615309+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.83",
+                        "description":  "GUI: add live ON duration timer in control panel footer.",
+                        "date":  "2026-05-11T11:46:36.8615309+03:00"
+                    },
                     {
                         "version":  "0.3.82",
                         "description":  "Ranked opener tuning hints from runtime telemetry + TEST tuning check.",
@@ -247,11 +252,6 @@
                         "version":  "0.3.34",
                         "description":  "slice 17 skip long-hold openers that short-click no-op",
                         "date":  "2026-05-09T22:52:01.9211537+03:00"
-                    },
-                    {
-                        "version":  "0.3.33",
-                        "description":  "slice 16 strict skill cache fingerprint + boot retry; two-skill queue doc",
-                        "date":  "2026-05-09T22:43:48.9178736+03:00"
                     }
                 ]
 }
