@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.102",
-    "description":  "Use full ranked runtime telemetry for tuning-hint event sufficiency.",
-    "builtAt":  "2026-05-11T13:40:38.1274498+03:00",
+    "version":  "0.3.103",
+    "description":  "Canonical skill DB under bot/data; panel TEST release for long-profile validation.",
+    "builtAt":  "2026-05-11T16:05:14.3978722+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.103",
+                        "description":  "Canonical skill DB under bot/data; panel TEST release for long-profile validation.",
+                        "date":  "2026-05-11T16:05:14.3978722+03:00"
+                    },
                     {
                         "version":  "0.3.102",
                         "description":  "Use full ranked runtime telemetry for tuning-hint event sufficiency.",
@@ -247,11 +252,6 @@
                         "version":  "0.3.54",
                         "description":  "slice 32: default ranked opener grace 200ms",
                         "date":  "2026-05-10T17:28:55.3144209+03:00"
-                    },
-                    {
-                        "version":  "0.3.53",
-                        "description":  "slice 31: TEST restarts auto-farm if it was running",
-                        "date":  "2026-05-10T17:19:58.7955044+03:00"
                     }
                 ]
 }

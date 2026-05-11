@@ -1420,6 +1420,47 @@
     testButton.style.marginBottom = "4px";
     panel.appendChild(testButton);
 
+    // AI CHANGED: Release-profile TEST — long soak + strict calibration without console (`testProfile: "release"`).
+    const testReleaseButton = makeButton(`TEST release (${BotVersion.version})`, "#5a6bbf", "#6f7ad4", () => {
+      if (testReleaseButton.disabled) {
+        return;
+      }
+      testReleaseButton.disabled = true;
+      testReleaseButton.style.opacity = "0.45";
+      testReleaseButton.style.cursor = "wait";
+      Promise.resolve(runUiTestBundle({ testProfile: "release" }))
+        .then(function (res) {
+          Logger.log("TEST", "finished (release profile)", res);
+          if (testResultLine) {
+            testResultLine.textContent =
+              (res && res.testReportLine) ? res.testReportLine : (res && res.ok ? "Test result: OK (no report line)" : "Test result: failed");
+            testResultLine.style.color = res && res.ok ? "#7dffb3" : "#ff6b6b";
+            testResultLine.style.fontSize = "9px";
+          }
+        })
+        .catch(function (err) {
+          const errLine = "Test result: bundle error — " + String(err && err.message ? err.message : err);
+          Logger.log("TEST", errLine);
+          Logger.warn("TEST", "bundle rejected (release profile)", err);
+          if (testResultLine) {
+            testResultLine.textContent = errLine;
+            testResultLine.style.color = "#ff6b6b";
+            testResultLine.style.fontSize = "9px";
+          }
+        })
+        .finally(function () {
+          testReleaseButton.disabled = false;
+          testReleaseButton.style.opacity = "1";
+          testReleaseButton.style.cursor = "pointer";
+          updateControlPanelStatus();
+        });
+    });
+    testReleaseButton.style.flex = "none";
+    testReleaseButton.style.width = "100%";
+    testReleaseButton.style.marginBottom = "4px";
+    testReleaseButton.style.fontSize = "11px";
+    panel.appendChild(testReleaseButton);
+
     // AI CHANGED: last TEST pass/fail line — filled when runUiTestBundle resolves (no manual console steps).
     const testResultLine = document.createElement("div");
     testResultLine.textContent = "Test result: — (see console [TEST] after run)";

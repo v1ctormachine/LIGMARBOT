@@ -17,6 +17,7 @@ Emergency **hotfix** (crash / wrong click): ship immediately, even if tiny.
 
 ## Done recently
 
+- **Canonical skill DB path + release TEST button (v0.3.103)** — `bot/data/ligmar_hero_skills_db.json` is the canonical embedded master export (`build.ps1` fallback to legacy root path). Panel **`TEST (release)`** runs `testProfile: "release"` without DevTools.
 - **Tuning-hint telemetry basis fix (v0.3.102)** — tuning hint now uses full ranked runtime event totals, reducing false `insufficient_runtime_events` skips after successful ranked soak.
 - **Soak telemetry budget gate (v0.3.101)** — ranked soak now targets a minimum runtime event budget before pass, improving tuning-hint availability and making timeout reason explicit when budget is not reached.
 - **Mid-session soak continuity (v0.3.100)** — release TEST now defaults to resume auto-farm after bundle when farm was ON; added `Farm resume policy` check for explicit visibility.
@@ -62,7 +63,7 @@ Emergency **hotfix** (crash / wrong click): ship immediately, even if tiny.
 
 ## Next (pick order) — milestone-sized
 
-1. **Permanent skill DB (shared)** — **Collector:** **`bot/tools/skill-master-collector-console.js`**. **Runtime:** slots carry **`conception`** (roles / usage — level-invariant); master JSON **Requirements** are bot-irrelevant. **Next:** commit canonical **`bot/data/*.json`**, optional merge by **`normalizeSkillName()`**, planner rules keyed on **conception** (not DPS alone). See **`ARCHITECTURE.md`**.
+1. **Permanent skill DB (shared)** — **Collector:** **`bot/tools/skill-master-collector-console.js`**. **Runtime:** slots carry **`conception`** (roles / usage — level-invariant); master JSON **Requirements** are bot-irrelevant. **Canonical repo file:** **`bot/data/ligmar_hero_skills_db.json`** (embedded at build). **Next:** optional merge by **`normalizeSkillName()`**, planner rules keyed on **conception** (not DPS alone). See **`ARCHITECTURE.md`**.
 2. **Soak auto-farm** — Long run; **`TEST`** mid-session with farm ON (stop → run → restart).
 3. **Planner v2** — **openerHorizonSim** shipped (paper window). Next: optional **discrete tick sim** for GCD/channel fidelity, or **two-skill queue** / charge timing when UI signals exist.
 4. **Pack B (parallel):** **loot/settle + inventory** polish, or **neighbor scan** latency + richer **failure logging** (still no prefs-only micro-ships).

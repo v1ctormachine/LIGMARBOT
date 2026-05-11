@@ -102,10 +102,13 @@ $versionModuleContent = @"
 [System.IO.File]::WriteAllText($versionModuleFile, $versionModuleContent + "`n", $utf8NoBom)
 
 # --- Generate embedded skill master DB module (from tree export JSON) --------
-# AI CHANGED: Permanent skill DB source: bot/ligmar_hero_skills_db.json (human-curated / exported).
+# AI CHANGED: Canonical skill DB: bot/data/ligmar_hero_skills_db.json (fallback: bot/ligmar_hero_skills_db.json).
 # The bot ignores Requirements entirely; this generator strips nothing here (file is already cleaned),
 # and emits a runtime lookup keyed by classKey + normalizeSkillName (level-invariant).
-$skillDbFile = Join-Path $here "ligmar_hero_skills_db.json"
+$skillDbFile = Join-Path $here "data/ligmar_hero_skills_db.json"
+if (-not (Test-Path $skillDbFile)) {
+    $skillDbFile = Join-Path $here "ligmar_hero_skills_db.json"
+}
 $skillMasterModuleFile = Join-Path $modulesDir "87-skill-master.generated.js"
 if (Test-Path $skillDbFile) {
     $skillDbRaw = [System.IO.File]::ReadAllText($skillDbFile, $utf8NoBom)
