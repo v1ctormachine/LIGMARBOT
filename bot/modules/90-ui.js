@@ -470,6 +470,7 @@
       planner_ranked_preflight: "Ranked preflight",
       planner_ranked_soak: "Ranked soak",
       planner_class_profile: "Class profile",
+      planner_enemy_adaptation: "Enemy adaptation",
       auto_farm_session_summary: "Auto-farm session",
       planner_ranked_openers: "Ranked opener",
       calibration_observe: "Calibration"
@@ -752,6 +753,13 @@
         "planner_class_profile",
         !!(classProfile && classProfile.ok && classProfile.profileKey),
         classProfile || { error: "no_class_profile" },
+        false
+      );
+      const enemyAdaptive = diag && diag.enemyAdaptive ? diag.enemyAdaptive : null;
+      addCheck(
+        "planner_enemy_adaptation",
+        !!(enemyAdaptive && Number.isFinite(enemyAdaptive.minFrac)),
+        enemyAdaptive || { error: "no_enemy_adaptation" },
         false
       );
       const rankedOn = !!Config.planner.useRankedAttackSkillsInCombat;

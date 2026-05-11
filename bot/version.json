@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.90",
-    "description":  "Per-class planner profiles auto-applied from class icon; TEST class-profile check.",
-    "builtAt":  "2026-05-11T12:36:26.8778275+03:00",
+    "version":  "0.3.91",
+    "description":  "Enemy-aware opener threshold adaptation + TEST enemy adaptation check.",
+    "builtAt":  "2026-05-11T12:41:31.7608353+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.91",
+                        "description":  "Enemy-aware opener threshold adaptation + TEST enemy adaptation check.",
+                        "date":  "2026-05-11T12:41:31.7608353+03:00"
+                    },
                     {
                         "version":  "0.3.90",
                         "description":  "Per-class planner profiles auto-applied from class icon; TEST class-profile check.",
@@ -247,11 +252,6 @@
                         "version":  "0.3.42",
                         "description":  "slice 23 shorter first ranked opener progress wait + post-click settle",
                         "date":  "2026-05-10T12:19:33.6352747+03:00"
-                    },
-                    {
-                        "version":  "0.3.41",
-                        "description":  "slice 22 remove combat bar hold-cast tap-only opener",
-                        "date":  "2026-05-10T12:04:41.8132854+03:00"
                     }
                 ]
 }

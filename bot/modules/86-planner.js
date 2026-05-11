@@ -588,6 +588,48 @@
     return skillPaper + basicDps * timeLeft;
   }
 
+  // AI CHANGED: Enemy-aware opener threshold tuning from calibration ratio.
+  function plannerComputeEnemyAdaptiveMinFrac(baseMinFrac, enemyKey) {
+    const out = {
+      minFrac: baseMinFrac,
+      baseMinFrac: baseMinFrac,
+      applied: false,
+      reason: "disabled_or_no_enemy_key",
+      ratioObservedVsCurrentPaper: null
+    };
+    if (Config.planner.enemyAdaptiveOpenerThreshold === false) {
+      return out;
+    }
+    if (!enemyKey || typeof enemyKey !== "string" || !enemyKey.trim()) {
+      out.reason = "no_enemy_key";
+      return out;
+    }
+    const row = getEnemyCalibrationRow(enemyKey.trim());
+    const ratio = row && Number.isFinite(row.ratioObservedVsCurrentPaper)
+      ? row.ratioObservedVsCurrentPaper
+      : null;
+    out.ratioObservedVsCurrentPaper = ratio;
+    if (!Number.isFinite(ratio) || ratio <= 0) {
+      out.reason = "no_ratio";
+      return out;
+    }
+    const low = Number.isFinite(Config.planner.enemyAdaptiveRatioLow) ? Config.planner.enemyAdaptiveRatioLow : 0.85;
+    const high = Number.isFinite(Config.planner.enemyAdaptiveRatioHigh) ? Config.planner.enemyAdaptiveRatioHigh : 1.15;
+    const step = Number.isFinite(Config.planner.enemyAdaptiveThresholdStep) ? Config.planner.enemyAdaptiveThresholdStep : 0.004;
+    if (ratio < low) {
+      out.minFrac = Math.min(0.08, baseMinFrac + step);
+      out.applied = true;
+      out.reason = "ratio_low_raise_threshold";
+    } else if (ratio > high) {
+      out.minFrac = Math.max(0.003, baseMinFrac - step);
+      out.applied = true;
+      out.reason = "ratio_high_lower_threshold";
+    } else {
+      out.reason = "ratio_in_band";
+    }
+    return out;
+  }
+
   function plannerOpenerHorizonBasicOnly(horizonSec) {
     const paper = estimatePaperBasicAttackDps();
     const basicDps = paper && Number.isFinite(paper.dps) ? paper.dps : 0;
@@ -697,7 +739,8 @@
       lastOpenerHorizonSim: pr.lastOpenerHorizonSim || null,
       openerRuntime: pr.openerRuntime || null,
       tuningHint: plannerBuildRankedTuningHint(),
-      classProfile: classProfile
+      classProfile: classProfile,
+      enemyAdaptive: pr.lastEnemyAdaptiveThreshold || null
     };
   }
 
@@ -861,7 +904,10 @@
     const useHorizon = Config.planner.useOpenerHorizonSim !== false;
     const horizonMs = Number.isFinite(Config.planner.openerHorizonSimMs) ? Config.planner.openerHorizonSimMs : 5000;
     const minFracRaw = Config.planner.openerHorizonMinImprovementFraction;
-    const minFrac = Number.isFinite(minFracRaw) && minFracRaw >= 0 ? minFracRaw : 0.02;
+    const minFracBase = Number.isFinite(minFracRaw) && minFracRaw >= 0 ? minFracRaw : 0.02;
+    const enemyAdaptive = plannerComputeEnemyAdaptiveMinFrac(minFracBase, key || null);
+    const minFrac = enemyAdaptive && Number.isFinite(enemyAdaptive.minFrac) ? enemyAdaptive.minFrac : minFracBase;
+    pr.lastEnemyAdaptiveThreshold = enemyAdaptive;
     const paper = estimatePaperBasicAttackDps();
     if (useHorizon && horizonMs > 0 && paper && Number.isFinite(paper.dps) && paper.dps > 0) {
       const horizonSec = horizonMs / 1000;

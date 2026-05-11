@@ -115,6 +115,8 @@
         recent: []
       },
       // AI CHANGED: active class-profile applied to planner knobs for current runtime.
-      activeClassProfile: null
+      activeClassProfile: null,
+      // AI CHANGED: last enemy-aware threshold adaptation snapshot (86-planner.js).
+      lastEnemyAdaptiveThreshold: null
     }
   };
