@@ -17,6 +17,7 @@ Emergency **hotfix** (crash / wrong click): ship immediately, even if tiny.
 
 ## Done recently
 
+- **TEST graceful soak stop (v0.3.93)** — soak now waits for combat-safe boundary before stop request to avoid mid-fight cutoff.
 - **Mid-fight rotation control (v0.3.92)** — configurable ranked bursts per find cycle (`rankedBurstsPerFind`), with TEST `Rotation policy` check.
 - **Enemy-aware opener adaptation (v0.3.91)** — horizon threshold now adapts from enemy calibration ratio; TEST adds `Enemy adaptation`.
 - **Per-class planner profiles (v0.3.90)** — auto-detect class and apply class-specific planner knobs; TEST adds `Class profile` check.

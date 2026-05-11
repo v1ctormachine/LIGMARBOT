@@ -695,6 +695,17 @@
           Logger.warn("TEST", "auto ranked soak failed", err);
         } finally {
           if (Runtime.autoFarm.running) {
+            // AI CHANGED: Graceful TEST stop — wait for a safe boundary (combat cleared) before issuing stop request.
+            const safeStopWaitMs = Number.isFinite(opts.rankedSoakSafeStopWaitMs) ? opts.rankedSoakSafeStopWaitMs : 12000;
+            const safeStopStart = Date.now();
+            while (Runtime.autoFarm.running && Date.now() - safeStopStart < safeStopWaitMs) {
+              const stNow = readBasicState();
+              const enemiesNow = stNow && stNow.combat ? stNow.combat.enemyCount : null;
+              if (typeof enemiesNow === "number" && enemiesNow <= 0) {
+                break;
+              }
+              await sleep(200, { bypassStop: true });
+            }
             soakStopIssued = true;
             stopAutoFarmLoop();
             const waitStopStart = Date.now();
