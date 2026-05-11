@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.69",
-    "description":  "Embed master hero skill DB into bundle + TEST smoke for master lookup.",
-    "builtAt":  "2026-05-11T10:19:47.8791762+03:00",
+    "version":  "0.3.70",
+    "description":  "TEST: highlight the exact Test result line to copy-paste.",
+    "builtAt":  "2026-05-11T10:23:52.3573980+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.70",
+                        "description":  "TEST: highlight the exact Test result line to copy-paste.",
+                        "date":  "2026-05-11T10:23:52.3573980+03:00"
+                    },
                     {
                         "version":  "0.3.69",
                         "description":  "Embed master hero skill DB into bundle + TEST smoke for master lookup.",
@@ -247,11 +252,6 @@
                         "version":  "0.3.21",
                         "description":  "C4 slice 8b: expose plannerSkillHasDirectDamageForOpener",
                         "date":  "2026-05-09T20:00:24.0353131+03:00"
-                    },
-                    {
-                        "version":  "0.3.20",
-                        "description":  "C4 slice 8b: HP progress + skill opener basic fallback + opener damage filter",
-                        "date":  "2026-05-09T20:00:05.6903584+03:00"
                     }
                 ]
 }

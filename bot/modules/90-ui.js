@@ -722,6 +722,19 @@
       const criticalFail = checks.some(function (c) { return c.critical && !c.ok; });
       const softFail = checks.some(function (c) { return !c.critical && !c.ok; });
       const humanReport = buildTestBundleHumanReport(checks, BotVersion.version);
+      // AI CHANGED: Highlight the exact line the user should copy-paste back (visual emphasis in console).
+      try {
+        /* eslint-disable no-console */
+        if (typeof console.log === "function") {
+          console.log(
+            "%c" + humanReport.fullText,
+            "background:#1f2a44;color:#e6f0ff;font-weight:700;padding:3px 6px;border-radius:4px;border:1px solid rgba(125,255,179,0.35)"
+          );
+        }
+        /* eslint-enable no-console */
+      } catch (e) {
+        // ignore — cosmetic only
+      }
       Logger.log("TEST", humanReport.fullText);
       Logger.log("TEST", "SUMMARY", {
         ok: !criticalFail,
