@@ -17,6 +17,7 @@ Emergency **hotfix** (crash / wrong click): ship immediately, even if tiny.
 
 ## Done recently
 
+- **Tuning-hint telemetry basis fix (v0.3.102)** — tuning hint now uses full ranked runtime event totals, reducing false `insufficient_runtime_events` skips after successful ranked soak.
 - **Soak telemetry budget gate (v0.3.101)** — ranked soak now targets a minimum runtime event budget before pass, improving tuning-hint availability and making timeout reason explicit when budget is not reached.
 - **Mid-session soak continuity (v0.3.100)** — release TEST now defaults to resume auto-farm after bundle when farm was ON; added `Farm resume policy` check for explicit visibility.
 - **Quick soak retry hardening (v0.3.99)** — quick TEST profile now auto-extends soak once when initial window has no ranked activity; details include retry diagnostics.

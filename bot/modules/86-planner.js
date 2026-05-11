@@ -691,7 +691,11 @@
     const picks = Number.isFinite(rt.events.ranked_pick) ? rt.events.ranked_pick : 0;
     const noProgress = Number.isFinite(rt.events.ranked_no_progress) ? rt.events.ranked_no_progress : 0;
     const fallbacks = Number.isFinite(rt.events.basic_fallback_after_ranked) ? rt.events.basic_fallback_after_ranked : 0;
-    const total = picks + noProgress + fallbacks;
+    // AI CHANGED: Count full ranked-runtime signal (not only 3 counters) to reduce false "insufficient_runtime_events" skips after successful soak.
+    const total = Object.keys(rt.events).reduce(function (acc, key) {
+      const n = rt.events[key];
+      return acc + (Number.isFinite(n) ? n : 0);
+    }, 0);
     if (total < 5) {
       return { skipped: true, reason: "insufficient_runtime_events", totalEvents: total };
     }
