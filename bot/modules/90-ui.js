@@ -472,6 +472,7 @@
       planner_class_profile: "Class profile",
       planner_enemy_adaptation: "Enemy adaptation",
       planner_rotation_policy: "Rotation policy",
+      auto_farm_reliability: "Combat reliability",
       auto_farm_session_summary: "Auto-farm session",
       planner_ranked_openers: "Ranked opener",
       calibration_observe: "Calibration"
@@ -1005,6 +1006,17 @@
       Logger.log("TEST", "skills meta", skillsMeta);
       const afStatus = getAutoFarmStatus();
       const afSession = afStatus && afStatus.lastSessionSummary ? afStatus.lastSessionSummary : null;
+      const reliability = afStatus && afStatus.reliability ? afStatus.reliability : null;
+      addCheck(
+        "auto_farm_reliability",
+        !!(
+          reliability &&
+          Number.isFinite(reliability.noProgressStreak) &&
+          Number.isFinite(reliability.totalNoProgressFailures)
+        ),
+        reliability || { skipped: true, reason: "no_reliability_data" },
+        false
+      );
       if (!afSession) {
         addCheck("auto_farm_session_summary", true, { skipped: true, reason: "no_completed_session_yet" }, false);
       } else {

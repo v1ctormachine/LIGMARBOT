@@ -8,7 +8,14 @@
       lastResult: null,
       startedAt: null,
       // AI CHANGED: Last completed ON session summary (duration/cycles/failures/stop reason).
-      lastSessionSummary: null
+      lastSessionSummary: null,
+      // AI CHANGED: Reliability counters for repeated combat no-progress loops.
+      reliability: {
+        noProgressStreak: 0,
+        totalNoProgressFailures: 0,
+        lastNoProgressAt: null,
+        lastCooldownAt: null
+      }
     },
     // AI CHANGED: Added exploration state so idle movement rotates through nearby directions.
     exploration: {

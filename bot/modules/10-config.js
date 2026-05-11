@@ -160,7 +160,10 @@
       // AI CHANGED: Added longer idle delay to reduce repetitive no-enemy/no-loot cycling.
       idleNoEnemyDelayMs: 4000,
       // AI CHANGED: Recenter map less frequently when already open.
-      recenterEveryNCycles: 4
+      recenterEveryNCycles: 4,
+      // AI CHANGED: Reliability hardening — if repeated combat no-progress failures happen, pause before next cycle.
+      noProgressCooldownThreshold: 2,
+      noProgressCooldownMs: 5000
     },
     // AI CHANGED: Added movement tuning for map exploration when idling on empty tiles.
     movement: {

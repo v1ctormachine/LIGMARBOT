@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.93",
-    "description":  "TEST soak: graceful stop at combat-safe boundary with timeout fallback.",
-    "builtAt":  "2026-05-11T12:56:11.8713240+03:00",
+    "version":  "0.3.94",
+    "description":  "Combat reliability hardening: no-progress cooldown + TEST reliability check.",
+    "builtAt":  "2026-05-11T13:01:15.1919526+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.94",
+                        "description":  "Combat reliability hardening: no-progress cooldown + TEST reliability check.",
+                        "date":  "2026-05-11T13:01:15.1919526+03:00"
+                    },
                     {
                         "version":  "0.3.93",
                         "description":  "TEST soak: graceful stop at combat-safe boundary with timeout fallback.",
@@ -247,11 +252,6 @@
                         "version":  "0.3.45",
                         "description":  "slice 24c: TEST panel, map-gap cancel, smoke flags, compact hints, ROADMAP",
                         "date":  "2026-05-10T16:01:22.1403202+03:00"
-                    },
-                    {
-                        "version":  "0.3.44",
-                        "description":  "slice 24b charge cancel UI click not second bar tap",
-                        "date":  "2026-05-10T12:50:49.6717710+03:00"
                     }
                 ]
 }

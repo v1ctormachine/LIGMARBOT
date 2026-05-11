@@ -663,6 +663,7 @@
       consecutiveFailures: status.consecutiveFailures,
       lastResult: status.lastResult,
       startedAt: status.startedAt,
+      reliability: status.reliability || null,
       lastSessionSummary: status.lastSessionSummary || null
     };
   }
@@ -691,6 +692,7 @@
     Runtime.autoFarm.consecutiveFailures = 0;
     Runtime.autoFarm.lastResult = null;
     Runtime.autoFarm.startedAt = Date.now();
+    Runtime.autoFarm.reliability.noProgressStreak = 0;
     let exitReason = "unknown";
 
     // AI CHANGED: Surface loop start as live status.
@@ -713,6 +715,7 @@
 
       if (cycleResult && cycleResult.ok) {
         Runtime.autoFarm.consecutiveFailures = 0;
+        Runtime.autoFarm.reliability.noProgressStreak = 0;
         Logger.log("AUTO", "Cycle completed", {
           cycle: Runtime.autoFarm.cyclesCompleted,
           stage: cycleResult.stage
@@ -724,11 +727,45 @@
         });
       } else {
         Runtime.autoFarm.consecutiveFailures += 1;
+        const isNoProgressCombat =
+          cycleResult &&
+          cycleResult.stage === "combat" &&
+          !cycleResult.reason &&
+          typeof cycleResult.secure === "object" &&
+          cycleResult.secure &&
+          cycleResult.secure.ok === false;
+        if (isNoProgressCombat) {
+          Runtime.autoFarm.reliability.noProgressStreak += 1;
+          Runtime.autoFarm.reliability.totalNoProgressFailures += 1;
+          Runtime.autoFarm.reliability.lastNoProgressAt = Date.now();
+        } else {
+          Runtime.autoFarm.reliability.noProgressStreak = 0;
+        }
         Logger.warn("AUTO", "Cycle failed", {
           cycle: Runtime.autoFarm.cyclesCompleted,
           consecutiveFailures: Runtime.autoFarm.consecutiveFailures,
           stage: cycleResult ? cycleResult.stage : "unknown"
         });
+        const cooldownThreshold = Number.isFinite(Config.farmLoop.noProgressCooldownThreshold)
+          ? Config.farmLoop.noProgressCooldownThreshold
+          : 2;
+        const cooldownMs = Number.isFinite(Config.farmLoop.noProgressCooldownMs)
+          ? Config.farmLoop.noProgressCooldownMs
+          : 5000;
+        if (
+          Runtime.autoFarm.reliability.noProgressStreak >= cooldownThreshold &&
+          cooldownMs > 0 &&
+          !Runtime.autoFarm.stopRequested
+        ) {
+          Runtime.autoFarm.reliability.lastCooldownAt = Date.now();
+          setBotStatus("waiting", `reliability cooldown ${cooldownMs}ms (no-progress streak=${Runtime.autoFarm.reliability.noProgressStreak})`);
+          Logger.warn("AUTO", "Applying reliability cooldown after repeated no-progress failures", {
+            noProgressStreak: Runtime.autoFarm.reliability.noProgressStreak,
+            cooldownMs: cooldownMs
+          });
+          await sleep(cooldownMs, { bypassStop: true });
+          Runtime.autoFarm.reliability.noProgressStreak = 0;
+        }
       }
 
       if (Runtime.autoFarm.consecutiveFailures >= Config.farmLoop.maxConsecutiveFailures) {
@@ -794,6 +831,7 @@
       onDurationMs: Math.max(0, endedAt - startedAt),
       cyclesCompleted: Runtime.autoFarm.cyclesCompleted,
       consecutiveFailures: Runtime.autoFarm.consecutiveFailures,
+      reliability: Object.assign({}, Runtime.autoFarm.reliability || {}),
       exitReason: exitReason,
       lastStage: Runtime.autoFarm.lastResult ? Runtime.autoFarm.lastResult.stage || null : null
     };
