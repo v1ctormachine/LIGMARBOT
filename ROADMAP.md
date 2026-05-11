@@ -17,6 +17,7 @@ Emergency **hotfix** (crash / wrong click): ship immediately, even if tiny.
 
 ## Done recently
 
+- **TEST stability fixes (v0.3.96)** — fixed ranked soak false-fails (`ranked_progress` counts as activity) and class-mismatch false-fails in skill-master check across sequential class tests.
 - **TEST profiles (v0.3.95)** — added `testProfile: "quick" | "release"`; release mode runs strict checks + longer soak.
 - **Combat reliability hardening (v0.3.94)** — added no-progress streak cooldown backoff and TEST `Combat reliability` check.
 - **TEST graceful soak stop (v0.3.93)** — soak now waits for combat-safe boundary before stop request to avoid mid-fight cutoff.

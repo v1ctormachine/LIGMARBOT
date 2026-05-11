@@ -677,6 +677,7 @@
         let soakStopped = false;
         let soakStopIssued = false;
         let soakPicks = 0;
+        let soakProgress = 0;
         let soakEvents = null;
         const soakStartAt = Date.now();
         if (typeof resetPlannerRuntimeTelemetry === "function") {
@@ -701,13 +702,15 @@
               : (Runtime.planner && Runtime.planner.openerRuntime ? Runtime.planner.openerRuntime : null);
             const ev = rt && rt.events ? rt.events : null;
             const picks = ev && Number.isFinite(ev.ranked_pick) ? ev.ranked_pick : 0;
+            const progress = ev && Number.isFinite(ev.ranked_progress) ? ev.ranked_progress : 0;
             soakPicks = picks;
+            soakProgress = progress;
             soakEvents = ev || null;
-            if (Date.now() - soakStartAt >= rankedSoakMinMs && picks > 0) {
+            if (Date.now() - soakStartAt >= rankedSoakMinMs && (picks > 0 || progress > 0)) {
               break;
             }
           }
-          if (Date.now() - soakStartAt >= rankedSoakMaxMs && soakPicks <= 0) {
+          if (Date.now() - soakStartAt >= rankedSoakMaxMs && soakPicks <= 0 && soakProgress <= 0) {
             soakTimedOut = true;
           }
         } catch (err) {
@@ -736,9 +739,10 @@
           soakStopped = !Runtime.autoFarm.running;
         }
         const soakStopAccepted = soakStopped || (soakStopIssued && Runtime.autoFarm.stopRequested);
+        const soakActivityOk = soakPicks > 0 || soakProgress > 0;
         addCheck(
           "planner_ranked_soak",
-          soakPicks > 0 && soakStopAccepted && !soakError && !soakTimedOut,
+          soakActivityOk && !soakError && !soakTimedOut,
           {
             started: soakStarted,
             stopped: soakStopped,
@@ -746,6 +750,7 @@
             stopAccepted: soakStopAccepted,
             durationMs: Date.now() - soakStartAt,
             rankedPicks: soakPicks,
+            rankedProgressEvents: soakProgress,
             timedOut: soakTimedOut,
             events: soakEvents,
             error: soakError
@@ -1046,7 +1051,16 @@
       // fail the check when there are scanned skills but zero master matches.
       try {
         if (typeof getSkillMasterEntry === "function" && typeof applySkillMasterToSlots === "function") {
-          const applied = applySkillMasterToSlots();
+          const classHint =
+            diag &&
+            diag.classProfile &&
+            diag.classProfile.classKey
+              ? String(diag.classProfile.classKey).trim()
+              : "";
+          if (classHint) {
+            Config.skills.masterClassKey = classHint;
+          }
+          const applied = classHint ? applySkillMasterToSlots(classHint) : applySkillMasterToSlots();
           const appliedClassKey = applied && applied.classKey ? applied.classKey : null;
           let sample = null;
           if (appliedClassKey) {
