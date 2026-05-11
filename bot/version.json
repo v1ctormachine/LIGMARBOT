@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.87",
-    "description":  "TEST one-click: auto-ranked soak + strict ranked checks without manual setup.",
-    "builtAt":  "2026-05-11T12:11:53.8472750+03:00",
+    "version":  "0.3.88",
+    "description":  "TEST soak: avoid false fail when stop is accepted but loop still unwinding.",
+    "builtAt":  "2026-05-11T12:20:34.4788524+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.88",
+                        "description":  "TEST soak: avoid false fail when stop is accepted but loop still unwinding.",
+                        "date":  "2026-05-11T12:20:34.4788524+03:00"
+                    },
                     {
                         "version":  "0.3.87",
                         "description":  "TEST one-click: auto-ranked soak + strict ranked checks without manual setup.",
@@ -247,11 +252,6 @@
                         "version":  "0.3.39",
                         "description":  "slice 21 BOOT DPR use Logger.warn",
                         "date":  "2026-05-10T09:29:02.5592836+03:00"
-                    },
-                    {
-                        "version":  "0.3.38",
-                        "description":  "slice 21 stop cooperativity zoom reset loot settle DPR boot warn",
-                        "date":  "2026-05-10T09:28:20.3582286+03:00"
                     }
                 ]
 }

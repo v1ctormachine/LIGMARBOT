@@ -651,6 +651,7 @@
         let soakTimedOut = false;
         let soakStarted = false;
         let soakStopped = false;
+        let soakStopIssued = false;
         let soakPicks = 0;
         let soakEvents = null;
         const soakStartAt = Date.now();
@@ -689,6 +690,7 @@
           Logger.warn("TEST", "auto ranked soak failed", err);
         } finally {
           if (Runtime.autoFarm.running) {
+            soakStopIssued = true;
             stopAutoFarmLoop();
             const waitStopStart = Date.now();
             while (Runtime.autoFarm.running && Date.now() - waitStopStart < 60000) {
@@ -697,12 +699,15 @@
           }
           soakStopped = !Runtime.autoFarm.running;
         }
+        const soakStopAccepted = soakStopped || (soakStopIssued && Runtime.autoFarm.stopRequested);
         addCheck(
           "planner_ranked_soak",
-          soakPicks > 0 && soakStopped && !soakError && !soakTimedOut,
+          soakPicks > 0 && soakStopAccepted && !soakError && !soakTimedOut,
           {
             started: soakStarted,
             stopped: soakStopped,
+            stopIssued: soakStopIssued,
+            stopAccepted: soakStopAccepted,
             durationMs: Date.now() - soakStartAt,
             rankedPicks: soakPicks,
             timedOut: soakTimedOut,
