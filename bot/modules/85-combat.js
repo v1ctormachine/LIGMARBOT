@@ -1,3 +1,30 @@
+  // AI CHANGED: Ranked opener runtime telemetry — keep lightweight counters + recent ring buffer for soak diagnostics.
+  function plannerRecordOpenerRuntimeEvent(kind, detail) {
+    const pr = Runtime && Runtime.planner ? Runtime.planner : null;
+    if (!pr || !pr.openerRuntime) {
+      return;
+    }
+    const rt = pr.openerRuntime;
+    if (!rt.events || typeof rt.events !== "object") {
+      rt.events = {};
+    }
+    rt.events[kind] = (rt.events[kind] || 0) + 1;
+    rt.lastEvent = kind;
+    rt.lastAt = Date.now();
+    if (!Array.isArray(rt.recent)) {
+      rt.recent = [];
+    }
+    rt.recent.push({
+      at: rt.lastAt,
+      event: kind,
+      detail: detail || null
+    });
+    const keep = 30;
+    if (rt.recent.length > keep) {
+      rt.recent.splice(0, rt.recent.length - keep);
+    }
+  }
+
   // AI CHANGED: Phase C4 slice 8 — first swing: ranked attack skill (if enabled + pick), else basic attack.
   // AI CHANGED: slice 9 — optional opts.useRankedSkillOpener === false forces basic-only (follow-up bursts).
   // AI CHANGED: slice 22 — combat opener is tap-only (clickActionBarSlot); no synthetic bar hold — game uses tap for skills including charge start.
@@ -11,10 +38,16 @@
       if (opening != null) {
         const ok = clickActionBarSlot(opening.slot); // AI CHANGED: slice 22 — always normal bar click
         if (ok) {
+          plannerRecordOpenerRuntimeEvent("ranked_pick", { slot: opening.slot, excluded: (excludeSlots || []).slice(0, 8) });
           Logger.log("PLANNER", "Opening attack used ranked skill slot", { slot: opening.slot });
           return { ok: true, skillSlot: opening.slot };
         }
+        plannerRecordOpenerRuntimeEvent("ranked_click_failed", { slot: opening.slot });
         Logger.warn("PLANNER", "Ranked skill slot click failed; falling back to basic attack", { slot: opening.slot });
+      } else {
+        plannerRecordOpenerRuntimeEvent("ranked_pick_none", {
+          reason: Runtime.planner && Runtime.planner.lastOpeningPickReason ? Runtime.planner.lastOpeningPickReason : null
+        });
       }
     }
     const basicOk = clickBasicAttack();
@@ -111,6 +144,9 @@
         { timeoutMs: earlyCancelMs, pollMs: pollMs }
       );
       if (progressed) {
+        if (open.skillSlot != null) {
+          plannerRecordOpenerRuntimeEvent("ranked_progress", { slot: open.skillSlot, stage: "early_or_late_wait" });
+        }
         return true;
       }
       if (Runtime.autoFarm.stopRequested) {
@@ -139,6 +175,7 @@
           { timeoutMs: fullTimeoutMs, pollMs: pollMs }
         );
         if (progressed) {
+          plannerRecordOpenerRuntimeEvent("ranked_progress", { slot: open.skillSlot, stage: "after_early_cancel" });
           return true;
         }
       } else {
@@ -148,6 +185,9 @@
           { timeoutMs: firstWaitTimeoutMs - earlyCancelMs, pollMs: pollMs }
         );
         if (progressed) {
+          if (open.skillSlot != null) {
+            plannerRecordOpenerRuntimeEvent("ranked_progress", { slot: open.skillSlot, stage: "late_window" });
+          }
           return true;
         }
       }
@@ -158,6 +198,9 @@
         { timeoutMs: firstWaitTimeoutMs, pollMs: pollMs }
       );
       if (progressed) {
+        if (open.skillSlot != null) {
+          plannerRecordOpenerRuntimeEvent("ranked_progress", { slot: open.skillSlot, stage: "first_wait" });
+        }
         return true;
       }
     }
@@ -191,6 +234,7 @@
         { timeoutMs: fullTimeoutMs, pollMs: pollMs }
       );
       if (progressed) {
+        plannerRecordOpenerRuntimeEvent("ranked_progress", { slot: open.skillSlot, stage: "after_charge_cancel" });
         return true;
       }
     }
@@ -217,6 +261,7 @@
         slot: open2.skillSlot,
         attempt: alt + 1
       });
+      plannerRecordOpenerRuntimeEvent("ranked_alt_pick", { slot: open2.skillSlot, attempt: alt + 1 });
       if (settleRanked > 0) {
         await sleep(settleRanked);
       }
@@ -226,6 +271,7 @@
         { timeoutMs: fullTimeoutMs, pollMs: pollMs }
       );
       if (progressed) {
+        plannerRecordOpenerRuntimeEvent("ranked_progress", { slot: open2.skillSlot, stage: "alternate_wait" });
         return true;
       }
       // AI CHANGED: slice 21b — same as primary opener: do not chain more attacks after Stop.
@@ -237,6 +283,7 @@
     }
 
     if (triedSlots.length > 0) {
+      plannerRecordOpenerRuntimeEvent("basic_fallback_after_ranked", { triedSlots: triedSlots.slice(0, 8) });
       Logger.warn("PLANNER", "Ranked opener(s) had no verified progress; trying basic attack", {
         triedSlots: triedSlots
       });
@@ -264,6 +311,12 @@
     }
 
     Logger.warn("LOOP", "No attack progress detected (enemy count + target HP unchanged for baseline)");
+    if (triedSlots.length > 0 || open.skillSlot != null) {
+      plannerRecordOpenerRuntimeEvent("ranked_no_progress", {
+        initialSlot: open.skillSlot,
+        triedSlots: triedSlots.slice(0, 8)
+      });
+    }
     return false;
   }
 

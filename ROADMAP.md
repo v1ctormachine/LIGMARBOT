@@ -17,6 +17,7 @@ Emergency **hotfix** (crash / wrong click): ship immediately, even if tiny.
 
 ## Done recently
 
+- **Ranked opener soak telemetry (v0.3.80)** — added runtime opener event counters + TEST `Ranked runtime` check; exposes `getPlannerRuntimeTelemetry()` / `resetPlannerRuntimeTelemetry()`.
 - **TEST honesty tweak (v0.3.79)** — `Conception path` now reports `skipped` when ranked opener is OFF, and only passes when conception mode is actually exercised.
 - **Planner v2 (v0.3.78)** — conception-first opener selection: rank by master/scanned conception, then horizon DPS tie-break inside conception gate; TEST adds `Conception path` check.
 - **Master DB class sync (v0.3.77)** — auto-detect class from profile icon and auto-sync `masterClassKey`; TEST now fails `Skill master DB` when matched=0 on non-empty skill bars.

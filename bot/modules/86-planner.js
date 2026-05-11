@@ -596,8 +596,44 @@
       lastAt: pr.lastOpeningPickAt,
       cacheSlotCount: Array.isArray(slots) ? slots.length : 0,
       attackSkillsRanked: rankAttackSkillsByHeuristic({}).order.length,
-      lastOpenerHorizonSim: pr.lastOpenerHorizonSim || null
+      lastOpenerHorizonSim: pr.lastOpenerHorizonSim || null,
+      openerRuntime: pr.openerRuntime || null
     };
+  }
+
+  // AI CHANGED: Runtime telemetry snapshot/reset helpers for ranked-opener soak validation.
+  function getPlannerRuntimeTelemetry() {
+    const pr = Runtime && Runtime.planner ? Runtime.planner : null;
+    if (!pr || !pr.openerRuntime) {
+      return null;
+    }
+    const rt = pr.openerRuntime;
+    return {
+      events: Object.assign({}, rt.events || {}),
+      lastEvent: rt.lastEvent || null,
+      lastAt: rt.lastAt || null,
+      recent: Array.isArray(rt.recent) ? rt.recent.slice() : []
+    };
+  }
+
+  function resetPlannerRuntimeTelemetry() {
+    const pr = Runtime && Runtime.planner ? Runtime.planner : null;
+    if (!pr || !pr.openerRuntime) {
+      return { ok: false, reason: "no_runtime_telemetry" };
+    }
+    pr.openerRuntime.events = {
+      ranked_pick: 0,
+      ranked_pick_none: 0,
+      ranked_click_failed: 0,
+      ranked_progress: 0,
+      ranked_no_progress: 0,
+      ranked_alt_pick: 0,
+      basic_fallback_after_ranked: 0
+    };
+    pr.openerRuntime.lastEvent = null;
+    pr.openerRuntime.lastAt = null;
+    pr.openerRuntime.recent = [];
+    return { ok: true, telemetry: getPlannerRuntimeTelemetry() };
   }
 
   // AI CHANGED: Phase C4 slice 8+12+15 — pick opener with optional horizonSim (paper damage window); else first feasible heuristic order.

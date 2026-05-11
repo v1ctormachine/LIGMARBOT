@@ -226,6 +226,9 @@
       plannerSkillHasDirectDamageForOpener: plannerSkillHasDirectDamageForOpener,
       // AI CHANGED: Pack A — last opener skip reason + counts (after combat tries ranked openers).
       getPlannerOpeningPickDiagnostics: getPlannerOpeningPickDiagnostics,
+      // AI CHANGED: Runtime ranked-opener telemetry for soak validation (85-combat -> Runtime.planner.openerRuntime).
+      getPlannerRuntimeTelemetry: getPlannerRuntimeTelemetry,
+      resetPlannerRuntimeTelemetry: resetPlannerRuntimeTelemetry,
       // AI CHANGED: openerHorizonSim — paper damage window preview for ranked candidates (86-planner.js).
       previewOpenerHorizonSim: previewOpenerHorizonSim
     };

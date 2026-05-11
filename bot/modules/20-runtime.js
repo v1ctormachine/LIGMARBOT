@@ -94,6 +94,21 @@
       // AI CHANGED: Pack A — dedupe key for throttled opening-pick failure logs (86-planner.js).
       lastOpeningPickLogDetailKey: null,
       // AI CHANGED: last closed-form horizon compare for opener (86-planner.js openerHorizonSim).
-      lastOpenerHorizonSim: null
+      lastOpenerHorizonSim: null,
+      // AI CHANGED: Ranked opener runtime telemetry (85-combat.js) for soak validation.
+      openerRuntime: {
+        events: {
+          ranked_pick: 0,
+          ranked_pick_none: 0,
+          ranked_click_failed: 0,
+          ranked_progress: 0,
+          ranked_no_progress: 0,
+          ranked_alt_pick: 0,
+          basic_fallback_after_ranked: 0
+        },
+        lastEvent: null,
+        lastAt: null,
+        recent: []
+      }
     }
   };

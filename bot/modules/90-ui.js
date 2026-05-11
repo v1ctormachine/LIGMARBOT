@@ -428,6 +428,7 @@
       hero_stats: "Hero stats",
       planner_opener_horizon_preview: "HorizonSim",
       planner_conception_path: "Conception path",
+      planner_ranked_runtime: "Ranked runtime",
       planner_ranked_openers: "Ranked opener",
       calibration_observe: "Calibration"
     };
@@ -641,6 +642,42 @@
               ? diag.lastOpenerHorizonSim.conceptionGate
               : null
         }, false);
+      }
+      // AI CHANGED: Ranked-opener soak telemetry check — skipped unless ranked is ON and runtime events exist.
+      if (!rankedOn) {
+        addCheck("planner_ranked_runtime", true, {
+          skipped: true,
+          reason: "ranked_combat_off"
+        }, false);
+      } else {
+        const rt =
+          diag &&
+          diag.openerRuntime &&
+          typeof diag.openerRuntime === "object"
+            ? diag.openerRuntime
+            : null;
+        const ev = rt && rt.events && typeof rt.events === "object" ? rt.events : null;
+        const totalEvents =
+          ev
+            ? Object.keys(ev).reduce(function (acc, k) {
+              const n = ev[k];
+              return acc + (Number.isFinite(n) ? n : 0);
+            }, 0)
+            : 0;
+        if (totalEvents <= 0) {
+          addCheck("planner_ranked_runtime", true, {
+            skipped: true,
+            reason: "no_ranked_runtime_events_yet",
+            hint: "Run ON in combat for ~1-2 minutes, then TEST again."
+          }, false);
+        } else {
+          addCheck("planner_ranked_runtime", true, {
+            totalEvents: totalEvents,
+            events: ev,
+            lastEvent: rt ? rt.lastEvent : null,
+            lastAt: rt ? rt.lastAt : null
+          }, false);
+        }
       }
       // AI CHANGED: ranked builds — TEST exercises openerHorizonSim preview (ship rule: new testable behavior via TEST).
       let horizonPreview = null;
