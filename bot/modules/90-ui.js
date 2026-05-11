@@ -1166,11 +1166,33 @@
         addCheck("calibration_observe", true, { skipped: true }, false);
       } else {
         try {
+          let calibrationRetried = false;
+          let calibrationRetryError = null;
           calibration = await quickCalibrationSession(
             isReleaseProfile
               ? { observe: { totalMs: 15000 } }
               : {}
           );
+          // AI CHANGED: Release-profile strict calibration hardening — if observe saw no hp drops, seed one short combat attempt and retry once.
+          if (
+            isReleaseProfile &&
+            strictCalibration &&
+            calibration &&
+            calibration.enemyDbMerge &&
+            calibration.enemyDbMerge.error === "skipped_no_hp_drops"
+          ) {
+            calibrationRetried = true;
+            try {
+              await clickFindEnemyVerified();
+              await sleep(450, { bypassStop: true });
+              clickBasicAttack();
+              await sleep(1400, { bypassStop: true });
+              calibration = await quickCalibrationSession({ observe: { totalMs: 18000 } });
+            } catch (retryErr) {
+              calibrationRetryError = String(retryErr && retryErr.message ? retryErr.message : retryErr);
+              Logger.warn("TEST", "release calibration retry failed", retryErr);
+            }
+          }
           Logger.log("TEST", "quickCalibrationSession", calibration);
           const mergeErr =
             calibration && calibration.enemyDbMerge && calibration.enemyDbMerge.error
@@ -1187,11 +1209,16 @@
                 ? "no_enemy_key"
                 : mergeErr || "merge_failed",
               lastFoughtKey: calibration ? calibration.lastFoughtKey : null,
-              enemyDbMerge: calibration ? calibration.enemyDbMerge : null
+              enemyDbMerge: calibration ? calibration.enemyDbMerge : null,
+              retried: calibrationRetried,
+              retryError: calibrationRetryError
             };
             addCheck("calibration_observe", !strictCalibration, detail, strictCalibration);
           } else {
-            addCheck("calibration_observe", true, calibration, strictCalibration);
+            addCheck("calibration_observe", true, Object.assign({}, calibration || {}, {
+              retried: calibrationRetried,
+              retryError: calibrationRetryError
+            }), strictCalibration);
           }
         } catch (err) {
           calibrationError = String(err && err.message ? err.message : err);
