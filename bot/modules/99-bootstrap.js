@@ -181,6 +181,9 @@
       parseSkillEffects: parseSkillEffects,
       inferSkillConception: inferSkillConception,
       normalizeSkillName: normalizeSkillName,
+      // AI CHANGED: Master skill DB (tree export) lookup — keyed by class + normalized name; Requirements are not stored.
+      getSkillMasterEntry: typeof getSkillMasterEntry === "function" ? getSkillMasterEntry : null,
+      getSkillMasterConception: typeof getSkillMasterConception === "function" ? getSkillMasterConception : null,
       // AI CHANGED: Phase C1 -- hero stats + passive regen (console-first).
       readHeroCombatStats: readHeroCombatStats,
       measurePassiveRegen: measurePassiveRegen,

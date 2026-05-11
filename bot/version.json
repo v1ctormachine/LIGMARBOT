@@ -1,8 +1,18 @@
 ﻿{
-    "version":  "0.3.67",
-    "description":  "TEST: one-line Test result report for patch verification; HorizonSim skipped when ranked off.",
-    "builtAt":  "2026-05-11T09:52:28.7301221+03:00",
+    "version":  "0.3.69",
+    "description":  "Embed master hero skill DB into bundle + TEST smoke for master lookup.",
+    "builtAt":  "2026-05-11T10:19:47.8791762+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.69",
+                        "description":  "Embed master hero skill DB into bundle + TEST smoke for master lookup.",
+                        "date":  "2026-05-11T10:19:47.8791762+03:00"
+                    },
+                    {
+                        "version":  "0.3.68",
+                        "description":  "Embed hero skill master DB (no requirements) into bundle; expose getSkillMasterEntry/conception.",
+                        "date":  "2026-05-11T10:19:16.6921494+03:00"
+                    },
                     {
                         "version":  "0.3.67",
                         "description":  "TEST: one-line Test result report for patch verification; HorizonSim skipped when ranked off.",
@@ -242,16 +252,6 @@
                         "version":  "0.3.20",
                         "description":  "C4 slice 8b: HP progress + skill opener basic fallback + opener damage filter",
                         "date":  "2026-05-09T20:00:05.6903584+03:00"
-                    },
-                    {
-                        "version":  "0.3.19",
-                        "description":  "C4 slice 8: ranked opening skill + action bar click + plannerUi",
-                        "date":  "2026-05-09T19:53:04.2132219+03:00"
-                    },
-                    {
-                        "version":  "0.3.18",
-                        "description":  "C4 slice 7: planner toggles on panel + plannerUi localStorage",
-                        "date":  "2026-05-09T19:44:21.5415188+03:00"
                     }
                 ]
 }

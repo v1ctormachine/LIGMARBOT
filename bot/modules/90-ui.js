@@ -424,6 +424,7 @@
       version: "Version",
       probe_selectors: "Selector probe",
       skill_scan: "Skill data",
+      skill_master_db: "Skill master DB",
       hero_stats: "Hero stats",
       planner_opener_horizon_preview: "HorizonSim",
       planner_ranked_openers: "Ranked opener",
@@ -683,6 +684,18 @@
         scanRan: scanRan
       };
       Logger.log("TEST", "skills meta", skillsMeta);
+
+      // AI CHANGED: Master skill DB smoke — verify lookup exists and returns a known entry.
+      try {
+        if (typeof getSkillMasterEntry === "function") {
+          const e = getSkillMasterEntry("assassin", "Blade Dance");
+          addCheck("skill_master_db", !!e, { ok: !!e, sample: e ? e.name : null }, false);
+        } else {
+          addCheck("skill_master_db", true, { skipped: true, reason: "no_master_module" }, false);
+        }
+      } catch (err) {
+        addCheck("skill_master_db", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
 
       let calibration = null;
       let calibrationError = null;
