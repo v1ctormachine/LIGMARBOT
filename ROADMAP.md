@@ -17,6 +17,7 @@ Emergency **hotfix** (crash / wrong click): ship immediately, even if tiny.
 
 ## Done recently
 
+- **One-click TEST auto-soak (v0.3.87)** — TEST now auto-enables ranked mode for test scope, runs short farming soak, then performs strict ranked checks with new `Ranked soak` check.
 - **No-skip ranked TEST mode (v0.3.86)** — `runUiTestBundle({ strictRankedChecks: true })` fails ranked checks when ranked combat is OFF (no silent skips).
 - **Auto-farm session summary (v0.3.85)** — TEST now includes completed ON-session snapshot (duration/cycles/failures/exit reason).
 - **GUI footer live-refresh fix (v0.3.84)** — fixed frozen HP/MP/Ping/ON timer footer updates by restoring safe single-instance refresh ticker.

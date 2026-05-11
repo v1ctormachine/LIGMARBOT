@@ -468,6 +468,7 @@
       planner_ranked_reason_quality: "Ranked reason quality",
       planner_ranked_tuning_hint: "Ranked tuning hint",
       planner_ranked_preflight: "Ranked preflight",
+      planner_ranked_soak: "Ranked soak",
       auto_farm_session_summary: "Auto-farm session",
       planner_ranked_openers: "Ranked opener",
       calibration_observe: "Calibration"
@@ -512,13 +513,18 @@
     const runSkillScanIfNeeded = opts.runSkillScanIfNeeded !== false;
     const runHeroStatsInTest = opts.runHeroStatsInTest !== false;
     const strictCalibration = opts.strictCalibration === true;
-    // AI CHANGED: Enforce ranked-combat validation: if ranked is OFF, mark ranked checks as failed (not skipped).
-    const strictRankedChecks = opts.strictRankedChecks === true;
+    // AI CHANGED: Enforce ranked-combat validation by default; set strictRankedChecks:false only for ad-hoc smoke.
+    const strictRankedChecks = opts.strictRankedChecks !== false;
+    // AI CHANGED: TEST one-click policy — run short ranked soak automatically unless explicitly disabled.
+    const autoRankedSoak = opts.autoRankedSoak !== false;
+    const rankedSoakMinMs = Number.isFinite(opts.rankedSoakMinMs) ? opts.rankedSoakMinMs : 12000;
+    const rankedSoakMaxMs = Number.isFinite(opts.rankedSoakMaxMs) ? opts.rankedSoakMaxMs : 45000;
     let hadFarmOn = false;
     let bundleResult = null;
     const checks = [];
     // AI CHANGED: Defined for the whole bundle so later logging never references an out-of-scope var.
     let chargeCancelTest = null;
+    let plannerBackup = null;
 
     function addCheck(id, ok, detail, critical, note) {
       const c = { id: id, ok: !!ok, critical: critical === true };
@@ -554,6 +560,13 @@
     if (!Runtime.autoFarm.running) {
       Runtime.autoFarm.stopRequested = false;
     }
+    plannerBackup = {
+      useRankedAttackSkillsInCombat: !!Config.planner.useRankedAttackSkillsInCombat,
+      skillMpReserve: Config.planner.skillMpReserve
+    };
+    // AI CHANGED: TEST must self-enable ranked checks path; user should only press TEST.
+    Config.planner.useRankedAttackSkillsInCombat = true;
+    Config.planner.skillMpReserve = 0;
 
     try {
       Logger.log("TEST", `bundle start v${BotVersion.version}`, {
@@ -630,6 +643,76 @@
         }
       } else {
         addCheck("hero_stats", true, { skipped: true }, false);
+      }
+
+      // AI CHANGED: One-click ranked soak — generate real opener runtime telemetry before ranked diagnostics.
+      if (autoRankedSoak) {
+        let soakError = null;
+        let soakTimedOut = false;
+        let soakStarted = false;
+        let soakStopped = false;
+        let soakPicks = 0;
+        let soakEvents = null;
+        const soakStartAt = Date.now();
+        if (typeof resetPlannerRuntimeTelemetry === "function") {
+          try {
+            resetPlannerRuntimeTelemetry();
+          } catch (err) {
+            Logger.warn("TEST", "resetPlannerRuntimeTelemetry threw", err);
+          }
+        }
+        try {
+          if (!Runtime.autoFarm.running) {
+            const sr = await startAutoFarmLoop();
+            soakStarted = !!(sr && sr.ok);
+          } else {
+            soakStarted = true;
+          }
+          while (Date.now() - soakStartAt < rankedSoakMaxMs) {
+            await sleep(250, { bypassStop: true });
+            const rt = typeof getPlannerRuntimeTelemetry === "function"
+              ? getPlannerRuntimeTelemetry()
+              : (Runtime.planner && Runtime.planner.openerRuntime ? Runtime.planner.openerRuntime : null);
+            const ev = rt && rt.events ? rt.events : null;
+            const picks = ev && Number.isFinite(ev.ranked_pick) ? ev.ranked_pick : 0;
+            soakPicks = picks;
+            soakEvents = ev || null;
+            if (Date.now() - soakStartAt >= rankedSoakMinMs && picks > 0) {
+              break;
+            }
+          }
+          if (Date.now() - soakStartAt >= rankedSoakMaxMs && soakPicks <= 0) {
+            soakTimedOut = true;
+          }
+        } catch (err) {
+          soakError = String(err && err.message ? err.message : err);
+          Logger.warn("TEST", "auto ranked soak failed", err);
+        } finally {
+          if (Runtime.autoFarm.running) {
+            stopAutoFarmLoop();
+            const waitStopStart = Date.now();
+            while (Runtime.autoFarm.running && Date.now() - waitStopStart < 60000) {
+              await sleep(120, { bypassStop: true });
+            }
+          }
+          soakStopped = !Runtime.autoFarm.running;
+        }
+        addCheck(
+          "planner_ranked_soak",
+          soakPicks > 0 && soakStopped && !soakError && !soakTimedOut,
+          {
+            started: soakStarted,
+            stopped: soakStopped,
+            durationMs: Date.now() - soakStartAt,
+            rankedPicks: soakPicks,
+            timedOut: soakTimedOut,
+            events: soakEvents,
+            error: soakError
+          },
+          strictRankedChecks
+        );
+      } else {
+        addCheck("planner_ranked_soak", true, { skipped: true, reason: "auto_ranked_soak_off" }, false);
       }
 
       try {
@@ -1000,6 +1083,10 @@
         chargeCancelTest: chargeCancelTest
       };
     } finally {
+      if (plannerBackup) {
+        Config.planner.useRankedAttackSkillsInCombat = !!plannerBackup.useRankedAttackSkillsInCombat;
+        Config.planner.skillMpReserve = plannerBackup.skillMpReserve;
+      }
       if (resumeAfter && hadFarmOn && !Runtime.autoFarm.running) {
         Logger.log("TEST", "restarting auto-farm after TEST");
         startAutoFarmLoop();
