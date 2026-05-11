@@ -17,6 +17,7 @@ Emergency **hotfix** (crash / wrong click): ship immediately, even if tiny.
 
 ## Done recently
 
+- **Calibration observe attribution fix (v0.3.104)** — damage observe late-binds enemy key when target appears mid-window; release calibration observe 15s; TEST shows real merge error in `reason`.
 - **Canonical skill DB path + release TEST button (v0.3.103)** — `bot/data/ligmar_hero_skills_db.json` is the canonical embedded master export (`build.ps1` fallback to legacy root path). Panel **`TEST (release)`** runs `testProfile: "release"` without DevTools.
 - **Tuning-hint telemetry basis fix (v0.3.102)** — tuning hint now uses full ranked runtime event totals, reducing false `insufficient_runtime_events` skips after successful ranked soak.
 - **Soak telemetry budget gate (v0.3.101)** — ranked soak now targets a minimum runtime event budget before pass, improving tuning-hint availability and making timeout reason explicit when budget is not reached.

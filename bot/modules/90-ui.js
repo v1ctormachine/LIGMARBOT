@@ -1166,8 +1166,16 @@
         addCheck("calibration_observe", true, { skipped: true }, false);
       } else {
         try {
-          calibration = await quickCalibrationSession();
+          calibration = await quickCalibrationSession(
+            isReleaseProfile
+              ? { observe: { totalMs: 15000 } }
+              : {}
+          );
           Logger.log("TEST", "quickCalibrationSession", calibration);
+          const mergeErr =
+            calibration && calibration.enemyDbMerge && calibration.enemyDbMerge.error
+              ? String(calibration.enemyDbMerge.error)
+              : "";
           const hasKey = !!(calibration && calibration.lastFoughtKey);
           const mergeOk = !!(calibration && calibration.enemyDbMerge && calibration.enemyDbMerge.ok);
           if (!hasKey || !mergeOk) {
@@ -1175,7 +1183,9 @@
             // Treat as skipped unless strictCalibration is requested.
             const detail = {
               skipped: !strictCalibration,
-              reason: !hasKey ? "no_enemy_key" : "merge_failed",
+              reason: !hasKey
+                ? "no_enemy_key"
+                : mergeErr || "merge_failed",
               lastFoughtKey: calibration ? calibration.lastFoughtKey : null,
               enemyDbMerge: calibration ? calibration.enemyDbMerge : null
             };

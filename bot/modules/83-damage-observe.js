@@ -237,6 +237,23 @@
         };
         samples.push(sample);
 
+        // AI CHANGED: Late attribution — observe may start before target panel is ready (e.g. right after TEST soak stop); merge needs a key when hp_drop events exist.
+        if (!sessionAttribution && th && th.valid) {
+          try {
+            const snap = readTargetProfileSnapshot();
+            if (snap && snap.ok && snap.targetHp && snap.targetHp.valid) {
+              sessionAttribution = {
+                key: makeEnemyDbKey(snap.name, snap.level, snap.targetHp.max),
+                name: snap.name,
+                level: snap.level,
+                maxHp: snap.targetHp.max
+              };
+            }
+          } catch (attErr) {
+            Logger.warn("DMG", "attribution snapshot during observe failed", attErr);
+          }
+        }
+
         if (th && th.valid && prevTarget && prevTarget.valid) {
           const maxRef = Math.max(prevTarget.max, th.max, 1);
           // AI CHANGED: Coerce cur so string "0" / odd DOM types still match lethal and delta math.
