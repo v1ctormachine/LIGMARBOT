@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.84",
-    "description":  "Fix GUI footer live refresh during ON; restore safe status ticker.",
-    "builtAt":  "2026-05-11T11:53:31.9412082+03:00",
+    "version":  "0.3.85",
+    "description":  "TEST: add auto-farm session summary snapshot (duration/cycles/failures/exit reason).",
+    "builtAt":  "2026-05-11T11:55:49.1180291+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.85",
+                        "description":  "TEST: add auto-farm session summary snapshot (duration/cycles/failures/exit reason).",
+                        "date":  "2026-05-11T11:55:49.1180291+03:00"
+                    },
                     {
                         "version":  "0.3.84",
                         "description":  "Fix GUI footer live refresh during ON; restore safe status ticker.",
@@ -247,11 +252,6 @@
                         "version":  "0.3.36",
                         "description":  "slice 19b hard cap bar hold + holdCast defense; fix opener tooltip long-press",
                         "date":  "2026-05-09T23:09:29.4895378+03:00"
-                    },
-                    {
-                        "version":  "0.3.35",
-                        "description":  "slice 18 default full channel opener hold + dismiss popup (v0.3.35)",
-                        "date":  "2026-05-09T23:00:36.9928664+03:00"
                     }
                 ]
 }

@@ -17,6 +17,7 @@ Emergency **hotfix** (crash / wrong click): ship immediately, even if tiny.
 
 ## Done recently
 
+- **Auto-farm session summary (v0.3.85)** — TEST now includes completed ON-session snapshot (duration/cycles/failures/exit reason).
 - **GUI footer live-refresh fix (v0.3.84)** — fixed frozen HP/MP/Ping/ON timer footer updates by restoring safe single-instance refresh ticker.
 - **GUI ON timer (v0.3.83)** — panel footer now shows live ON duration while auto-farm runs.
 - **Ranked tuning hints (v0.3.82)** — diagnostics suggest horizon threshold tuning from runtime telemetry; TEST adds `Ranked tuning hint` soft check.

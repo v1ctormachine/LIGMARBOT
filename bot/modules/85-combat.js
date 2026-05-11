@@ -665,7 +665,8 @@
       cyclesCompleted: status.cyclesCompleted,
       consecutiveFailures: status.consecutiveFailures,
       lastResult: status.lastResult,
-      startedAt: status.startedAt
+      startedAt: status.startedAt,
+      lastSessionSummary: status.lastSessionSummary || null
     };
   }
 
@@ -693,6 +694,7 @@
     Runtime.autoFarm.consecutiveFailures = 0;
     Runtime.autoFarm.lastResult = null;
     Runtime.autoFarm.startedAt = Date.now();
+    let exitReason = "unknown";
 
     // AI CHANGED: Surface loop start as live status.
     setBotStatus("starting", `auto-farm loop (delay=${Config.farmLoop.cycleDelayMs}ms)`);
@@ -739,6 +741,7 @@
         // AI CHANGED: Surface halt-on-failures as live status.
         setBotStatus("halted", `${Runtime.autoFarm.consecutiveFailures} consecutive failures`);
         Runtime.autoFarm.stopRequested = true;
+        exitReason = "failure_cap";
         break;
       }
 
@@ -777,6 +780,26 @@
     }
 
     Runtime.autoFarm.running = false;
+    if (exitReason === "unknown") {
+      if (Runtime.autoFarm.lastResult && Runtime.autoFarm.lastResult.reason === "stop_requested") {
+        exitReason = "user_stop";
+      } else if (Runtime.autoFarm.stopRequested) {
+        exitReason = "stop_requested";
+      } else {
+        exitReason = "loop_completed";
+      }
+    }
+    const endedAt = Date.now();
+    const startedAt = Number.isFinite(Runtime.autoFarm.startedAt) ? Runtime.autoFarm.startedAt : endedAt;
+    Runtime.autoFarm.lastSessionSummary = {
+      startedAt: startedAt,
+      endedAt: endedAt,
+      onDurationMs: Math.max(0, endedAt - startedAt),
+      cyclesCompleted: Runtime.autoFarm.cyclesCompleted,
+      consecutiveFailures: Runtime.autoFarm.consecutiveFailures,
+      exitReason: exitReason,
+      lastStage: Runtime.autoFarm.lastResult ? Runtime.autoFarm.lastResult.stage || null : null
+    };
     // AI CHANGED: consume stop flag when loop ends — if it stays true, waitForCondition (hero stats, verifies) aborts on first tick and leaves profile on wrong tab after TEST.
     Runtime.autoFarm.stopRequested = false;
     // AI CHANGED: Only set "stopped" if we weren't already halted by failures.

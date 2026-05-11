@@ -467,6 +467,7 @@
       planner_ranked_runtime: "Ranked runtime",
       planner_ranked_reason_quality: "Ranked reason quality",
       planner_ranked_tuning_hint: "Ranked tuning hint",
+      auto_farm_session_summary: "Auto-farm session",
       planner_ranked_openers: "Ranked opener",
       calibration_observe: "Calibration"
     };
@@ -829,6 +830,13 @@
         scanRan: scanRan
       };
       Logger.log("TEST", "skills meta", skillsMeta);
+      const afStatus = getAutoFarmStatus();
+      const afSession = afStatus && afStatus.lastSessionSummary ? afStatus.lastSessionSummary : null;
+      if (!afSession) {
+        addCheck("auto_farm_session_summary", true, { skipped: true, reason: "no_completed_session_yet" }, false);
+      } else {
+        addCheck("auto_farm_session_summary", true, afSession, false);
+      }
 
       // AI CHANGED: Master skill DB smoke — auto-detect class from profile icon via applySkillMasterToSlots();
       // fail the check when there are scanned skills but zero master matches.

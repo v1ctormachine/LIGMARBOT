@@ -6,7 +6,9 @@
       cyclesCompleted: 0,
       consecutiveFailures: 0,
       lastResult: null,
-      startedAt: null
+      startedAt: null,
+      // AI CHANGED: Last completed ON session summary (duration/cycles/failures/stop reason).
+      lastSessionSummary: null
     },
     // AI CHANGED: Added exploration state so idle movement rotates through nearby directions.
     exploration: {
