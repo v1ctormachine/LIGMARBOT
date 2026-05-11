@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.96",
-    "description":  "Fix TEST false fails: ranked soak activity + skill-master class sync.",
-    "builtAt":  "2026-05-11T13:18:07.9565581+03:00",
+    "version":  "0.3.97",
+    "description":  "TEST logs: add full per-check DETAILS map and richer debug table.",
+    "builtAt":  "2026-05-11T13:21:49.1647475+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.97",
+                        "description":  "TEST logs: add full per-check DETAILS map and richer debug table.",
+                        "date":  "2026-05-11T13:21:49.1647475+03:00"
+                    },
                     {
                         "version":  "0.3.96",
                         "description":  "Fix TEST false fails: ranked soak activity + skill-master class sync.",
@@ -247,11 +252,6 @@
                         "version":  "0.3.48",
                         "description":  "slice 26: panel opener timing ms + combatUi.v1 persistence",
                         "date":  "2026-05-10T16:27:58.5650038+03:00"
-                    },
-                    {
-                        "version":  "0.3.47",
-                        "description":  "slice 25: charge grace + early cancel-if-hint on ranked opener",
-                        "date":  "2026-05-10T16:14:24.4053304+03:00"
                     }
                 ]
 }

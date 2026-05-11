@@ -507,6 +507,22 @@
     return { fullText: fullText, overall: overall };
   }
 
+  // AI CHANGED: Precise TEST debug payload for DevTools — compact but complete, stable across patches.
+  function buildTestDebugReport(checks) {
+    const report = {};
+    for (let i = 0; i < checks.length; i += 1) {
+      const c = checks[i];
+      report[c.id] = {
+        ok: !!c.ok,
+        critical: !!c.critical,
+        skipped: !!(c.detail && c.detail.skipped),
+        note: c.note || null,
+        detail: c.detail !== undefined ? c.detail : null
+      };
+    }
+    return report;
+  }
+
   // AI CHANGED: One-click TEST — auto skill scan when needed, hero stats read, planner dry-run + diagnostics, probes, optional cancel smoke, quickCalibrationSession; console [TEST] SUMMARY + panel line; restarts auto-farm if it was ON (opts.resumeAutoFarm: false to leave stopped).
   async function runUiTestBundle(userOpts) {
     const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
@@ -1145,11 +1161,20 @@
         checks: checks,
         testReportLine: humanReport.fullText
       });
+      // AI CHANGED: Always emit per-check detail map for deterministic debugging (no hidden state).
+      Logger.log("TEST", "DETAILS", buildTestDebugReport(checks));
       /* eslint-disable no-console */
       if (typeof console.table === "function") {
         console.table(
           checks.map(function (c) {
-            return { id: c.id, ok: c.ok, critical: c.critical, note: c.note || "" };
+            return {
+              id: c.id,
+              ok: c.ok,
+              critical: c.critical,
+              skipped: !!(c.detail && c.detail.skipped),
+              reason: c.detail && (c.detail.reason || c.detail.error) ? (c.detail.reason || c.detail.error) : "",
+              note: c.note || ""
+            };
           })
         );
       }
