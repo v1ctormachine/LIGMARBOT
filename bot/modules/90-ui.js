@@ -429,6 +429,7 @@
       planner_opener_horizon_preview: "HorizonSim",
       planner_conception_path: "Conception path",
       planner_ranked_runtime: "Ranked runtime",
+      planner_ranked_reason_quality: "Ranked reason quality",
       planner_ranked_openers: "Ranked opener",
       calibration_observe: "Calibration"
     };
@@ -705,6 +706,56 @@
           diag.lastReason !== "no_attack_skills_for_ranker";
       }
       addCheck("planner_ranked_openers", openerOk, diag, rankedOn);
+      // AI CHANGED: Decision-quality check — when horizon prefers basic, detail must explain by pct + threshold and filtered-out counts.
+      if (!rankedOn) {
+        addCheck("planner_ranked_reason_quality", true, { skipped: true, reason: "ranked_combat_off" }, false);
+      } else {
+        const lastReason = diag && diag.lastReason ? diag.lastReason : null;
+        const d = diag && diag.lastDetail ? diag.lastDetail : null;
+        let qualityOk = true;
+        let qualityDetail = { lastReason: lastReason };
+        if (lastReason === "horizon_prefers_basic") {
+          const hasPct = d && Number.isFinite(d.bestSkillVsBaselinePct);
+          const hasThresholdPct = d && Number.isFinite(d.thresholdPct);
+          const hasFiltered =
+            d &&
+            d.filteredOut &&
+            Number.isFinite(d.filteredOut.cooldown) &&
+            Number.isFinite(d.filteredOut.mpGate);
+          qualityOk = !!(hasPct && hasThresholdPct && hasFiltered);
+          qualityDetail = {
+            lastReason: lastReason,
+            bestSkillVsBaselinePct: d ? d.bestSkillVsBaselinePct : null,
+            thresholdPct: d ? d.thresholdPct : null,
+            filteredOut: d ? d.filteredOut : null
+          };
+        } else if (lastReason === "picked") {
+          qualityOk = !!(d && Number.isFinite(d.slot));
+          qualityDetail = {
+            lastReason: lastReason,
+            slot: d ? d.slot : null,
+            name: d ? d.name : null,
+            bestSkillVsBaselinePct: d ? d.bestSkillVsBaselinePct : null,
+            thresholdPct: d ? d.thresholdPct : null
+          };
+        } else if (
+          lastReason === "all_candidates_filtered" ||
+          lastReason === "empty_cache" ||
+          lastReason === "no_attack_skills_for_ranker"
+        ) {
+          qualityOk = false;
+          qualityDetail = {
+            lastReason: lastReason,
+            note: "ranked opener not usable in current runtime state"
+          };
+        } else {
+          qualityDetail = {
+            lastReason: lastReason,
+            note: "no strict schema required for this reason"
+          };
+        }
+        addCheck("planner_ranked_reason_quality", qualityOk, qualityDetail, false);
+      }
 
       if (fireChargeCancelIfHint) {
         // AI CHANGED: On-demand only (debugging a charge-cancel patch): run the old smoke probe/click when explicitly requested.

@@ -857,18 +857,42 @@
           pickedPair = candidates[0];
         }
         pr.lastOpeningPickReason = "picked";
+        const bestVsBaselinePct =
+          baselineTotal > 0 ? +(((bestDmg / baselineTotal) - 1) * 100).toFixed(2) : null;
+        const thresholdPct = +(minFrac * 100).toFixed(2);
         pr.lastOpeningPickDetail = {
           slot: pickedPair.idx,
           name: pickedPair.record.name || "",
-          horizonSim: pr.lastOpenerHorizonSim
+          horizonSim: pr.lastOpenerHorizonSim,
+          bestSkillVsBaselinePct: bestVsBaselinePct,
+          thresholdPct: thresholdPct,
+          filteredOut: {
+            cooldown: breakdown.cooldown,
+            mpGate: breakdown.mp,
+            noDirectDamage: breakdown.noDirectDamage,
+            excluded: breakdown.exclude
+          }
         };
         return { slot: pickedPair.idx, record: pickedPair.record };
       }
       pr.lastOpeningPickReason = "horizon_prefers_basic";
+      const bestRow = scored.find(function (r) { return r && r.slot === bestIdx; }) || null;
+      const bestVsBaselinePct =
+        baselineTotal > 0 ? +(((bestDmg / baselineTotal) - 1) * 100).toFixed(2) : null;
+      const thresholdPct = +(minFrac * 100).toFixed(2);
       pr.lastOpeningPickDetail = {
+        bestCandidate: bestRow ? { slot: bestRow.slot, name: bestRow.name, damage: bestRow.damage } : null,
+        bestSkillVsBaselinePct: bestVsBaselinePct,
         horizonSim: pr.lastOpenerHorizonSim,
         threshold: +threshold.toFixed(2),
-        minImprovementFraction: minFrac
+        thresholdPct: thresholdPct,
+        minImprovementFraction: minFrac,
+        filteredOut: {
+          cooldown: breakdown.cooldown,
+          mpGate: breakdown.mp,
+          noDirectDamage: breakdown.noDirectDamage,
+          excluded: breakdown.exclude
+        }
       };
       return null;
     }
