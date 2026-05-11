@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.97",
-    "description":  "TEST logs: add full per-check DETAILS map and richer debug table.",
-    "builtAt":  "2026-05-11T13:21:49.1647475+03:00",
+    "version":  "0.3.98",
+    "description":  "Align ranked soak pass criteria with runtime activity; add explicit soak reason.",
+    "builtAt":  "2026-05-11T13:25:33.4262491+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.98",
+                        "description":  "Align ranked soak pass criteria with runtime activity; add explicit soak reason.",
+                        "date":  "2026-05-11T13:25:33.4262491+03:00"
+                    },
                     {
                         "version":  "0.3.97",
                         "description":  "TEST logs: add full per-check DETAILS map and richer debug table.",
@@ -247,11 +252,6 @@
                         "version":  "0.3.49",
                         "description":  "slice 27: Calib on TEST checkbox + testUi.v1 + farm-loop warn",
                         "date":  "2026-05-10T16:52:36.5380233+03:00"
-                    },
-                    {
-                        "version":  "0.3.48",
-                        "description":  "slice 26: panel opener timing ms + combatUi.v1 persistence",
-                        "date":  "2026-05-10T16:27:58.5650038+03:00"
                     }
                 ]
 }

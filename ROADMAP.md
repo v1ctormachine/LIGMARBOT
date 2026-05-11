@@ -17,6 +17,7 @@ Emergency **hotfix** (crash / wrong click): ship immediately, even if tiny.
 
 ## Done recently
 
+- **Ranked soak criterion alignment (v0.3.98)** — soak now passes on any ranked runtime activity and reports explicit failure reason in detail payload.
 - **DevTools TEST detail policy (v0.3.97)** — TEST now prints `[TEST] DETAILS` per-check payload + richer table (`skipped`, `reason/error`) for precise debugging.
 - **TEST stability fixes (v0.3.96)** — fixed ranked soak false-fails (`ranked_progress` counts as activity) and class-mismatch false-fails in skill-master check across sequential class tests.
 - **TEST profiles (v0.3.95)** — added `testProfile: "quick" | "release"`; release mode runs strict checks + longer soak.

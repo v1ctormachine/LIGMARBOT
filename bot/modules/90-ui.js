@@ -694,6 +694,7 @@
         let soakStopIssued = false;
         let soakPicks = 0;
         let soakProgress = 0;
+        let soakTotalEvents = 0;
         let soakEvents = null;
         const soakStartAt = Date.now();
         if (typeof resetPlannerRuntimeTelemetry === "function") {
@@ -719,14 +720,21 @@
             const ev = rt && rt.events ? rt.events : null;
             const picks = ev && Number.isFinite(ev.ranked_pick) ? ev.ranked_pick : 0;
             const progress = ev && Number.isFinite(ev.ranked_progress) ? ev.ranked_progress : 0;
+            const totalEvents = ev
+              ? Object.keys(ev).reduce(function (acc, k) {
+                const n = ev[k];
+                return acc + (Number.isFinite(n) ? n : 0);
+              }, 0)
+              : 0;
             soakPicks = picks;
             soakProgress = progress;
+            soakTotalEvents = totalEvents;
             soakEvents = ev || null;
-            if (Date.now() - soakStartAt >= rankedSoakMinMs && (picks > 0 || progress > 0)) {
+            if (Date.now() - soakStartAt >= rankedSoakMinMs && totalEvents > 0) {
               break;
             }
           }
-          if (Date.now() - soakStartAt >= rankedSoakMaxMs && soakPicks <= 0 && soakProgress <= 0) {
+          if (Date.now() - soakStartAt >= rankedSoakMaxMs && soakTotalEvents <= 0) {
             soakTimedOut = true;
           }
         } catch (err) {
@@ -755,7 +763,17 @@
           soakStopped = !Runtime.autoFarm.running;
         }
         const soakStopAccepted = soakStopped || (soakStopIssued && Runtime.autoFarm.stopRequested);
-        const soakActivityOk = soakPicks > 0 || soakProgress > 0;
+        const soakActivityOk = soakTotalEvents > 0;
+        let soakReason = "";
+        if (soakTimedOut) {
+          soakReason = "no_ranked_activity_before_timeout";
+        } else if (!soakActivityOk) {
+          soakReason = "no_ranked_activity";
+        } else if (soakError) {
+          soakReason = "soak_error";
+        } else if (!soakStopAccepted) {
+          soakReason = "stop_not_accepted";
+        }
         addCheck(
           "planner_ranked_soak",
           soakActivityOk && !soakError && !soakTimedOut,
@@ -767,7 +785,9 @@
             durationMs: Date.now() - soakStartAt,
             rankedPicks: soakPicks,
             rankedProgressEvents: soakProgress,
+            totalRankedEvents: soakTotalEvents,
             timedOut: soakTimedOut,
+            reason: soakReason || null,
             events: soakEvents,
             error: soakError
           },
