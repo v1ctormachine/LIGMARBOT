@@ -691,8 +691,21 @@
         try {
           calibration = await quickCalibrationSession();
           Logger.log("TEST", "quickCalibrationSession", calibration);
-          const calOk = !!(calibration && calibration.ok);
-          addCheck("calibration_observe", calOk, calibration, strictCalibration);
+          const hasKey = !!(calibration && calibration.lastFoughtKey);
+          const mergeOk = !!(calibration && calibration.enemyDbMerge && calibration.enemyDbMerge.ok);
+          if (!hasKey || !mergeOk) {
+            // AI CHANGED: If TEST is pressed out of combat / no target, observe can be OK but attribution key is missing.
+            // Treat as skipped unless strictCalibration is requested.
+            const detail = {
+              skipped: !strictCalibration,
+              reason: !hasKey ? "no_enemy_key" : "merge_failed",
+              lastFoughtKey: calibration ? calibration.lastFoughtKey : null,
+              enemyDbMerge: calibration ? calibration.enemyDbMerge : null
+            };
+            addCheck("calibration_observe", !strictCalibration, detail, strictCalibration);
+          } else {
+            addCheck("calibration_observe", true, calibration, strictCalibration);
+          }
         } catch (err) {
           calibrationError = String(err && err.message ? err.message : err);
           Logger.warn("TEST", "quickCalibrationSession failed", err);

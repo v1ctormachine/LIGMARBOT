@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.72",
-    "description":  "Fix TEST rejection: define chargeCancelTest at bundle scope; keep charge-cancel on-demand only.",
-    "builtAt":  "2026-05-11T10:38:10.2959313+03:00",
+    "version":  "0.3.73",
+    "description":  "TEST: treat calibration with no enemy key as skipped (unless strictCalibration).",
+    "builtAt":  "2026-05-11T10:40:44.7543747+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.73",
+                        "description":  "TEST: treat calibration with no enemy key as skipped (unless strictCalibration).",
+                        "date":  "2026-05-11T10:40:44.7543747+03:00"
+                    },
                     {
                         "version":  "0.3.72",
                         "description":  "Fix TEST rejection: define chargeCancelTest at bundle scope; keep charge-cancel on-demand only.",
@@ -247,11 +252,6 @@
                         "version":  "0.3.24",
                         "description":  "C4 slice 10: planner UI for first-burst-only ranked skill toggle",
                         "date":  "2026-05-09T20:57:57.4434240+03:00"
-                    },
-                    {
-                        "version":  "0.3.23",
-                        "description":  "Fix slice 9: re-find after kill when multi-mob pull continues",
-                        "date":  "2026-05-09T20:26:46.1904239+03:00"
                     }
                 ]
 }
