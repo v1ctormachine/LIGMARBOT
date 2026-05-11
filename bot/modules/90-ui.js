@@ -696,7 +696,12 @@
         let soakProgress = 0;
         let soakTotalEvents = 0;
         let soakEvents = null;
+        let soakAttemptCount = 1;
+        let soakRetryUsed = false;
+        let soakRetryReason = "";
+        let soakRetryExtensionMs = 0;
         const soakStartAt = Date.now();
+        let soakDeadlineMs = rankedSoakMaxMs;
         if (typeof resetPlannerRuntimeTelemetry === "function") {
           try {
             resetPlannerRuntimeTelemetry();
@@ -712,7 +717,7 @@
           } else {
             soakStarted = true;
           }
-          while (Date.now() - soakStartAt < rankedSoakMaxMs) {
+          while (Date.now() - soakStartAt < soakDeadlineMs) {
             await sleep(250, { bypassStop: true });
             const rt = typeof getPlannerRuntimeTelemetry === "function"
               ? getPlannerRuntimeTelemetry()
@@ -733,8 +738,22 @@
             if (Date.now() - soakStartAt >= rankedSoakMinMs && totalEvents > 0) {
               break;
             }
+            // AI CHANGED: Quick-profile safety hardening — extend soak once when no ranked runtime activity appears in the initial window.
+            if (!isReleaseProfile && !soakRetryUsed && Date.now() - soakStartAt >= rankedSoakMaxMs && soakTotalEvents <= 0) {
+              const extraMs = Number.isFinite(opts.rankedSoakRetryExtraMs) ? opts.rankedSoakRetryExtraMs : 20000;
+              soakRetryUsed = true;
+              soakAttemptCount = 2;
+              soakRetryExtensionMs = extraMs;
+              soakRetryReason = "no_ranked_activity_initial_window";
+              soakDeadlineMs = rankedSoakMaxMs + extraMs;
+              Logger.log("TEST", "ranked soak retry window enabled", {
+                reason: soakRetryReason,
+                extraMs: extraMs,
+                newDeadlineMs: soakDeadlineMs
+              });
+            }
           }
-          if (Date.now() - soakStartAt >= rankedSoakMaxMs && soakTotalEvents <= 0) {
+          if (Date.now() - soakStartAt >= soakDeadlineMs && soakTotalEvents <= 0) {
             soakTimedOut = true;
           }
         } catch (err) {
@@ -786,6 +805,10 @@
             rankedPicks: soakPicks,
             rankedProgressEvents: soakProgress,
             totalRankedEvents: soakTotalEvents,
+            attemptCount: soakAttemptCount,
+            retryUsed: soakRetryUsed,
+            retryReason: soakRetryReason || null,
+            retryExtensionMs: soakRetryExtensionMs,
             timedOut: soakTimedOut,
             reason: soakReason || null,
             events: soakEvents,
