@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.83",
-    "description":  "GUI: add live ON duration timer in control panel footer.",
-    "builtAt":  "2026-05-11T11:46:36.8615309+03:00",
+    "version":  "0.3.84",
+    "description":  "Fix GUI footer live refresh during ON; restore safe status ticker.",
+    "builtAt":  "2026-05-11T11:53:31.9412082+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.84",
+                        "description":  "Fix GUI footer live refresh during ON; restore safe status ticker.",
+                        "date":  "2026-05-11T11:53:31.9412082+03:00"
+                    },
                     {
                         "version":  "0.3.83",
                         "description":  "GUI: add live ON duration timer in control panel footer.",
@@ -247,11 +252,6 @@
                         "version":  "0.3.35",
                         "description":  "slice 18 default full channel opener hold + dismiss popup (v0.3.35)",
                         "date":  "2026-05-09T23:00:36.9928664+03:00"
-                    },
-                    {
-                        "version":  "0.3.34",
-                        "description":  "slice 17 skip long-hold openers that short-click no-op",
-                        "date":  "2026-05-09T22:52:01.9211537+03:00"
                     }
                 ]
 }

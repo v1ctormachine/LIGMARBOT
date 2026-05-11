@@ -47,6 +47,8 @@
       testButton: null,
       // AI CHANGED: one-line last TEST outcome under the TEST button (90-ui.js runUiTestBundle).
       testResultLine: null,
+      // AI CHANGED: periodic GUI footer/phase refresh interval id (single-instance ticker in 90-ui.js).
+      statusRefreshTimer: null,
       // AI CHANGED: slice 26 — ranked opener ms inputs (90-ui.js).
       combatGraceInput: null,
       combatEarlyCancelInput: null

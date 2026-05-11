@@ -366,6 +366,21 @@
     });
   }
 
+  // AI CHANGED: Keep exactly one live GUI refresh ticker; recover if callback throws.
+  function ensureControlPanelRefreshTicker() {
+    if (Runtime.ui.statusRefreshTimer) {
+      clearInterval(Runtime.ui.statusRefreshTimer);
+      Runtime.ui.statusRefreshTimer = null;
+    }
+    Runtime.ui.statusRefreshTimer = setInterval(function () {
+      try {
+        updateControlPanelStatus();
+      } catch (err) {
+        Logger.warn("UI", "updateControlPanelStatus tick failed", err);
+      }
+    }, 500);
+  }
+
   // AI CHANGED: Live GUI refresher — phase block, button enabled-state, and compact stats line.
   function updateControlPanelStatus() {
     if (!Runtime.ui.statusNode) {
@@ -1152,12 +1167,11 @@
     Runtime.ui.phaseSinceNode = phaseSinceNode;
     Runtime.ui.testButton = testButton;
     Runtime.ui.testResultLine = testResultLine;
-    Runtime.ui.combatGraceInput = graceInput;
-    Runtime.ui.combatEarlyCancelInput = earlyInput;
+    Runtime.ui.combatGraceInput = null;
+    Runtime.ui.combatEarlyCancelInput = null;
 
     updateControlPanelStatus();
-
-    // AI CHANGED: Faster refresh (500ms) so the "X s ago" counter and phase changes feel live.
-    setInterval(updateControlPanelStatus, 500);
+    // AI CHANGED: Faster refresh (500ms) so ON timer + HP/MP/Ping/phase stay live during auto-farm.
+    ensureControlPanelRefreshTicker();
     return panel;
   }

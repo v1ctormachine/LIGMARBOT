@@ -17,6 +17,7 @@ Emergency **hotfix** (crash / wrong click): ship immediately, even if tiny.
 
 ## Done recently
 
+- **GUI footer live-refresh fix (v0.3.84)** — fixed frozen HP/MP/Ping/ON timer footer updates by restoring safe single-instance refresh ticker.
 - **GUI ON timer (v0.3.83)** — panel footer now shows live ON duration while auto-farm runs.
 - **Ranked tuning hints (v0.3.82)** — diagnostics suggest horizon threshold tuning from runtime telemetry; TEST adds `Ranked tuning hint` soft check.
 - **Ranked reason quality (v0.3.81)** — opener diagnostics now include `% vs baseline`, threshold %, and filtered-out buckets; TEST adds `Ranked reason quality`.
