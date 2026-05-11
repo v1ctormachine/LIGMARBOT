@@ -716,6 +716,13 @@
           row.conception = inferSkillConception(row);
         }
       }
+      // AI CHANGED: Auto-attach master DB conception after cache load (configured class only).
+      if (Config.skills.autoApplyMasterOnCacheLoad !== false && typeof applySkillMasterToSlots === "function") {
+        const ck = typeof Config.skills.masterClassKey === "string" ? Config.skills.masterClassKey.trim() : "";
+        if (ck) {
+          applySkillMasterToSlots(ck);
+        }
+      }
       Runtime.skills.cacheLoadedAt = Date.now();
       Runtime.skills.scannedAt = payload.savedAt || null;
       Runtime.skills.lastError = null;
@@ -886,6 +893,13 @@
     Runtime.skills.slots = slots;
     Runtime.skills.scannedAt = Date.now();
     Runtime.skills.lastError = null;
+    // AI CHANGED: Auto-attach master DB conception after fresh scan (configured class only).
+    if (Config.skills.autoApplyMasterOnScan !== false) {
+      const ck = typeof Config.skills.masterClassKey === "string" ? Config.skills.masterClassKey.trim() : "";
+      if (ck) {
+        applySkillMasterToSlots(ck);
+      }
+    }
     saveSkillsToCache(slots);
 
     // Pretty-print a table for quick eyeballing. Console-only -- no GUI clutter.

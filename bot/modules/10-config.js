@@ -213,8 +213,14 @@
       betweenSlotsMs: 150,
       // localStorage key for the skill DB cache. Bumped if we ever change the parsed schema.
       storageKey: "ligmarbot.skillsDb.v1",
+      // AI CHANGED: Master DB mapping class key for current hero/action bar (assassin/archer/mage/guardian/warrior/priest).
+      // Used by applySkillMasterToSlots() during cache-load/scan and TEST smoke.
+      masterClassKey: "assassin",
       // AI CHANGED: Phase C4 slice 13 — on boot, discard cache if live bar fingerprint != saved (class switch).
       invalidateCacheOnBarMismatch: true,
+      // AI CHANGED: Automatically attach master conception to slots after cache-load / scan (if masterClassKey set).
+      autoApplyMasterOnCacheLoad: true,
+      autoApplyMasterOnScan: true,
       // AI CHANGED: slice 21b — BOOT retries loadSkillsFromCache when action bar mounts late (ms after previous attempt).
       bootCacheRetryDelaysMs: [1500, 3500, 8000]
     },

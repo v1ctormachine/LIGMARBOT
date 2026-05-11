@@ -669,9 +669,16 @@
 
       // AI CHANGED: Master skill DB smoke — verify lookup exists and returns a known entry.
       try {
-        if (typeof getSkillMasterEntry === "function") {
-          const e = getSkillMasterEntry("assassin", "Blade Dance");
-          addCheck("skill_master_db", !!e, { ok: !!e, sample: e ? e.name : null }, false);
+        if (typeof getSkillMasterEntry === "function" && typeof applySkillMasterToSlots === "function") {
+          const ck = typeof Config.skills.masterClassKey === "string" ? Config.skills.masterClassKey.trim() : "";
+          if (ck) {
+            const applied = applySkillMasterToSlots(ck);
+            const sample = getSkillMasterEntry(ck, "Blade Dance");
+            const ok = !!(applied && applied.ok);
+            addCheck("skill_master_db", ok, { classKey: ck, applied: applied, sample: sample ? sample.name : null }, false);
+          } else {
+            addCheck("skill_master_db", true, { skipped: true, reason: "master_classKey_empty" }, false);
+          }
         } else {
           addCheck("skill_master_db", true, { skipped: true, reason: "no_master_module" }, false);
         }
