@@ -228,6 +228,58 @@
     return null;
   }
 
+  // AI CHANGED: Detect current class from profile icon (`icon-src-archer`) for per-class planner profile selection.
+  function plannerDetectProfileClassKey() {
+    const sel = Config.selectors && Config.selectors.heroProfileClassIcon
+      ? Config.selectors.heroProfileClassIcon
+      : "app-icon.profile-class";
+    const node = document.querySelector(sel);
+    if (!node) {
+      return "";
+    }
+    const cls = (node.className || "").toString().toLowerCase();
+    const m = cls.match(/\bicon-src-([a-z0-9_-]+)\b/);
+    if (m && m[1]) {
+      return m[1].trim();
+    }
+    return "";
+  }
+
+  // AI CHANGED: Apply per-class planner profile to live Config knobs (runtime-only, no storage writes).
+  function plannerApplyClassProfile() {
+    const map = Config.planner && Config.planner.classProfiles ? Config.planner.classProfiles : null;
+    if (!map || typeof map !== "object") {
+      Runtime.planner.activeClassProfile = null;
+      return { ok: false, reason: "no_profiles" };
+    }
+    const classKey = plannerDetectProfileClassKey() || "default";
+    const profile = map[classKey] || map.default || null;
+    if (!profile || typeof profile !== "object") {
+      Runtime.planner.activeClassProfile = null;
+      return { ok: false, reason: "profile_missing", classKey: classKey };
+    }
+    const applied = {};
+    function applyNum(key, min) {
+      const v = profile[key];
+      if (Number.isFinite(v) && (min === undefined || v >= min)) {
+        Config.planner[key] = v;
+        applied[key] = v;
+      }
+    }
+    applyNum("skillMpReserve", 0);
+    applyNum("openerHorizonMinImprovementFraction", 0);
+    applyNum("openerExtraRankedSkills", 0);
+    applyNum("conceptionOpenerGateDelta", 0);
+    const out = {
+      ok: true,
+      classKey: classKey,
+      profileKey: map[classKey] ? classKey : "default",
+      applied: applied
+    };
+    Runtime.planner.activeClassProfile = out;
+    return out;
+  }
+
   // AI CHANGED: Phase C4 slice 4 -- rough effect weights for ranking (console-only; no live CDs).
   function plannerSkillEffectHeuristicScore(effects) {
     if (!Array.isArray(effects)) {
@@ -632,6 +684,7 @@
 
   // AI CHANGED: Pack A — read-only snapshot for console after a fight / when debugging openers.
   function getPlannerOpeningPickDiagnostics() {
+    const classProfile = plannerApplyClassProfile();
     const pr = Runtime.planner;
     const slots = Runtime.skills.slots || [];
     return {
@@ -643,7 +696,8 @@
       attackSkillsRanked: rankAttackSkillsByHeuristic({}).order.length,
       lastOpenerHorizonSim: pr.lastOpenerHorizonSim || null,
       openerRuntime: pr.openerRuntime || null,
-      tuningHint: plannerBuildRankedTuningHint()
+      tuningHint: plannerBuildRankedTuningHint(),
+      classProfile: classProfile
     };
   }
 
@@ -684,6 +738,7 @@
 
   // AI CHANGED: Phase C4 slice 8+12+15 — pick opener with optional horizonSim (paper damage window); else first feasible heuristic order.
   function plannerPickSkillOpeningPick(userOpts) {
+    plannerApplyClassProfile();
     const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
     let exclude = new Set();
     if (opts.excludeSlots instanceof Set) {

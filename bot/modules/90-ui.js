@@ -469,6 +469,7 @@
       planner_ranked_tuning_hint: "Ranked tuning hint",
       planner_ranked_preflight: "Ranked preflight",
       planner_ranked_soak: "Ranked soak",
+      planner_class_profile: "Class profile",
       auto_farm_session_summary: "Auto-farm session",
       planner_ranked_openers: "Ranked opener",
       calibration_observe: "Calibration"
@@ -746,6 +747,13 @@
       } catch (err) {
         Logger.warn("TEST", "getPlannerOpeningPickDiagnostics threw", err);
       }
+      const classProfile = diag && diag.classProfile ? diag.classProfile : null;
+      addCheck(
+        "planner_class_profile",
+        !!(classProfile && classProfile.ok && classProfile.profileKey),
+        classProfile || { error: "no_class_profile" },
+        false
+      );
       const rankedOn = !!Config.planner.useRankedAttackSkillsInCombat;
       addCheck(
         "planner_ranked_preflight",

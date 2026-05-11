@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.89",
-    "description":  "Fix TEST auto-soak hang; TEST now stays OFF by default after completion.",
-    "builtAt":  "2026-05-11T12:32:18.4139947+03:00",
+    "version":  "0.3.90",
+    "description":  "Per-class planner profiles auto-applied from class icon; TEST class-profile check.",
+    "builtAt":  "2026-05-11T12:36:26.8778275+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.90",
+                        "description":  "Per-class planner profiles auto-applied from class icon; TEST class-profile check.",
+                        "date":  "2026-05-11T12:36:26.8778275+03:00"
+                    },
                     {
                         "version":  "0.3.89",
                         "description":  "Fix TEST auto-soak hang; TEST now stays OFF by default after completion.",
@@ -247,11 +252,6 @@
                         "version":  "0.3.41",
                         "description":  "slice 22 remove combat bar hold-cast tap-only opener",
                         "date":  "2026-05-10T12:04:41.8132854+03:00"
-                    },
-                    {
-                        "version":  "0.3.40",
-                        "description":  "slice 21b stop exits secureTile no fail spam skill boot retries",
-                        "date":  "2026-05-10T09:50:00.1356962+03:00"
                     }
                 ]
 }

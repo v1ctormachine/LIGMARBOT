@@ -229,6 +229,7 @@
       // AI CHANGED: Runtime ranked-opener telemetry for soak validation (85-combat -> Runtime.planner.openerRuntime).
       getPlannerRuntimeTelemetry: getPlannerRuntimeTelemetry,
       resetPlannerRuntimeTelemetry: resetPlannerRuntimeTelemetry,
+      plannerApplyClassProfile: plannerApplyClassProfile,
       // AI CHANGED: Diagnostics-only threshold suggestion from ranked runtime telemetry (no auto-write to Config).
       plannerBuildRankedTuningHint: plannerBuildRankedTuningHint,
       // AI CHANGED: openerHorizonSim — paper damage window preview for ranked candidates (86-planner.js).

@@ -113,6 +113,8 @@
         lastEvent: null,
         lastAt: null,
         recent: []
-      }
+      },
+      // AI CHANGED: active class-profile applied to planner knobs for current runtime.
+      activeClassProfile: null
     }
   };

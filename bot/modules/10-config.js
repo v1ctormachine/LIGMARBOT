@@ -85,7 +85,52 @@
       // AI CHANGED: When true, attack-skill rank order uses conception first (master/scanned role model) instead of parsed effect magnitudes.
       skillRankUseConception: true,
       // AI CHANGED: Conception-first opener gate — allow horizon tie-break only within this score distance from best conception score.
-      conceptionOpenerGateDelta: 1.5
+      conceptionOpenerGateDelta: 1.5,
+      // AI CHANGED: Step 2 combat teaching — per-class planner profiles (auto-applied from profile icon class).
+      classProfiles: {
+        default: {
+          skillMpReserve: 0,
+          openerHorizonMinImprovementFraction: 0.02,
+          openerExtraRankedSkills: 1,
+          conceptionOpenerGateDelta: 1.5
+        },
+        archer: {
+          skillMpReserve: 0,
+          openerHorizonMinImprovementFraction: 0.018,
+          openerExtraRankedSkills: 1,
+          conceptionOpenerGateDelta: 1.4
+        },
+        assassin: {
+          skillMpReserve: 2,
+          openerHorizonMinImprovementFraction: 0.022,
+          openerExtraRankedSkills: 2,
+          conceptionOpenerGateDelta: 1.6
+        },
+        mage: {
+          skillMpReserve: 5,
+          openerHorizonMinImprovementFraction: 0.028,
+          openerExtraRankedSkills: 1,
+          conceptionOpenerGateDelta: 1.5
+        },
+        guardian: {
+          skillMpReserve: 3,
+          openerHorizonMinImprovementFraction: 0.02,
+          openerExtraRankedSkills: 1,
+          conceptionOpenerGateDelta: 1.7
+        },
+        warrior: {
+          skillMpReserve: 2,
+          openerHorizonMinImprovementFraction: 0.02,
+          openerExtraRankedSkills: 2,
+          conceptionOpenerGateDelta: 1.6
+        },
+        priest: {
+          skillMpReserve: 6,
+          openerHorizonMinImprovementFraction: 0.03,
+          openerExtraRankedSkills: 1,
+          conceptionOpenerGateDelta: 1.4
+        }
+      }
     },
     // AI CHANGED: Added runtime logging flags so noisy snapshot logs can be disabled quickly.
     logging: {
