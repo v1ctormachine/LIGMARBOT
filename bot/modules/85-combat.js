@@ -599,6 +599,184 @@
     };
   }
 
+  // AI CHANGED: Out-of-combat explore prep — drink HP potions toward threshold when enemyCount===0 (does not spend MP potions).
+  async function tryUseOutOfCombatHpTopoff(liveState, thresholdPct) {
+    if (!(Config.combat && Config.combat.useCombatPotions !== false)) {
+      return { used: false, reason: "combat_potions_off" };
+    }
+    const enemyCount =
+      liveState && liveState.combat && Number.isFinite(liveState.combat.enemyCount)
+        ? liveState.combat.enemyCount
+        : 0;
+    if (enemyCount !== 0) {
+      return { used: false, reason: "not_clear_tile" };
+    }
+    updateCombatSustainObservations(liveState);
+    const hpCur =
+      liveState &&
+      liveState.player &&
+      liveState.player.hp &&
+      liveState.player.hp.valid &&
+      Number.isFinite(liveState.player.hp.cur)
+        ? liveState.player.hp.cur
+        : null;
+    const hpMax =
+      liveState &&
+      liveState.player &&
+      liveState.player.hp &&
+      liveState.player.hp.valid &&
+      Number.isFinite(liveState.player.hp.max)
+        ? liveState.player.hp.max
+        : null;
+    const hpPct =
+      liveState &&
+      liveState.player &&
+      liveState.player.hp &&
+      liveState.player.hp.valid &&
+      Number.isFinite(liveState.player.hp.pct)
+        ? liveState.player.hp.pct
+        : null;
+    if (!Number.isFinite(hpCur) || !Number.isFinite(hpMax) || !(hpMax > 0) || !Number.isFinite(hpPct)) {
+      return { used: false, reason: "hp_unread" };
+    }
+    const safeThreshold =
+      Number.isFinite(thresholdPct) ? Math.max(0.05, Math.min(1, thresholdPct)) : 0.75;
+    if (hpPct >= safeThreshold) {
+      return { used: false, reason: "already_above_threshold" };
+    }
+    const targetCur = hpMax * safeThreshold;
+    const missingToThreshold = Math.max(0, targetCur - hpCur);
+    if (!(missingToThreshold > 0.5)) {
+      return { used: false, reason: "missing_hp_trivial" };
+    }
+    const potion = chooseCombatPotionCandidate("hp", missingToThreshold, { preferLargest: true });
+    if (!potion) {
+      return { used: false, reason: "no_ready_hp_potion" };
+    }
+    const useResult = await tryUseCombatPotion("hp", potion, "out_of_combat_explore_topoff", { ignoreThrottle: true });
+    if (useResult && useResult.ok) {
+      return { used: true, detail: useResult };
+    }
+    return {
+      used: false,
+      reason: useResult && useResult.reason ? useResult.reason : "use_failed",
+      detail: useResult || null
+    };
+  }
+
+  // AI CHANGED: Idle regen gate — when enemyCount===0 before exploreByScan, stay idle until HP≥threshold (HP potions + passive ticks).
+  async function waitForOutOfCombatHealBeforeExplore(userOpts) {
+    const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
+    if (Config.combat && Config.combat.outOfCombatHealBeforeExplore === false) {
+      return { ok: true, skipped: true, reason: "feature_off" };
+    }
+    const thresholdPct =
+      Number.isFinite(Config.combat && Config.combat.outOfCombatHealWaitHpPct)
+        ? Math.max(0.05, Math.min(1, Config.combat.outOfCombatHealWaitHpPct))
+        : 0.75;
+    const pollMs =
+      Number.isFinite(Config.combat && Config.combat.outOfCombatHealPollMs)
+        ? Math.max(120, Config.combat.outOfCombatHealPollMs)
+        : 600;
+    let state = readBasicState();
+    if (!(typeof state.combat.enemyCount === "number" && state.combat.enemyCount === 0)) {
+      return { ok: true, skipped: true, reason: "enemies_present", thresholdPct: thresholdPct };
+    }
+    const hp =
+      state && state.player && state.player.hp && state.player.hp.valid ? state.player.hp : null;
+    const targetActive =
+      state &&
+      state.combat &&
+      state.combat.targetHp &&
+      state.combat.targetHp.valid &&
+      Number.isFinite(state.combat.targetHp.cur) &&
+      state.combat.targetHp.cur > 0;
+    if (!hp || !Number.isFinite(hp.pct)) {
+      return { ok: true, skipped: true, reason: "hp_unread", thresholdPct: thresholdPct };
+    }
+    if (targetActive) {
+      return {
+        ok: true,
+        skipped: true,
+        reason: "target_bar_active",
+        thresholdPct: thresholdPct,
+        hpPct: +hp.pct.toFixed(4)
+      };
+    }
+    if (hp.pct >= thresholdPct) {
+      return { ok: true, waited: false, thresholdPct: thresholdPct, hpPct: +hp.pct.toFixed(4) };
+    }
+    const startedAt = Date.now();
+    let sustainUses = 0;
+    while (!Runtime.autoFarm.stopRequested) {
+      state = readBasicState();
+      if (!(typeof state.combat.enemyCount === "number" && state.combat.enemyCount === 0)) {
+        return {
+          ok: true,
+          skipped: true,
+          reason: "combat_became_active_enemy_count",
+          thresholdPct: thresholdPct,
+          sustainUses: sustainUses
+        };
+      }
+      const hpNow = state.player && state.player.hp && state.player.hp.valid ? state.player.hp : null;
+      if (!hpNow || !Number.isFinite(hpNow.pct)) {
+        return {
+          ok: true,
+          skipped: true,
+          reason: "hp_became_unread",
+          thresholdPct: thresholdPct,
+          sustainUses: sustainUses
+        };
+      }
+      const targetNow =
+        state &&
+        state.combat &&
+        state.combat.targetHp &&
+        state.combat.targetHp.valid &&
+        Number.isFinite(state.combat.targetHp.cur) &&
+        state.combat.targetHp.cur > 0;
+      if (targetNow) {
+        return {
+          ok: true,
+          skipped: true,
+          reason: "combat_became_active_target",
+          thresholdPct: thresholdPct,
+          hpPct: +hpNow.pct.toFixed(4),
+          sustainUses: sustainUses
+        };
+      }
+      if (hpNow.pct >= thresholdPct) {
+        return {
+          ok: true,
+          waited: true,
+          thresholdPct: thresholdPct,
+          hpPct: +hpNow.pct.toFixed(4),
+          waitedMs: Math.max(0, Date.now() - startedAt),
+          sustainUses: sustainUses
+        };
+      }
+      const hpCurText = Number.isFinite(hpNow.cur) && Number.isFinite(hpNow.max)
+        ? `${Math.round(hpNow.cur)}/${Math.round(hpNow.max)}`
+        : `${Math.round(hpNow.pct * 100)}%`;
+      setBotStatus(
+        "waiting",
+        `healing before next tile (${hpCurText} → ${Math.round(thresholdPct * 100)}%)`
+      );
+      const topoff = await tryUseOutOfCombatHpTopoff(state, thresholdPct);
+      if (topoff && topoff.used) {
+        sustainUses += 1;
+        Logger.log("COMBAT", "Out-of-combat explore HP topoff", {
+          reason: opts.reason || "before_explore_move",
+          sustainUses: sustainUses,
+          detail: topoff.detail || null
+        });
+      }
+      await sleep(pollMs, { bypassStop: true });
+    }
+    return { ok: false, reason: "stop_requested", thresholdPct: thresholdPct };
+  }
+
   // AI CHANGED: Phase C4 slice 8 — first swing: ranked attack skill (if enabled + pick), else basic attack.
   // AI CHANGED: slice 9 — optional opts.useRankedSkillOpener === false forces basic-only (follow-up bursts).
   // AI CHANGED: slice 22 — combat opener is tap-only (clickActionBarSlot); no synthetic bar hold — game uses tap for skills including charge start.
@@ -1484,7 +1662,16 @@
           typeof nowState.combat.enemyCount === "number" &&
           nowState.combat.enemyCount === 0;
         if (shouldIdleBackoff) {
-          // AI CHANGED: rollback v0.3.146–v0.3.147 heal gate — idle tile moves run immediately (parsed potion sustain unchanged).
+          // AI CHANGED: enemyCount===0 — top off to outOfCombatHealWaitHpPct with HP potions + passive regen before exploreByScan.
+          const healReady = await waitForOutOfCombatHealBeforeExplore({
+            reason: "before_explore_move"
+          });
+          if (!healReady.ok && healReady.reason === "stop_requested") {
+            exitReason = "user_stop";
+            break;
+          } else if (healReady.waited) {
+            Logger.log("COMBAT", "Out-of-combat heal gate satisfied before explore move", healReady);
+          }
           // AI CHANGED: Prefer scan-driven movement while idling on empty tile.
           let moveResult = await exploreByScan();
           if (!moveResult.ok) {

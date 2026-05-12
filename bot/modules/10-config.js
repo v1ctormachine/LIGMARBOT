@@ -90,6 +90,12 @@
       hpPotionForecastWindowSec: 4,
       // AI CHANGED: Use MP potion below this mp pct so ranked combat does not degrade into basic-only farming for long windows.
       mpPotionUseBelowPct: 0.22,
+      // AI CHANGED: Before idle tile-to-tile explore when enemyCount===0, wait until HP reaches this pct using HP potions (parsed bar) + passive regen.
+      outOfCombatHealBeforeExplore: true,
+      // AI CHANGED: HP floor before exploreByScan on empty tiles (enemyCount 0); stay idle below this and keep trying HP potions when ready.
+      outOfCombatHealWaitHpPct: 0.75,
+      // AI CHANGED: Poll cadence while topping off HP outside combat before the next explore step.
+      outOfCombatHealPollMs: 600,
       // AI CHANGED: Avoid spamming repeated potion clicks into the same cooldown / latency window.
       combatPotionThrottleMs: 1200,
       // AI CHANGED: Brief settle after a potion click so the client can register the consumable before the next combat action.
