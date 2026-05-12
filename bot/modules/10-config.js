@@ -35,6 +35,8 @@
       attackProgressAfterChargeCancelTimeoutMs: 3200,
       // AI CHANGED: Charge skills can now evaluate several release fractions and pick the best opener horizon result; false falls back to the fixed configured fraction below.
       chargeSkillDynamicReleaseEnabled: true,
+      // AI CHANGED: Dense charge search step for channel_gear skills (0.01 = 1% increments across the full hold range).
+      chargeSkillDynamicSearchStepFraction: 0.01,
       // AI CHANGED: Generic dynamic release candidates for parsed channel_gear skills. Verified per-skill fractions are added on top so known-good timings still participate.
       chargeSkillDynamicCandidateFractions: [0.25, 0.5, 0.75, 1],
       // AI CHANGED: Fallback fixed fraction when dynamic scoring is off/unavailable; default stays full charge unless a per-skill override says otherwise.
@@ -68,6 +70,30 @@
       // AI CHANGED: slice 24b — optional explicit cancel button(s); if empty, walk up from hint span to button / role=button.
       chargingCancelClickSelectors: [],
       chargingCancelParentWalkMax: 14,
+      // AI CHANGED: Combat readiness pack — potions are live in combat for unattended farming safety.
+      useCombatPotions: true,
+      // AI CHANGED: Potion cooldown reported by the user; used as a safety mirror on top of DOM cooldown hints.
+      combatPotionCooldownMs: 15000,
+      // AI CHANGED: Treat HP/MP potion cooldown as shared unless proven otherwise, so the bot does not chain impossible consumables.
+      combatPotionSharedCooldown: true,
+      // AI CHANGED: Heal-over-time potions in the current build run for 10s; used as a fallback when the tooltip omits duration.
+      combatPotionHotDefaultDurationSec: 10,
+      // AI CHANGED: Use HP potion proactively below this hp pct during combat.
+      hpPotionUseBelowPct: 0.55,
+      // AI CHANGED: Emergency HP potion threshold — when this low, drink even if we just used another consumable recently.
+      hpPotionEmergencyBelowPct: 0.35,
+      // AI CHANGED: In calm situations, wait until most of an HP potion can land before using it.
+      hpPotionSafeMissingHealFraction: 0.85,
+      // AI CHANGED: Under active combat pressure, allow earlier HP potion use to keep HP near full instead of waiting for perfect efficiency.
+      hpPotionCombatMissingHealFraction: 0.45,
+      // AI CHANGED: Project a short future damage window when deciding whether a HoT potion will be fully consumed.
+      hpPotionForecastWindowSec: 4,
+      // AI CHANGED: Use MP potion below this mp pct so ranked combat does not degrade into basic-only farming for long windows.
+      mpPotionUseBelowPct: 0.22,
+      // AI CHANGED: Avoid spamming repeated potion clicks into the same cooldown / latency window.
+      combatPotionThrottleMs: 1200,
+      // AI CHANGED: Brief settle after a potion click so the client can register the consumable before the next combat action.
+      combatPotionSettleMs: 120,
       attackProgressPollMs: 140,
       // AI CHANGED: Phase C4 slice 9 — after each successful find-enemy, keep attacking until clear/stuck (bounded).
       maxCombatAttackBurstsPerFind: 24
@@ -81,8 +107,8 @@
       recordEnemyDbBeforeAttack: false,
       // When true, after combat clears (before loot), log lastFoughtKey + whether DB has hp_drop calibration + hint.
       logPlannerAfterSecureTile: false,
-      // AI CHANGED: Phase C4 slice 8 — opening hit in attackUntilProgress tries ranked attack skill (cached scanSkills DB), else basic.
-      useRankedAttackSkillsInCombat: false,
+      // AI CHANGED: Combat readiness pack — ranked combat is now the default production path for the current build.
+      useRankedAttackSkillsInCombat: true,
       // AI CHANGED: Absolute MP floor: cast only if curMp >= manaCost + skillMpReserve (skip skill if MP unread).
       skillMpReserve: 5,
       // AI CHANGED: Phase C4 slice 9 — only first attack burst after each find-enemy uses ranked skill; later bursts basic-only (saves MP/CD on multi-mob pulls).
@@ -129,6 +155,38 @@
       openerRuntimeAggressionStep: 0.003,
       // AI CHANGED: Runtime aggression can never lower the generic threshold below this floor on its own.
       openerRuntimeAggressionMinFraction: 0.005,
+      // AI CHANGED: Generic opener score can add small live-fight context bonuses/penalties (pressure, finisher urgency, multi-target value).
+      openerContextAwareScoringEnabled: true,
+      // AI CHANGED: When HP falls below this pct, opener context treats long casts as riskier even for non-channel skills.
+      openerContextLowHpThresholdPct: 0.65,
+      // AI CHANGED: Low-HP danger contributes a bit more than one extra enemy to the opener pressure model.
+      openerContextLowHpPressureWeight: 1.25,
+      // AI CHANGED: Under pressure, long casts lose this many basic-DPS units per second of blocked time.
+      openerContextCastPressurePenaltyInBasicDps: 0.12,
+      // AI CHANGED: Control skills gain this many basic-DPS units under pressure (stun gets full weight, slow gets partial).
+      openerContextControlPressureBonusInBasicDps: 0.18,
+      // AI CHANGED: Multi-target attack skills gain this many basic-DPS units per extra enemy in live multi-mob pulls.
+      openerContextMultiTargetEnemyBonusInBasicDps: 0.1,
+      // AI CHANGED: Finisher urgency window — when target HP is within this many expected basic hits, fast immediate damage gets a small bonus.
+      openerContextLowTargetBasicHitWindow: 1.5,
+      // AI CHANGED: Immediate damage that can finish or nearly finish a low target gains this many basic-DPS units.
+      openerContextFinisherBonusInBasicDps: 0.22,
+      // AI CHANGED: DoT-heavy skills lose this many basic-DPS units when the target is already near death and front-load matters more.
+      openerContextDotFinisherPenaltyInBasicDps: 0.12,
+      // AI CHANGED: Calm single-target burst bonus only applies while live pressure stays at or below this level.
+      openerContextCalmPressureMax: 0.2,
+      // AI CHANGED: Require a healthy target runway before rewarding slow/heavy burst openers in calm fights.
+      openerContextCalmTargetBasicHitWindow: 2.5,
+      // AI CHANGED: Require at least this much front-loaded damage (in expected basic hits) before calm burst credit appears.
+      openerContextCalmBurstImmediateBasicHitRatio: 2.2,
+      // AI CHANGED: Calm single-target heavy burst/charge openers gain up to this many basic-DPS units when setup is safe.
+      openerContextCalmBurstBonusInBasicDps: 0.16,
+      // AI CHANGED: Treat calm single-target fights above this target-HP pct as true fresh opener opportunities.
+      openerContextFreshTargetHpPctMin: 0.85,
+      // AI CHANGED: Fresh healthy targets reward alpha/front-load more than generic 5s value.
+      openerContextFreshTargetAlphaBonusInBasicDps: 0.22,
+      // AI CHANGED: Fresh healthy targets discount delayed DoT value a little when immediate burst is preferred.
+      openerContextFreshTargetDotPenaltyInBasicDps: 0.18,
       // AI CHANGED: Rotation-aware opener scoring — after the opener, allow one queued follow-up skill instead of assuming basics-only.
       openerFollowUpSkillQueueEnabled: true,
       // AI CHANGED: Queue depth 1 = opener plus one follow-up skill. Keep small for speed/stability.
@@ -149,6 +207,10 @@
       openerTargetTtkPaddingMs: 500,
       // AI CHANGED: Generic opener scoring can cap immediate skill damage to the live target HP so near-dead targets do not overvalue long/large skills.
       openerTargetHpAwareScoring: true,
+      // AI CHANGED: Explicit execute mode — when a target is already low enough, earliest lethal action should beat generic 5s horizon value.
+      openerExecuteModeEnabled: true,
+      // AI CHANGED: Execute mode only activates in a real low-target window, not on fresh healthy enemies.
+      openerExecuteLowTargetBasicHitWindow: 1.5,
       // AI CHANGED: Dynamic charge scoring can cap opener release damage to the live target HP so later release time is not rewarded for wasted overkill.
       chargeSkillTargetOverkillCapEnabled: true,
       // AI CHANGED: Per extra active enemy, longer charge holds get a small risk penalty scaled by basic DPS (0.08 = 8% of basic DPS per sec held per extra enemy).

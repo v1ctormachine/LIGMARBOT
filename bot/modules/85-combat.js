@@ -25,6 +25,580 @@
     }
   }
 
+  // AI CHANGED: Potion sustain now keeps state for active HoTs, shared cooldown, recent HP-loss trend, and the last protected mana requirement.
+  function getCombatSustainRuntime() {
+    if (!Runtime.autoFarm.combatSustain || typeof Runtime.autoFarm.combatSustain !== "object") {
+      Runtime.autoFarm.combatSustain = {};
+    }
+    const sustain = Runtime.autoFarm.combatSustain;
+    if (!Number.isFinite(sustain.hpPotionUses)) {
+      sustain.hpPotionUses = 0;
+    }
+    if (!Number.isFinite(sustain.mpPotionUses)) {
+      sustain.mpPotionUses = 0;
+    }
+    if (!Object.prototype.hasOwnProperty.call(sustain, "lastPotionAt")) {
+      sustain.lastPotionAt = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(sustain, "lastPotionResource")) {
+      sustain.lastPotionResource = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(sustain, "lastPotionReason")) {
+      sustain.lastPotionReason = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(sustain, "potionCooldownUntil")) {
+      sustain.potionCooldownUntil = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(sustain, "activeHpPotion")) {
+      sustain.activeHpPotion = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(sustain, "activeMpPotion")) {
+      sustain.activeMpPotion = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(sustain, "lastHpSampleAt")) {
+      sustain.lastHpSampleAt = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(sustain, "lastHpSampleCur")) {
+      sustain.lastHpSampleCur = null;
+    }
+    if (!Number.isFinite(sustain.recentHpLossPerSec)) {
+      sustain.recentHpLossPerSec = 0;
+    }
+    if (!Object.prototype.hasOwnProperty.call(sustain, "lastPreferredManaNeed")) {
+      sustain.lastPreferredManaNeed = null;
+    }
+    return sustain;
+  }
+
+  function getCombatPotionEffectSpec(record, resource) {
+    if (!record || !Array.isArray(record.effects)) {
+      return null;
+    }
+    let best = null;
+    for (let i = 0; i < record.effects.length; i += 1) {
+      const effect = record.effects[i];
+      if (!effect || effect.type !== "heal" || effect.resource !== resource || !Number.isFinite(effect.value) || effect.value <= 0) {
+        continue;
+      }
+      const fallbackDuration =
+        resource === "hp" && Number.isFinite(Config.combat && Config.combat.combatPotionHotDefaultDurationSec)
+          ? Math.max(0, Config.combat.combatPotionHotDefaultDurationSec)
+          : 0;
+      const durationSec =
+        Number.isFinite(effect.durationSec) && effect.durationSec > 0
+          ? effect.durationSec
+          : fallbackDuration;
+      const totalValue = effect.value;
+      const spec = {
+        resource: resource,
+        totalValue: +totalValue.toFixed(2),
+        durationSec: Number.isFinite(durationSec) ? +durationSec.toFixed(3) : 0,
+        perSec: durationSec > 0 ? +(totalValue / durationSec).toFixed(3) : +totalValue.toFixed(3),
+        hot: durationSec > 0
+      };
+      if (!best || spec.totalValue > best.totalValue) {
+        best = spec;
+      }
+    }
+    return best;
+  }
+
+  function listCombatPotionCandidates(resource, userOpts) {
+    const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
+    const readyOnly = opts.readyOnly !== false;
+    const slots = Runtime.skills && Array.isArray(Runtime.skills.slots) ? Runtime.skills.slots : [];
+    const rows = [];
+    for (let i = 0; i < slots.length; i += 1) {
+      const row = slots[i];
+      if (!row || row.kind !== "potion" || row.resource !== resource) {
+        continue;
+      }
+      const slotIdx = typeof row.slot === "number" ? row.slot : i;
+      const spec = getCombatPotionEffectSpec(row, resource);
+      if (!spec) {
+        continue;
+      }
+      if (row.counter && Number.isFinite(row.counter.value) && row.counter.value <= 0) {
+        continue;
+      }
+      if (readyOnly && typeof isActionBarSlotShowingCooldown === "function" && isActionBarSlotShowingCooldown(slotIdx)) {
+        continue;
+      }
+      rows.push({
+        slot: slotIdx,
+        record: row,
+        spec: spec
+      });
+    }
+    rows.sort(function (a, b) {
+      if (a.spec.totalValue !== b.spec.totalValue) {
+        return a.spec.totalValue - b.spec.totalValue;
+      }
+      return a.slot - b.slot;
+    });
+    return rows;
+  }
+
+  function chooseCombatPotionCandidate(resource, needAmount, userOpts) {
+    const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
+    const rows = listCombatPotionCandidates(resource, { readyOnly: true });
+    if (rows.length === 0) {
+      return null;
+    }
+    if (opts.preferLargest) {
+      return rows[rows.length - 1];
+    }
+    const need = Number.isFinite(needAmount) ? Math.max(0, needAmount) : 0;
+    for (let i = 0; i < rows.length; i += 1) {
+      if (rows[i].spec.totalValue >= need) {
+        return rows[i];
+      }
+    }
+    return rows[rows.length - 1];
+  }
+
+  function getCombatActivePotionRemaining(activePotion, nowMs) {
+    if (
+      !activePotion ||
+      !Number.isFinite(activePotion.endsAt) ||
+      !Number.isFinite(activePotion.durationSec) ||
+      !Number.isFinite(activePotion.totalValue)
+    ) {
+      return 0;
+    }
+    const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+    if (now >= activePotion.endsAt || activePotion.durationSec <= 0 || activePotion.totalValue <= 0) {
+      return 0;
+    }
+    const totalMs = activePotion.durationSec * 1000;
+    if (!(totalMs > 0)) {
+      return 0;
+    }
+    const remainFrac = Math.max(0, Math.min(1, (activePotion.endsAt - now) / totalMs));
+    return +(activePotion.totalValue * remainFrac).toFixed(2);
+  }
+
+  function updateCombatSustainObservations(liveState) {
+    const sustain = getCombatSustainRuntime();
+    const now = liveState && Number.isFinite(liveState.time) ? liveState.time : Date.now();
+    if (sustain.activeHpPotion && Number.isFinite(sustain.activeHpPotion.endsAt) && now >= sustain.activeHpPotion.endsAt) {
+      sustain.activeHpPotion = null;
+    }
+    if (sustain.activeMpPotion && Number.isFinite(sustain.activeMpPotion.endsAt) && now >= sustain.activeMpPotion.endsAt) {
+      sustain.activeMpPotion = null;
+    }
+    const hpCur =
+      liveState &&
+      liveState.player &&
+      liveState.player.hp &&
+      liveState.player.hp.valid &&
+      Number.isFinite(liveState.player.hp.cur)
+        ? liveState.player.hp.cur
+        : null;
+    if (Number.isFinite(hpCur)) {
+      if (Number.isFinite(sustain.lastHpSampleCur) && Number.isFinite(sustain.lastHpSampleAt)) {
+        const dtSec = Math.max(0, (now - sustain.lastHpSampleAt) / 1000);
+        if (dtSec >= 0.1) {
+          const delta = hpCur - sustain.lastHpSampleCur;
+          const instantLossPerSec = delta < 0 ? (-delta / dtSec) : 0;
+          if (instantLossPerSec > 0) {
+            sustain.recentHpLossPerSec = +(
+              (sustain.recentHpLossPerSec * 0.65) +
+              (instantLossPerSec * 0.35)
+            ).toFixed(3);
+          } else {
+            sustain.recentHpLossPerSec = +(sustain.recentHpLossPerSec * 0.82).toFixed(3);
+          }
+        }
+      }
+      sustain.lastHpSampleCur = hpCur;
+      sustain.lastHpSampleAt = now;
+    }
+    return sustain;
+  }
+
+  function buildCombatActivePotionState(resource, potion, usedAt) {
+    if (!potion || !potion.spec || !Number.isFinite(usedAt)) {
+      return null;
+    }
+    if (!(Number.isFinite(potion.spec.durationSec) && potion.spec.durationSec > 0)) {
+      return null;
+    }
+    return {
+      resource: resource,
+      slot: potion.slot,
+      name: potion.record && potion.record.name ? potion.record.name : "",
+      totalValue: potion.spec.totalValue,
+      durationSec: potion.spec.durationSec,
+      perSec: potion.spec.perSec,
+      startedAt: usedAt,
+      endsAt: usedAt + Math.round(potion.spec.durationSec * 1000)
+    };
+  }
+
+  function rememberCombatPotionUse(resource, potion, reason, usedAt) {
+    const sustain = getCombatSustainRuntime();
+    const when = Number.isFinite(usedAt) ? usedAt : Date.now();
+    sustain.lastPotionAt = when;
+    sustain.lastPotionResource = resource;
+    sustain.lastPotionReason = reason || null;
+    if (resource === "hp") {
+      sustain.hpPotionUses += 1;
+      sustain.activeHpPotion = buildCombatActivePotionState("hp", potion, when);
+    } else if (resource === "mp") {
+      sustain.mpPotionUses += 1;
+      sustain.activeMpPotion = buildCombatActivePotionState("mp", potion, when);
+    }
+    if (Config.combat && Config.combat.combatPotionSharedCooldown !== false) {
+      const cooldownMs =
+        Number.isFinite(Config.combat.combatPotionCooldownMs) && Config.combat.combatPotionCooldownMs > 0
+          ? Math.round(Config.combat.combatPotionCooldownMs)
+          : 15000;
+      sustain.potionCooldownUntil = when + cooldownMs;
+    }
+  }
+
+  function getCombatMinimumAttackManaNeed() {
+    const slots = Runtime.skills && Array.isArray(Runtime.skills.slots) ? Runtime.skills.slots : [];
+    let best = null;
+    for (let i = 0; i < slots.length; i += 1) {
+      const row = slots[i];
+      if (!row || row.kind !== "skill" || !row.isAttack || !row.targetsEnemy) {
+        continue;
+      }
+      if (typeof plannerSkillHasDirectDamageForOpener === "function" && !plannerSkillHasDirectDamageForOpener(row)) {
+        continue;
+      }
+      const manaCost = Number.isFinite(row.manaCost) ? row.manaCost : 0;
+      if (!(manaCost > 0)) {
+        continue;
+      }
+      if (best === null || manaCost < best) {
+        best = manaCost;
+      }
+    }
+    return best;
+  }
+
+  function getCombatMaximumAttackManaNeed() {
+    const slots = Runtime.skills && Array.isArray(Runtime.skills.slots) ? Runtime.skills.slots : [];
+    let best = null;
+    for (let i = 0; i < slots.length; i += 1) {
+      const row = slots[i];
+      if (!row || row.kind !== "skill" || !row.isAttack || !row.targetsEnemy) {
+        continue;
+      }
+      if (typeof plannerSkillHasDirectDamageForOpener === "function" && !plannerSkillHasDirectDamageForOpener(row)) {
+        continue;
+      }
+      const manaCost = Number.isFinite(row.manaCost) ? row.manaCost : 0;
+      if (!(manaCost > 0)) {
+        continue;
+      }
+      if (best === null || manaCost > best) {
+        best = manaCost;
+      }
+    }
+    return best;
+  }
+
+  function computeCombatPreferredManaNeed(liveState) {
+    if (!(Config.planner && Config.planner.useRankedAttackSkillsInCombat)) {
+      return null;
+    }
+    if (typeof previewOpenerHorizonSim !== "function") {
+      return null;
+    }
+    const preview = previewOpenerHorizonSim({});
+    const rows = preview && Array.isArray(preview.candidates) ? preview.candidates.slice() : [];
+    if (rows.length === 0) {
+      return null;
+    }
+    rows.sort(function (a, b) {
+      const aPass = a && a.passesThreshold ? 1 : 0;
+      const bPass = b && b.passesThreshold ? 1 : 0;
+      if (bPass !== aPass) {
+        return bPass - aPass;
+      }
+      const aDmg = a && Number.isFinite(a.horizonDamage) ? a.horizonDamage : -Infinity;
+      const bDmg = b && Number.isFinite(b.horizonDamage) ? b.horizonDamage : -Infinity;
+      return bDmg - aDmg;
+    });
+    const picked = rows[0];
+    if (!picked || !Number.isFinite(picked.slot)) {
+      return null;
+    }
+    const slots = Runtime.skills && Array.isArray(Runtime.skills.slots) ? Runtime.skills.slots : [];
+    const row = slots.find(function (slotRec) {
+      return slotRec && typeof slotRec.slot === "number" && slotRec.slot === picked.slot;
+    }) || null;
+    if (!row) {
+      return null;
+    }
+    const reserve = Number.isFinite(Config.planner && Config.planner.skillMpReserve) ? Config.planner.skillMpReserve : 0;
+    const manaCost = Number.isFinite(row.manaCost) ? row.manaCost : 0;
+    return {
+      slot: picked.slot,
+      name: row.name || picked.name || "",
+      manaCost: manaCost,
+      manaNeed: manaCost + reserve,
+      horizonDamage: Number.isFinite(picked.horizonDamage) ? picked.horizonDamage : null,
+      passesThreshold: !!picked.passesThreshold
+    };
+  }
+
+  // AI CHANGED: HP potion policy uses parsed total heal + HoT duration + recent incoming damage so the bot keeps HP high without blind percentage-only spam.
+  function evaluateCombatHpPotionNeed(liveState) {
+    if (!(Config.combat && Config.combat.useCombatPotions !== false)) {
+      return { needed: false, emergency: false, hpPct: null, reason: "combat_potions_off" };
+    }
+    const sustain = getCombatSustainRuntime();
+    const knownPotions = listCombatPotionCandidates("hp", { readyOnly: false });
+    const bestKnown = knownPotions.length > 0 ? knownPotions[knownPotions.length - 1] : null;
+    if (!bestKnown) {
+      return { needed: false, emergency: false, hpPct: null, reason: "no_hp_potion_on_bar" };
+    }
+    const now = liveState && Number.isFinite(liveState.time) ? liveState.time : Date.now();
+    const hpCur =
+      liveState &&
+      liveState.player &&
+      liveState.player.hp &&
+      liveState.player.hp.valid &&
+      Number.isFinite(liveState.player.hp.cur)
+        ? liveState.player.hp.cur
+        : null;
+    const hpMax =
+      liveState &&
+      liveState.player &&
+      liveState.player.hp &&
+      liveState.player.hp.valid &&
+      Number.isFinite(liveState.player.hp.max)
+        ? liveState.player.hp.max
+        : null;
+    const hpPct =
+      Number.isFinite(hpCur) && Number.isFinite(hpMax) && hpMax > 0
+        ? hpCur / hpMax
+        : null;
+    if (!Number.isFinite(hpPct) || !Number.isFinite(hpCur) || !Number.isFinite(hpMax)) {
+      return { needed: false, emergency: false, hpPct: null, reason: "hp_unread" };
+    }
+    const missingHp = Math.max(0, hpMax - hpCur);
+    const emergencyPct = Number.isFinite(Config.combat.hpPotionEmergencyBelowPct)
+      ? Math.max(0.05, Math.min(1, Config.combat.hpPotionEmergencyBelowPct))
+      : 0.35;
+    const normalPct = Number.isFinite(Config.combat.hpPotionUseBelowPct)
+      ? Math.max(emergencyPct, Math.min(1, Config.combat.hpPotionUseBelowPct))
+      : 0.55;
+    const enemyCount =
+      liveState && liveState.combat && Number.isFinite(liveState.combat.enemyCount)
+        ? liveState.combat.enemyCount
+        : 0;
+    const forecastWindowSec =
+      enemyCount > 0 && Number.isFinite(Config.combat.hpPotionForecastWindowSec)
+        ? Math.max(0, Math.min(bestKnown.spec.durationSec, Config.combat.hpPotionForecastWindowSec))
+        : 0;
+    const projectedIncoming = Math.max(0, sustain.recentHpLossPerSec || 0) * forecastWindowSec;
+    const activeRemaining = getCombatActivePotionRemaining(sustain.activeHpPotion, now);
+    const efficiencyFrac =
+      enemyCount > 0 && Number.isFinite(Config.combat.hpPotionCombatMissingHealFraction)
+        ? Math.max(0.1, Math.min(1, Config.combat.hpPotionCombatMissingHealFraction))
+        : (
+            Number.isFinite(Config.combat.hpPotionSafeMissingHealFraction)
+              ? Math.max(0.1, Math.min(1, Config.combat.hpPotionSafeMissingHealFraction))
+              : 0.85
+          );
+    const effectiveMissing = Math.max(0, missingHp + projectedIncoming - activeRemaining);
+    const thresholdValue = bestKnown.spec.totalValue * efficiencyFrac;
+    const emergency = hpPct <= emergencyPct;
+    const needed =
+      emergency ||
+      (
+        activeRemaining <= bestKnown.spec.perSec &&
+        (
+          effectiveMissing >= thresholdValue ||
+          (enemyCount > 0 && hpPct <= normalPct && effectiveMissing >= bestKnown.spec.perSec * 2)
+        )
+      );
+    return {
+      needed: needed,
+      emergency: emergency,
+      hpPct: +hpPct.toFixed(4),
+      hpCur: +hpCur.toFixed(2),
+      hpMax: +hpMax.toFixed(2),
+      missingHp: +missingHp.toFixed(2),
+      activeRemaining: +activeRemaining.toFixed(2),
+      projectedIncoming: +projectedIncoming.toFixed(2),
+      effectiveMissing: +effectiveMissing.toFixed(2),
+      thresholdValue: +thresholdValue.toFixed(2),
+      potionTotalValue: bestKnown.spec.totalValue,
+      potionDurationSec: bestKnown.spec.durationSec,
+      potionPerSec: bestKnown.spec.perSec,
+      reason: needed ? (emergency ? "emergency_hp_pct" : "parsed_hot_value_window") : "hp_not_missing_enough_yet"
+    };
+  }
+
+  // AI CHANGED: MP potion policy protects the mana needed for the current best ranked skill instead of a fixed low-mana percentage alone.
+  function evaluateCombatMpPotionNeed(liveState) {
+    if (!(Config.combat && Config.combat.useCombatPotions !== false)) {
+      return { needed: false, reason: "combat_potions_off" };
+    }
+    const sustain = getCombatSustainRuntime();
+    const knownPotions = listCombatPotionCandidates("mp", { readyOnly: false });
+    const bestKnown = knownPotions.length > 0 ? knownPotions[knownPotions.length - 1] : null;
+    if (!bestKnown) {
+      sustain.lastPreferredManaNeed = null;
+      return { needed: false, reason: "no_mp_potion_on_bar" };
+    }
+    const mpCur =
+      liveState &&
+      liveState.player &&
+      liveState.player.mp &&
+      liveState.player.mp.valid &&
+      Number.isFinite(liveState.player.mp.cur)
+        ? liveState.player.mp.cur
+        : null;
+    const mpPct =
+      liveState &&
+      liveState.player &&
+      liveState.player.mp &&
+      liveState.player.mp.valid &&
+      Number.isFinite(liveState.player.mp.pct)
+        ? liveState.player.mp.pct
+        : null;
+    if (!Number.isFinite(mpCur) || !Number.isFinite(mpPct)) {
+      sustain.lastPreferredManaNeed = null;
+      return { needed: false, reason: "mp_unread" };
+    }
+    const reserve = Number.isFinite(Config.planner && Config.planner.skillMpReserve) ? Config.planner.skillMpReserve : 0;
+    const maxAttackManaNeed = getCombatMaximumAttackManaNeed();
+    const activeRemaining = getCombatActivePotionRemaining(sustain.activeMpPotion, liveState && Number.isFinite(liveState.time) ? liveState.time : Date.now());
+    const lowMpPct = Number.isFinite(Config.combat.mpPotionUseBelowPct)
+      ? Math.max(0.05, Math.min(1, Config.combat.mpPotionUseBelowPct))
+      : 0.22;
+    if (Number.isFinite(maxAttackManaNeed) && mpCur >= maxAttackManaNeed + reserve) {
+      sustain.lastPreferredManaNeed = {
+        reason: "can_cast_any_attack_skill",
+        manaNeed: maxAttackManaNeed + reserve
+      };
+      return {
+        needed: false,
+        reason: "can_cast_any_attack_skill",
+        mpCur: +mpCur.toFixed(2),
+        mpPct: +mpPct.toFixed(4),
+        activeRemaining: +activeRemaining.toFixed(2)
+      };
+    }
+    const preferred = computeCombatPreferredManaNeed(liveState);
+    sustain.lastPreferredManaNeed = preferred;
+    if (preferred && Number.isFinite(preferred.manaNeed) && preferred.manaNeed > 0) {
+      const shortage = preferred.manaNeed - (mpCur + activeRemaining);
+      return {
+        needed: shortage > 0,
+        reason: shortage > 0 ? "preferred_skill_shortage" : "preferred_skill_mana_available",
+        mpCur: +mpCur.toFixed(2),
+        mpPct: +mpPct.toFixed(4),
+        activeRemaining: +activeRemaining.toFixed(2),
+        shortage: +Math.max(0, shortage).toFixed(2),
+        preferredSkill: preferred,
+        potionTotalValue: bestKnown.spec.totalValue,
+        potionDurationSec: bestKnown.spec.durationSec,
+        potionPerSec: bestKnown.spec.perSec
+      };
+    }
+    const minAttackManaNeed = getCombatMinimumAttackManaNeed();
+    const fallbackNeeded =
+      mpPct <= lowMpPct &&
+      Number.isFinite(minAttackManaNeed) &&
+      mpCur + activeRemaining < minAttackManaNeed + reserve;
+    return {
+      needed: fallbackNeeded,
+      reason: fallbackNeeded ? "fallback_low_mp_pct" : "no_ranked_mana_pressure",
+      mpCur: +mpCur.toFixed(2),
+      mpPct: +mpPct.toFixed(4),
+      activeRemaining: +activeRemaining.toFixed(2),
+      minAttackManaNeed: minAttackManaNeed,
+      potionTotalValue: bestKnown.spec.totalValue,
+      potionDurationSec: bestKnown.spec.durationSec,
+      potionPerSec: bestKnown.spec.perSec
+    };
+  }
+
+  async function tryUseCombatPotion(resource, potion, reason, userOpts) {
+    const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
+    const sustain = getCombatSustainRuntime();
+    const now = Date.now();
+    if (
+      Config.combat &&
+      Config.combat.combatPotionSharedCooldown !== false &&
+      Number.isFinite(sustain.potionCooldownUntil) &&
+      now < sustain.potionCooldownUntil
+    ) {
+      return { ok: false, skipped: true, reason: "shared_potion_cooldown_active", cooldownRemainingMs: sustain.potionCooldownUntil - now };
+    }
+    const throttleMs = Number.isFinite(Config.combat && Config.combat.combatPotionThrottleMs)
+      ? Math.max(0, Config.combat.combatPotionThrottleMs)
+      : 1200;
+    if (!opts.ignoreThrottle && Number.isFinite(sustain.lastPotionAt) && now - sustain.lastPotionAt < throttleMs) {
+      return { ok: false, skipped: true, reason: "throttled_recent_potion_use" };
+    }
+    if (!potion) {
+      return { ok: false, skipped: true, reason: "no_ready_" + resource + "_potion" };
+    }
+    const clicked = clickActionBarSlot(potion.slot);
+    if (!clicked) {
+      return { ok: false, skipped: false, reason: "click_failed", slot: potion.slot };
+    }
+    rememberCombatPotionUse(resource, potion, reason, now);
+    Logger.log("COMBAT", "Combat potion used", {
+      resource: resource,
+      slot: potion.slot,
+      reason: reason || null,
+      counter: potion.record && potion.record.counter ? potion.record.counter.value : null,
+      totalValue: potion.spec ? potion.spec.totalValue : null,
+      durationSec: potion.spec ? potion.spec.durationSec : null,
+      perSec: potion.spec ? potion.spec.perSec : null
+    });
+    const settleMs = Number.isFinite(Config.combat && Config.combat.combatPotionSettleMs)
+      ? Math.max(0, Config.combat.combatPotionSettleMs)
+      : 120;
+    if (settleMs > 0) {
+      await sleep(settleMs);
+    }
+    return { ok: true, skipped: false, slot: potion.slot, reason: reason || null };
+  }
+
+  async function maybeUseCombatSustain(liveState, userOpts) {
+    const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
+    if (!(Config.combat && Config.combat.useCombatPotions !== false)) {
+      return { used: false, reason: "combat_potions_off" };
+    }
+    updateCombatSustainObservations(liveState);
+    const hpNeed = evaluateCombatHpPotionNeed(liveState);
+    if (hpNeed.needed) {
+      const hpPotion = chooseCombatPotionCandidate("hp", hpNeed.effectiveMissing, {
+        preferLargest: hpNeed.emergency
+      });
+      const hpUse = await tryUseCombatPotion("hp", hpPotion, opts.reason || hpNeed.reason, {});
+      if (hpUse.ok) {
+        return { used: true, resource: "hp", detail: hpUse, policy: hpNeed };
+      }
+    }
+    const mpNeed = evaluateCombatMpPotionNeed(liveState);
+    if (mpNeed.needed) {
+      const mpPotion = chooseCombatPotionCandidate("mp", mpNeed.shortage, { preferLargest: false });
+      const mpUse = await tryUseCombatPotion("mp", mpPotion, opts.reason || mpNeed.reason);
+      if (mpUse.ok) {
+        return { used: true, resource: "mp", detail: mpUse, policy: mpNeed };
+      }
+    }
+    return {
+      used: false,
+      reason: "no_potion_needed_or_ready",
+      hpPolicy: hpNeed,
+      mpPolicy: mpNeed
+    };
+  }
+
   // AI CHANGED: Phase C4 slice 8 — first swing: ranked attack skill (if enabled + pick), else basic attack.
   // AI CHANGED: slice 9 — optional opts.useRankedSkillOpener === false forces basic-only (follow-up bursts).
   // AI CHANGED: slice 22 — combat opener is tap-only (clickActionBarSlot); no synthetic bar hold — game uses tap for skills including charge start.
@@ -40,7 +614,12 @@
         if (ok) {
           plannerRecordOpenerRuntimeEvent("ranked_pick", { slot: opening.slot, excluded: (excludeSlots || []).slice(0, 8) });
           Logger.log("PLANNER", "Opening attack used ranked skill slot", { slot: opening.slot });
-          return { ok: true, skillSlot: opening.slot, skillRecord: opening.record || null };
+          return {
+            ok: true,
+            skillSlot: opening.slot,
+            skillRecord: opening.record || null,
+            chargeReleasePlan: opening.chargeReleasePlan || null
+          };
         }
         plannerRecordOpenerRuntimeEvent("ranked_click_failed", { slot: opening.slot });
         Logger.warn("PLANNER", "Ranked skill slot click failed; falling back to basic attack", { slot: opening.slot });
@@ -51,7 +630,7 @@
       }
     }
     const basicOk = clickBasicAttack();
-    return { ok: basicOk, skillSlot: null, skillRecord: null };
+    return { ok: basicOk, skillSlot: null, skillRecord: null, chargeReleasePlan: null };
   }
 
   // AI CHANGED: slice 8b — true if enemy died (count) or target red bar dropped (same max HP baseline).
@@ -77,9 +656,13 @@
   // AI CHANGED: Charge skills land damage on release (cancel/full charge), not during the hold itself. Run a dedicated release plan before generic "no progress" fallback logic.
   async function handleChargeSkillOpener(beforeState, open, settleRanked, pollMs, fullTimeoutMs) {
     const chargePlan =
-      open && open.skillRecord && typeof plannerBuildChargeReleasePlan === "function"
-        ? plannerBuildChargeReleasePlan(open.skillRecord)
-        : null;
+      open && open.chargeReleasePlan
+        ? open.chargeReleasePlan
+        : (
+            open && open.skillRecord && typeof plannerBuildChargeReleasePlan === "function"
+              ? plannerBuildChargeReleasePlan(open.skillRecord)
+              : null
+          );
     if (!chargePlan) {
       return { handled: false, progressed: false };
     }
@@ -576,6 +1159,11 @@
         plannerMaybeRecordEnemyBeforeAttack();
 
         const useRankedBurst = rankedBurstsLeft > 0;
+        await maybeUseCombatSustain(current, {
+          reason: useRankedBurst ? "before_ranked_burst" : "before_basic_burst",
+          useRankedBurst: useRankedBurst
+        });
+        current = readBasicState();
 
         // AI CHANGED: Surface attack as live status (slice 9 — burst index for multi-mob pulls).
         setBotStatus(
@@ -896,6 +1484,7 @@
           typeof nowState.combat.enemyCount === "number" &&
           nowState.combat.enemyCount === 0;
         if (shouldIdleBackoff) {
+          // AI CHANGED: rollback v0.3.146–v0.3.147 heal gate — idle tile moves run immediately (parsed potion sustain unchanged).
           // AI CHANGED: Prefer scan-driven movement while idling on empty tile.
           let moveResult = await exploreByScan();
           if (!moveResult.ok) {

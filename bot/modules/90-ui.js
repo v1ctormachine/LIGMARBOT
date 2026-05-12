@@ -469,6 +469,7 @@
       planner_opener_horizon_preview: "HorizonSim",
       planner_conception_path: "Conception path",
       planner_ranked_runtime: "Ranked runtime",
+      planner_opener_context_scoring: "Opener context scoring",
       planner_ranked_reason_quality: "Ranked reason quality",
       planner_ranked_tuning_hint: "Ranked tuning hint",
       planner_ranked_preflight: "Ranked preflight",
@@ -479,10 +480,12 @@
       planner_rotation_policy: "Rotation policy",
       planner_multimob_channel: "Multi-mob channel rank",
       planner_natural_sniper_shot: "Natural Sniper Shot",
+      planner_execute_policy: "Execute policy",
       planner_forced_opener: "Forced opener",
       planner_golden_comparator: "Golden comparator",
       planner_charge_release_policy: "Charge release policy",
       planner_dynamic_charge_scoring: "Dynamic charge scoring",
+      combat_sustain_policy: "Combat sustain",
       auto_farm_resume_policy: "Farm resume policy",
       auto_farm_reliability: "Combat reliability",
       auto_farm_session_summary: "Auto-farm session",
@@ -563,12 +566,16 @@
         passesThreshold: !!(row && row.passesThreshold),
         thresholdPct: row && Number.isFinite(row.thresholdPct) ? row.thresholdPct : null,
         thresholdSource: row && row.thresholdSource ? row.thresholdSource : null,
+        contextAdjustment: row && Number.isFinite(row.contextAdjustment) ? row.contextAdjustment : 0,
+        contextParts: row && Array.isArray(row.contextParts) ? row.contextParts : [],
+        contextPressure: row && row.contextPressure ? row.contextPressure : null,
         cooldownSec: row && Number.isFinite(row.cooldownSec) ? row.cooldownSec : null,
         cooldownExcessSec: row && Number.isFinite(row.cooldownExcessSec) ? row.cooldownExcessSec : null,
         cooldownOpportunityPenalty: row && Number.isFinite(row.cooldownOpportunityPenalty) ? row.cooldownOpportunityPenalty : null,
         chargeReleaseFraction: row && Number.isFinite(row.chargeReleaseFraction) ? row.chargeReleaseFraction : null,
         chargeReleaseSelectionMode: row && row.chargeReleaseSelectionMode ? row.chargeReleaseSelectionMode : null,
-        chargeReleaseCandidateCount: row && Number.isFinite(row.chargeReleaseCandidateCount) ? row.chargeReleaseCandidateCount : 0
+        chargeReleaseCandidateCount: row && Number.isFinite(row.chargeReleaseCandidateCount) ? row.chargeReleaseCandidateCount : 0,
+        execute: row && row.execute ? row.execute : null
       };
     });
     return {
@@ -583,6 +590,8 @@
         thresholdPct: lastDetail && Number.isFinite(lastDetail.thresholdPct) ? lastDetail.thresholdPct : null,
         thresholdSource: lastDetail && lastDetail.thresholdSource ? lastDetail.thresholdSource : null,
         minImprovementFraction: lastDetail && Number.isFinite(lastDetail.minImprovementFraction) ? lastDetail.minImprovementFraction : null,
+        contextAdjustment: lastDetail && lastDetail.contextAdjustment ? lastDetail.contextAdjustment : null,
+        executePolicy: lastDetail && lastDetail.executePolicy ? lastDetail.executePolicy : null,
         runtimeAggressionReason: lastDetail && lastDetail.runtimeAggression && lastDetail.runtimeAggression.reason
           ? lastDetail.runtimeAggression.reason
           : null,
@@ -643,7 +652,12 @@
         cooldownForecastCoeff: Number.isFinite(Config.planner.openerCooldownExcessPenaltyInBasicDps) ? Config.planner.openerCooldownExcessPenaltyInBasicDps : null,
         targetTtkAwareHorizon: Config.planner.openerTargetTtkAwareHorizonEnabled !== false,
         targetHpAwareScoring: Config.planner.openerTargetHpAwareScoring !== false,
-        runtimeAggressionEnabled: Config.planner.openerRuntimeAggressionEnabled !== false
+        runtimeAggressionEnabled: Config.planner.openerRuntimeAggressionEnabled !== false,
+        openerContextAwareScoring: Config.planner.openerContextAwareScoringEnabled !== false,
+        executeModeEnabled: Config.planner.openerExecuteModeEnabled !== false,
+        executeLowTargetBasicHitWindow: Number.isFinite(Config.planner.openerExecuteLowTargetBasicHitWindow) ? Config.planner.openerExecuteLowTargetBasicHitWindow : null,
+        denseChargeSearchStepFraction: Number.isFinite(Config.combat.chargeSkillDynamicSearchStepFraction) ? Config.combat.chargeSkillDynamicSearchStepFraction : null,
+        combatPotionsEnabled: Config.combat.useCombatPotions !== false
       }
     };
   }
@@ -732,6 +746,100 @@
         }
       }
       return null;
+    }
+
+    // AI CHANGED: Reuse the planner's fresh-target threshold so TEST judges Sniper Shot only on the same kind of opener opportunity we actually score.
+    function resolveTestFreshTargetHpPctMin() {
+      return Number.isFinite(Config.planner && Config.planner.openerContextFreshTargetHpPctMin)
+        ? Math.max(0.5, Math.min(1, Config.planner.openerContextFreshTargetHpPctMin))
+        : 0.85;
+    }
+
+    // AI CHANGED: Natural Sniper Shot TEST needs live target hp pct to distinguish a fresh opener from a late-fight follow-up decision.
+    function readLiveTargetHpPctForTest(liveState) {
+      const hp =
+        liveState &&
+        liveState.combat &&
+        liveState.combat.targetHp &&
+        liveState.combat.targetHp.valid &&
+        Number.isFinite(liveState.combat.targetHp.cur) &&
+        Number.isFinite(liveState.combat.targetHp.max) &&
+        liveState.combat.targetHp.max > 0
+          ? liveState.combat.targetHp
+          : null;
+      return hp ? (hp.cur / hp.max) : null;
+    }
+
+    // AI CHANGED: Judge post-force Natural Sniper Shot only on calm single-target fresh-opener windows, not any later ranked pick.
+    function evaluateFreshNaturalOpenerOpportunity(detail, liveState) {
+      const targetHpPct = readLiveTargetHpPctForTest(liveState);
+      const enemyCount =
+        liveState &&
+        liveState.combat &&
+        typeof liveState.combat.enemyCount === "number"
+          ? liveState.combat.enemyCount
+          : null;
+      const calmPressureMax = Number.isFinite(Config.planner && Config.planner.openerContextCalmPressureMax)
+        ? Math.max(0, Config.planner.openerContextCalmPressureMax)
+        : 0.2;
+      const pressure =
+        detail &&
+        detail.contextAdjustment &&
+        detail.contextAdjustment.pressure
+          ? detail.contextAdjustment.pressure
+          : null;
+      if (!detail || !detail.horizonSim || typeof detail.slot !== "number") {
+        return {
+          ok: false,
+          reason: "no_live_pick_detail",
+          targetHpPct: Number.isFinite(targetHpPct) ? +targetHpPct.toFixed(4) : null,
+          enemyCount: enemyCount
+        };
+      }
+      if (!(enemyCount <= 1)) {
+        return {
+          ok: false,
+          reason: "not_single_target",
+          targetHpPct: Number.isFinite(targetHpPct) ? +targetHpPct.toFixed(4) : null,
+          enemyCount: enemyCount
+        };
+      }
+      if (!Number.isFinite(targetHpPct)) {
+        return {
+          ok: false,
+          reason: "target_hp_unread",
+          targetHpPct: null,
+          enemyCount: enemyCount
+        };
+      }
+      const freshTargetHpPctMin = resolveTestFreshTargetHpPctMin();
+      if (targetHpPct < freshTargetHpPctMin) {
+        return {
+          ok: false,
+          reason: "target_not_fresh_enough",
+          targetHpPct: +targetHpPct.toFixed(4),
+          targetHpPctMin: +freshTargetHpPctMin.toFixed(4),
+          enemyCount: enemyCount
+        };
+      }
+      if (pressure && Number.isFinite(pressure.totalPressure) && calmPressureMax > 0 && pressure.totalPressure > calmPressureMax) {
+        return {
+          ok: false,
+          reason: "pressure_above_calm_window",
+          targetHpPct: +targetHpPct.toFixed(4),
+          targetHpPctMin: +freshTargetHpPctMin.toFixed(4),
+          enemyCount: enemyCount,
+          pressure: pressure.totalPressure
+        };
+      }
+      return {
+        ok: true,
+        reason: null,
+        targetHpPct: +targetHpPct.toFixed(4),
+        targetHpPctMin: +freshTargetHpPctMin.toFixed(4),
+        enemyCount: enemyCount,
+        pressure: pressure && Number.isFinite(pressure.totalPressure) ? pressure.totalPressure : 0
+      };
     }
 
     const af0 = getAutoFarmStatus();
@@ -1050,11 +1158,26 @@
             let naturalPickCountSeen = 0;
             let naturalDecisionCountSeen = 0;
             let naturalDecisionEvents = [];
+            let naturalFreshDecisionCountSeen = 0;
+            let naturalFreshDecisionEvents = [];
+            let naturalLastOpportunityReason = null;
+            let naturalLastOpportunityOk = false;
+            let naturalLastLiveTargetHpPct = null;
+            let naturalLastLiveEnemyCount = null;
+            let naturalLastHandledDecisionAt = null;
             if (naturalReady) {
               while (Runtime.autoFarm.running && Date.now() - naturalProbeStart < naturalSniperProbeWaitMs) {
                 await sleep(250, { bypassStop: true });
                 naturalLastReason = Runtime.planner.lastOpeningPickReason || null;
                 naturalLastDetail = Runtime.planner.lastOpeningPickDetail || null;
+                const liveNow = readBasicState();
+                naturalLastLiveTargetHpPct = readLiveTargetHpPctForTest(liveNow);
+                naturalLastLiveEnemyCount =
+                  liveNow &&
+                  liveNow.combat &&
+                  typeof liveNow.combat.enemyCount === "number"
+                    ? liveNow.combat.enemyCount
+                    : null;
                 const rt = typeof getPlannerRuntimeTelemetry === "function"
                   ? getPlannerRuntimeTelemetry()
                   : (Runtime.planner && Runtime.planner.openerRuntime ? Runtime.planner.openerRuntime : null);
@@ -1085,13 +1208,25 @@
                 naturalDecisionCountSeen = decisionRows.length;
                 naturalDecisionEvents = decisionRows.map(function (row) { return row.event; }).slice(-8);
                 if (naturalRows.length > 0) {
-                  naturalPicked = true;
-                  naturalPickedAt = naturalRows[0].at || null;
                   naturalPickCountSeen = naturalRows.length;
-                  break;
                 }
                 if (decisionRows.length > 0) {
-                  break; // AI CHANGED: Once a real post-force opener decision happened, judge the result from live runtime instead of waiting for a stale idle window.
+                  const latestDecision = decisionRows[decisionRows.length - 1];
+                  if (latestDecision && latestDecision.at !== naturalLastHandledDecisionAt) {
+                    naturalLastHandledDecisionAt = latestDecision.at || naturalLastHandledDecisionAt;
+                    const opportunity = evaluateFreshNaturalOpenerOpportunity(naturalLastDetail, liveNow);
+                    naturalLastOpportunityReason = opportunity.reason;
+                    naturalLastOpportunityOk = !!opportunity.ok;
+                    if (opportunity.ok) {
+                      naturalFreshDecisionCountSeen += 1;
+                      naturalFreshDecisionEvents = naturalFreshDecisionEvents.concat([latestDecision.event]).slice(-8);
+                      if (latestDecision.event === "ranked_pick" && latestDecision.detail && latestDecision.detail.slot === naturalSniperResolved.slot) {
+                        naturalPicked = true;
+                        naturalPickedAt = latestDecision.at || null;
+                      }
+                      break; // AI CHANGED: Judge Natural Sniper Shot only from a fresh single-target opener opportunity, not any later in-fight ranked pick.
+                    }
+                  }
                 }
               }
             }
@@ -1110,13 +1245,20 @@
               pickCountSeen: naturalPickCountSeen,
               decisionCountSeen: naturalDecisionCountSeen,
               decisionEventsSeen: naturalDecisionEvents,
-              skipped: !naturalPicked && naturalDecisionCountSeen <= 0,
+              freshDecisionCountSeen: naturalFreshDecisionCountSeen,
+              freshDecisionEventsSeen: naturalFreshDecisionEvents,
+              lastOpportunityReason: naturalLastOpportunityReason,
+              lastOpportunityQualified: naturalLastOpportunityOk,
+              lastLiveTargetHpPct: Number.isFinite(naturalLastLiveTargetHpPct) ? +naturalLastLiveTargetHpPct.toFixed(4) : null,
+              lastLiveEnemyCount: naturalLastLiveEnemyCount,
+              freshTargetHpPctMin: +resolveTestFreshTargetHpPctMin().toFixed(4),
+              skipped: !naturalPicked && naturalFreshDecisionCountSeen <= 0,
               lastReason: naturalLastReason,
               lastDetail: naturalLastDetail,
               reason: naturalReady
                 ? (naturalPicked
                   ? null
-                  : (naturalDecisionCountSeen > 0 ? "not_picked_after_live_decision" : "no_post_force_opener_decision_observed"))
+                  : (naturalFreshDecisionCountSeen > 0 ? "not_picked_after_fresh_live_decision" : "no_fresh_post_force_opener_decision_observed"))
                 : "not_ready_after_forced_soak"
             };
             Logger.log("TEST", "natural sniper probe", naturalSniperProbe);
@@ -1321,12 +1463,15 @@
               ? true
               : !!(
                   chargePlan &&
-                  chargePlan.selectionMode === "dynamic_horizon_best_total" &&
+                  (
+                    chargePlan.selectionMode === "dynamic_horizon_best_total" ||
+                    chargePlan.selectionMode === "dynamic_execute_earliest_lethal"
+                  ) &&
                   chargePlan.scoringContext &&
                   Array.isArray(chargePlan.candidates) &&
-                  chargePlan.candidates.length >= 2 &&
+                  chargePlan.candidates.length >= 20 &&
                   chargePlan.candidates.some(function (row) {
-                    return row && Number.isFinite(row.holdRiskPenalty) && typeof row.followUpActionMode === "string";
+                    return row && Number.isFinite(row.holdRiskPenalty) && typeof row.followUpActionMode === "string" && row.execute && typeof row.execute.enabled === "boolean";
                   })
                 );
           addCheck("planner_dynamic_charge_scoring", dynamicChargeOk, {
@@ -1455,6 +1600,89 @@
             : { skipped: true, reason: "ranked_combat_off" },
           strictRankedChecks
         );
+      }
+      if (!rankedOn) {
+        addCheck(
+          "planner_opener_context_scoring",
+          !strictRankedChecks,
+          strictRankedChecks
+            ? { error: "ranked_combat_off", strictRankedChecks: true }
+            : { skipped: true, reason: "ranked_combat_off" },
+          strictRankedChecks
+        );
+      } else {
+        const previewRows = horizonPreview && Array.isArray(horizonPreview.candidates) ? horizonPreview.candidates : [];
+        const previewHasContext = previewRows.length > 0 && previewRows.every(function (row) {
+          return row && Number.isFinite(row.contextAdjustment) && Array.isArray(row.contextParts);
+        });
+        const detailCtx = diag && diag.lastDetail && diag.lastDetail.contextAdjustment ? diag.lastDetail.contextAdjustment : null;
+        const forcedOnlyDetail = !!(diag && diag.lastReason === "forced_for_test" && !detailCtx);
+        const detailHasContext = !!(
+          detailCtx &&
+          Number.isFinite(detailCtx.total) &&
+          Array.isArray(detailCtx.parts)
+        );
+        addCheck("planner_opener_context_scoring", previewHasContext && (detailHasContext || forcedOnlyDetail), {
+          previewCandidateCount: previewRows.length,
+          previewHasContext: previewHasContext,
+          detailHasContext: detailHasContext,
+          forcedOnlyDetail: forcedOnlyDetail,
+          lastReason: diag && diag.lastReason ? diag.lastReason : null,
+          detailContextAdjustment: detailCtx,
+          previewSample: previewRows.slice(0, 3).map(function (row) {
+            return {
+              slot: row && Number.isFinite(row.slot) ? row.slot : null,
+              name: row && row.name ? row.name : "",
+              contextAdjustment: row && Number.isFinite(row.contextAdjustment) ? row.contextAdjustment : null,
+              contextParts: row && Array.isArray(row.contextParts) ? row.contextParts : [],
+              contextPressure: row && row.contextPressure ? row.contextPressure : null,
+              execute: row && row.execute ? row.execute : null
+            };
+          })
+        }, false);
+      }
+      if (!rankedOn) {
+        addCheck(
+          "planner_execute_policy",
+          !strictRankedChecks,
+          strictRankedChecks
+            ? { error: "ranked_combat_off", strictRankedChecks: true }
+            : { skipped: true, reason: "ranked_combat_off" },
+          strictRankedChecks
+        );
+      } else {
+        const previewRows = horizonPreview && Array.isArray(horizonPreview.candidates) ? horizonPreview.candidates : [];
+        const previewHasExecute = previewRows.length > 0 && previewRows.every(function (row) {
+          return row && row.execute && typeof row.execute.enabled === "boolean";
+        });
+        const detailExecute = diag && diag.lastDetail ? diag.lastDetail.executePolicy || null : null;
+        if (!previewHasExecute) {
+          addCheck("planner_execute_policy", false, {
+            error: "missing_execute_payload",
+            previewCandidateCount: previewRows.length
+          }, false);
+        } else if (detailExecute && detailExecute.eligibleWindow) {
+          addCheck("planner_execute_policy", true, {
+            previewHasExecute: true,
+            detailExecute: detailExecute,
+            lastReason: diag && diag.lastReason ? diag.lastReason : null
+          }, false);
+        } else {
+          addCheck("planner_execute_policy", true, {
+            skipped: true,
+            reason: "no_live_execute_window",
+            previewHasExecute: true,
+            detailExecute: detailExecute,
+            previewSample: previewRows.slice(0, 3).map(function (row) {
+              return {
+                slot: row && Number.isFinite(row.slot) ? row.slot : null,
+                name: row && row.name ? row.name : "",
+                execute: row && row.execute ? row.execute : null,
+                chargeReleaseFraction: row && Number.isFinite(row.chargeReleaseFraction) ? row.chargeReleaseFraction : null
+              };
+            })
+          }, false);
+        }
       }
       const goldenComparator =
         rankedOn
@@ -1588,6 +1816,56 @@
       const afStatus = getAutoFarmStatus();
       const afSession = afStatus && afStatus.lastSessionSummary ? afStatus.lastSessionSummary : null;
       const reliability = afStatus && afStatus.reliability ? afStatus.reliability : null;
+      const sustain = Runtime.autoFarm && Runtime.autoFarm.combatSustain ? Runtime.autoFarm.combatSustain : null;
+      const skillRows = Runtime.skills && Array.isArray(Runtime.skills.slots) ? Runtime.skills.slots : [];
+      const hpPotionRow = skillRows.find(function (row) { return row && row.kind === "potion" && row.resource === "hp"; }) || null;
+      const mpPotionRow = skillRows.find(function (row) { return row && row.kind === "potion" && row.resource === "mp"; }) || null;
+      // AI CHANGED: Sustain TEST detail now surfaces parsed potion strength/duration plus runtime sustain state, so potion policy can be debugged from one TEST run.
+      const hpPotionEffect = hpPotionRow && Array.isArray(hpPotionRow.effects)
+        ? (
+            hpPotionRow.effects.find(function (effect) {
+              return effect && effect.type === "heal" && effect.resource === "hp";
+            }) || null
+          )
+        : null;
+      const mpPotionEffect = mpPotionRow && Array.isArray(mpPotionRow.effects)
+        ? (
+            mpPotionRow.effects.find(function (effect) {
+              return effect && effect.type === "heal" && effect.resource === "mp";
+            }) || null
+          )
+        : null;
+      if (!hpPotionRow && !mpPotionRow) {
+        addCheck("combat_sustain_policy", false, {
+          error: "no_combat_potions_on_bar",
+          combatPotionsEnabled: Config.combat.useCombatPotions !== false
+        }, false);
+      } else {
+        addCheck("combat_sustain_policy", true, {
+          combatPotionsEnabled: Config.combat.useCombatPotions !== false,
+          combatPotionCooldownMs: Number.isFinite(Config.combat.combatPotionCooldownMs) ? Config.combat.combatPotionCooldownMs : null,
+          combatPotionSharedCooldown: Config.combat.combatPotionSharedCooldown !== false,
+          hpPotionUseBelowPct: Number.isFinite(Config.combat.hpPotionUseBelowPct) ? Config.combat.hpPotionUseBelowPct : null,
+          hpPotionEmergencyBelowPct: Number.isFinite(Config.combat.hpPotionEmergencyBelowPct) ? Config.combat.hpPotionEmergencyBelowPct : null,
+          hpPotionSafeMissingHealFraction: Number.isFinite(Config.combat.hpPotionSafeMissingHealFraction) ? Config.combat.hpPotionSafeMissingHealFraction : null,
+          hpPotionCombatMissingHealFraction: Number.isFinite(Config.combat.hpPotionCombatMissingHealFraction) ? Config.combat.hpPotionCombatMissingHealFraction : null,
+          hpPotionForecastWindowSec: Number.isFinite(Config.combat.hpPotionForecastWindowSec) ? Config.combat.hpPotionForecastWindowSec : null,
+          mpPotionUseBelowPct: Number.isFinite(Config.combat.mpPotionUseBelowPct) ? Config.combat.mpPotionUseBelowPct : null,
+          hpPotionSlot: hpPotionRow ? {
+            slot: hpPotionRow.slot,
+            counter: hpPotionRow.counter ? hpPotionRow.counter.value : null,
+            totalValue: hpPotionEffect && Number.isFinite(hpPotionEffect.value) ? hpPotionEffect.value : null,
+            durationSec: hpPotionEffect && Number.isFinite(hpPotionEffect.durationSec) ? hpPotionEffect.durationSec : null
+          } : null,
+          mpPotionSlot: mpPotionRow ? {
+            slot: mpPotionRow.slot,
+            counter: mpPotionRow.counter ? mpPotionRow.counter.value : null,
+            totalValue: mpPotionEffect && Number.isFinite(mpPotionEffect.value) ? mpPotionEffect.value : null,
+            durationSec: mpPotionEffect && Number.isFinite(mpPotionEffect.durationSec) ? mpPotionEffect.durationSec : null
+          } : null,
+          runtime: sustain || null
+        }, false);
+      }
       addCheck(
         "auto_farm_reliability",
         !!(

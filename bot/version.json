@@ -1,8 +1,53 @@
 ﻿{
-    "version":  "0.3.139",
-    "description":  "planner: add bounded runtime aggression credit",
-    "builtAt":  "2026-05-11T23:31:46.0315085+03:00",
+    "version":  "0.3.145",
+    "description":  "combat: v0.3.145 — remove out-of-combat heal gate; keep parsed potion sustain",
+    "builtAt":  "2026-05-12T20:01:33.6250015+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.145",
+                        "description":  "combat: v0.3.145 — remove out-of-combat heal gate; keep parsed potion sustain",
+                        "date":  "2026-05-12T20:01:33.6250015+03:00"
+                    },
+                    {
+                        "version":  "0.3.147",
+                        "description":  "combat: restrict heal gate to tile movement only",
+                        "date":  "2026-05-12T18:02:13.1048031+03:00"
+                    },
+                    {
+                        "version":  "0.3.146",
+                        "description":  "combat: add out-of-combat hp heal gate",
+                        "date":  "2026-05-12T17:53:01.8883902+03:00"
+                    },
+                    {
+                        "version":  "0.3.145",
+                        "description":  "combat: parsed potion sustain and mana protection",
+                        "date":  "2026-05-12T17:38:41.9374384+03:00"
+                    },
+                    {
+                        "version":  "0.3.144",
+                        "description":  "combat: parsed potion sustain and mana protection",
+                        "date":  "2026-05-12T17:38:36.1779417+03:00"
+                    },
+                    {
+                        "version":  "0.3.143",
+                        "description":  "combat readiness: dense charge execute and potion sustain",
+                        "date":  "2026-05-12T17:07:48.2440906+03:00"
+                    },
+                    {
+                        "version":  "0.3.142",
+                        "description":  "planner: fresh-target alpha scoring for Sniper Shot",
+                        "date":  "2026-05-12T16:06:13.6774718+03:00"
+                    },
+                    {
+                        "version":  "0.3.141",
+                        "description":  "planner: calm burst credit for safe heavy openers",
+                        "date":  "2026-05-12T13:54:10.9046229+03:00"
+                    },
+                    {
+                        "version":  "0.3.140",
+                        "description":  "planner: add enemy-state opener context",
+                        "date":  "2026-05-12T13:42:30.1329863+03:00"
+                    },
                     {
                         "version":  "0.3.139",
                         "description":  "planner: add bounded runtime aggression credit",
@@ -207,51 +252,6 @@
                         "version":  "0.3.99",
                         "description":  "Harden quick TEST soak with one-time retry window and retry diagnostics.",
                         "date":  "2026-05-11T13:28:24.8262574+03:00"
-                    },
-                    {
-                        "version":  "0.3.98",
-                        "description":  "Align ranked soak pass criteria with runtime activity; add explicit soak reason.",
-                        "date":  "2026-05-11T13:25:33.4262491+03:00"
-                    },
-                    {
-                        "version":  "0.3.97",
-                        "description":  "TEST logs: add full per-check DETAILS map and richer debug table.",
-                        "date":  "2026-05-11T13:21:49.1647475+03:00"
-                    },
-                    {
-                        "version":  "0.3.96",
-                        "description":  "Fix TEST false fails: ranked soak activity + skill-master class sync.",
-                        "date":  "2026-05-11T13:18:07.9565581+03:00"
-                    },
-                    {
-                        "version":  "0.3.95",
-                        "description":  "Add quick/release TEST profiles with strict long-soak release validation mode.",
-                        "date":  "2026-05-11T13:11:07.0824028+03:00"
-                    },
-                    {
-                        "version":  "0.3.94",
-                        "description":  "Combat reliability hardening: no-progress cooldown + TEST reliability check.",
-                        "date":  "2026-05-11T13:01:15.1919526+03:00"
-                    },
-                    {
-                        "version":  "0.3.93",
-                        "description":  "TEST soak: graceful stop at combat-safe boundary with timeout fallback.",
-                        "date":  "2026-05-11T12:56:11.8713240+03:00"
-                    },
-                    {
-                        "version":  "0.3.92",
-                        "description":  "Mid-fight rotation control: ranked bursts per find cycle + TEST rotation check.",
-                        "date":  "2026-05-11T12:51:06.9004608+03:00"
-                    },
-                    {
-                        "version":  "0.3.91",
-                        "description":  "Enemy-aware opener threshold adaptation + TEST enemy adaptation check.",
-                        "date":  "2026-05-11T12:41:31.7608353+03:00"
-                    },
-                    {
-                        "version":  "0.3.90",
-                        "description":  "Per-class planner profiles auto-applied from class icon; TEST class-profile check.",
-                        "date":  "2026-05-11T12:36:26.8778275+03:00"
                     }
                 ]
 }
