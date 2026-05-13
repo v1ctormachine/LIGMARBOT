@@ -1212,7 +1212,7 @@
     return fallbackPlan;
   }
 
-  // AI CHANGED: openerHorizonSim — split skill paper damage into immediate vs delayed parts so live fight context can reward front-load / punish late-only value.
+  // AI CHANGED: openerHorizonSim — split skill paper damage into immediate vs delayed parts; all effect branches scale by mobFactor (enemy hp_drop ratio) including DoT.
   function plannerSummarizeSkillPaperDamageShape(slot, horizonSec, mobFactor, expectedBasicHit, prebuiltChargePlan) {
     if (!slot || !Array.isArray(slot.effects) || !(horizonSec > 0)) {
       return {
@@ -1232,7 +1232,8 @@
       }
       if (e.type === "dot" && Number.isFinite(e.perSec)) {
         const dur = Number.isFinite(e.durationSec) ? e.durationSec : horizonSec;
-        const add = e.perSec * Math.min(horizonSec, dur);
+        // AI CHANGED: Apply same mob calibration factor as instant/channel so opener horizon DoT EV matches observed basic scaling.
+        const add = e.perSec * Math.min(horizonSec, dur) * mf;
         totalDamage += add;
         dotDamage += add;
       } else if (e.type === "instant" && Number.isFinite(e.value)) {

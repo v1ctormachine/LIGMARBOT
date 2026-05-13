@@ -491,6 +491,8 @@
       skill_master_db: "Skill master DB",
       hero_stats: "Hero stats",
       planner_opener_horizon_preview: "HorizonSim",
+      // AI CHANGED: DoT branch in horizon paper scales with mobFactor (calibration EV).
+      planner_horizon_dot_mob_calibration: "Horizon DoT calibration",
       planner_conception_path: "Conception path",
       planner_ranked_runtime: "Ranked runtime",
       planner_opener_context_scoring: "Opener context scoring",
@@ -2481,6 +2483,46 @@
             ? { error: "ranked_combat_off", strictRankedChecks: true }
             : { skipped: true, reason: "ranked_combat_off" },
           strictRankedChecks
+        );
+      }
+      // AI CHANGED: openerHorizonSim DoT must scale with mobFactor like other paper skill parts (calibration → EV).
+      if (!rankedOn) {
+        addCheck(
+          "planner_horizon_dot_mob_calibration",
+          !strictRankedChecks,
+          strictRankedChecks
+            ? { error: "ranked_combat_off", strictRankedChecks: true }
+            : { skipped: true, reason: "ranked_combat_off" },
+          strictRankedChecks
+        );
+      } else if (typeof plannerSummarizeSkillPaperDamageShape !== "function") {
+        addCheck("planner_horizon_dot_mob_calibration", false, { error: "missing_plannerSummarizeSkillPaperDamageShape" }, false);
+      } else {
+        const dotSlot = { effects: [{ type: "dot", perSec: 20, durationSec: 4 }] };
+        let sFull = null;
+        let sHalf = null;
+        let dotErr = null;
+        try {
+          sFull = plannerSummarizeSkillPaperDamageShape(dotSlot, 4, 1, null, null);
+          sHalf = plannerSummarizeSkillPaperDamageShape(dotSlot, 4, 0.5, null, null);
+        } catch (eDot) {
+          dotErr = String(eDot && eDot.message ? eDot.message : eDot);
+        }
+        const dotOk =
+          !dotErr &&
+          sFull &&
+          sHalf &&
+          Number.isFinite(sFull.dotDamage) &&
+          sFull.dotDamage > 0 &&
+          Number.isFinite(sHalf.dotDamage) &&
+          Math.abs(sHalf.dotDamage - sFull.dotDamage * 0.5) < 1e-4;
+        addCheck(
+          "planner_horizon_dot_mob_calibration",
+          dotOk,
+          dotOk
+            ? { dotFull: sFull.dotDamage, dotHalf: sHalf.dotDamage }
+            : { error: "dot_mob_factor_mismatch", dotError: dotErr, full: sFull, half: sHalf },
+          false
         );
       }
       if (!rankedOn) {

@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.189",
-    "description":  "calibration pressure v2: spread confidence, ratio ease, charge hold hard-only",
-    "builtAt":  "2026-05-13T17:45:02.0473454+03:00",
+    "version":  "0.3.190",
+    "description":  "horizon: DoT paper scales with mob calibration; TEST Horizon DoT calibration",
+    "builtAt":  "2026-05-13T17:52:38.3933158+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.190",
+                        "description":  "horizon: DoT paper scales with mob calibration; TEST Horizon DoT calibration",
+                        "date":  "2026-05-13T17:52:38.3933158+03:00"
+                    },
                     {
                         "version":  "0.3.189",
                         "description":  "calibration pressure v2: spread confidence, ratio ease, charge hold hard-only",
@@ -247,11 +252,6 @@
                         "version":  "0.3.144",
                         "description":  "combat: parsed potion sustain and mana protection",
                         "date":  "2026-05-12T17:38:36.1779417+03:00"
-                    },
-                    {
-                        "version":  "0.3.143",
-                        "description":  "combat readiness: dense charge execute and potion sustain",
-                        "date":  "2026-05-12T17:07:48.2440906+03:00"
                     }
                 ]
 }
