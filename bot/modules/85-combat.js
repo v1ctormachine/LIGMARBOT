@@ -25,6 +25,847 @@
     }
   }
 
+  // AI CHANGED: AUTO ON chat spammer — keep randomized due time and last-send telemetry in runtime state.
+  function getAutoChatSpammerRuntime() {
+    if (!Runtime.autoFarm.chatSpammer || typeof Runtime.autoFarm.chatSpammer !== "object") {
+      Runtime.autoFarm.chatSpammer = {};
+    }
+    const rt = Runtime.autoFarm.chatSpammer;
+    if (!Object.prototype.hasOwnProperty.call(rt, "nextSendAt")) {
+      rt.nextSendAt = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(rt, "lastDelayMs")) {
+      rt.lastDelayMs = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(rt, "lastAttemptAt")) {
+      rt.lastAttemptAt = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(rt, "lastSendAt")) {
+      rt.lastSendAt = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(rt, "lastMessage")) {
+      rt.lastMessage = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(rt, "lastMessageIndex")) {
+      rt.lastMessageIndex = null;
+    }
+    if (!Number.isFinite(rt.sends)) {
+      rt.sends = 0;
+    }
+    if (!Number.isFinite(rt.failures)) {
+      rt.failures = 0;
+    }
+    if (!Object.prototype.hasOwnProperty.call(rt, "lastResult")) {
+      rt.lastResult = null;
+    }
+    return rt;
+  }
+
+  function resetAutoChatSpammerRuntime() {
+    const rt = getAutoChatSpammerRuntime();
+    rt.nextSendAt = null;
+    rt.lastDelayMs = null;
+    rt.lastAttemptAt = null;
+    rt.lastSendAt = null;
+    rt.lastMessage = null;
+    rt.lastMessageIndex = null;
+    rt.sends = 0;
+    rt.failures = 0;
+    rt.lastResult = null;
+    return rt;
+  }
+
+  function pickAutoChatSpammerDelayMs() {
+    const minRaw = Number.isFinite(Config.chat && Config.chat.messageIntervalMinMs)
+      ? Math.max(0, Math.round(Config.chat.messageIntervalMinMs))
+      : 8 * 60 * 1000;
+    const maxRaw = Number.isFinite(Config.chat && Config.chat.messageIntervalMaxMs)
+      ? Math.max(minRaw, Math.round(Config.chat.messageIntervalMaxMs))
+      : 20 * 60 * 1000;
+    if (maxRaw <= minRaw) {
+      return minRaw;
+    }
+    return minRaw + Math.floor(Math.random() * (maxRaw - minRaw + 1));
+  }
+
+  function scheduleNextAutoChatSpammer(reason, userOpts) {
+    const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
+    const rt = getAutoChatSpammerRuntime();
+    const now = Number.isFinite(opts.nowMs) ? opts.nowMs : Date.now();
+    const delayMs = Number.isFinite(opts.delayMs) ? Math.max(0, Math.round(opts.delayMs)) : pickAutoChatSpammerDelayMs();
+    rt.nextSendAt = now + delayMs;
+    rt.lastDelayMs = delayMs;
+    if (reason) {
+      rt.lastResult = Object.assign({}, rt.lastResult || {}, {
+        nextScheduleReason: reason,
+        nextSendAt: rt.nextSendAt
+      });
+    }
+    return rt.nextSendAt;
+  }
+
+  // AI CHANGED: Local-clock slot for AUTO chat lines (07–12 morning, 12–18 daytime, 18–23 evening, else night).
+  function getTimeOfDayChatSlot(userOpts) {
+    const nowMs = userOpts && Number.isFinite(userOpts.nowMs) ? userOpts.nowMs : Date.now();
+    const h = new Date(nowMs).getHours();
+    if (h >= 7 && h < 12) {
+      return "morning";
+    }
+    if (h >= 12 && h < 18) {
+      return "daytime";
+    }
+    if (h >= 18 && h < 23) {
+      return "evening";
+    }
+    return "night";
+  }
+
+  // AI CHANGED: Messages for one slot; fallback to legacy flat `Config.chat.messages` if present.
+  function getChatSpammerMessagesForSlot(slot) {
+    const m = Config.chat && Config.chat.messagesByTimeOfDay ? Config.chat.messagesByTimeOfDay : null;
+    if (!m || typeof m !== "object") {
+      return Array.isArray(Config.chat && Config.chat.messages) ? Config.chat.messages.filter(Boolean) : [];
+    }
+    const key = typeof slot === "string" && slot ? slot : getTimeOfDayChatSlot();
+    const arr = m[key];
+    return Array.isArray(arr) ? arr.filter(Boolean) : [];
+  }
+
+  // AI CHANGED: Flatten all banks for diagnostics / TEST max-length scan.
+  function getAllChatSpammerMessagesFlat() {
+    const m = Config.chat && Config.chat.messagesByTimeOfDay ? Config.chat.messagesByTimeOfDay : null;
+    if (!m || typeof m !== "object") {
+      return Array.isArray(Config.chat && Config.chat.messages) ? Config.chat.messages.filter(Boolean) : [];
+    }
+    const keys = ["morning", "daytime", "evening", "night"];
+    const out = [];
+    for (let i = 0; i < keys.length; i += 1) {
+      const arr = m[keys[i]];
+      if (Array.isArray(arr)) {
+        for (let j = 0; j < arr.length; j += 1) {
+          if (arr[j]) {
+            out.push(arr[j]);
+          }
+        }
+      }
+    }
+    return out;
+  }
+
+  function pickAutoChatSpammerMessage() {
+    const slot = getTimeOfDayChatSlot();
+    const messages = getChatSpammerMessagesForSlot(slot);
+    if (messages.length <= 0) {
+      return null;
+    }
+    const rt = getAutoChatSpammerRuntime();
+    let idx = Math.floor(Math.random() * messages.length);
+    if (messages.length > 1 && Number.isFinite(rt.lastMessageIndex) && idx === rt.lastMessageIndex) {
+      idx = (idx + 1 + Math.floor(Math.random() * (messages.length - 1))) % messages.length;
+    }
+    return {
+      index: idx,
+      message: messages[idx],
+      slot: slot
+    };
+  }
+
+  async function maybeRunAutoChatSpammer(liveState, userOpts) {
+    const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
+    if (!Config.chat || Config.chat.autoLocalPromocodeSpammerEnabled === false) {
+      return { ok: true, skipped: true, reason: "disabled" };
+    }
+    const now = Date.now();
+    const messages = getChatSpammerMessagesForSlot(getTimeOfDayChatSlot({ nowMs: now }));
+    if (messages.length <= 0) {
+      return { ok: false, skipped: true, reason: "no_messages" };
+    }
+    const rt = getAutoChatSpammerRuntime();
+    if (!Number.isFinite(rt.nextSendAt)) {
+      scheduleNextAutoChatSpammer("auto_loop_start", { nowMs: now });
+      return {
+        ok: true,
+        skipped: true,
+        reason: "scheduled_first_send",
+        nextSendAt: rt.nextSendAt,
+        lastDelayMs: rt.lastDelayMs
+      };
+    }
+    if (now < rt.nextSendAt) {
+      return {
+        ok: true,
+        skipped: true,
+        reason: "not_due",
+        nextSendAt: rt.nextSendAt,
+        msUntilNext: rt.nextSendAt - now
+      };
+    }
+    const state = liveState && typeof liveState === "object" ? liveState : readBasicState();
+    if (
+      state &&
+      state.session &&
+      (
+        state.session.dead === true ||
+        state.session.poorConnection === true
+      )
+    ) {
+      return {
+        ok: true,
+        skipped: true,
+        reason: "session_risk",
+        nextSendAt: rt.nextSendAt
+      };
+    }
+    if (state && state.combat && typeof state.combat.enemyCount === "number" && state.combat.enemyCount > 0) {
+      return {
+        ok: true,
+        skipped: true,
+        reason: "enemy_present",
+        enemyCount: state.combat.enemyCount,
+        nextSendAt: rt.nextSendAt
+      };
+    }
+    const picked = pickAutoChatSpammerMessage();
+    if (!picked || !picked.message) {
+      return { ok: false, skipped: true, reason: "message_pick_failed" };
+    }
+    rt.lastAttemptAt = now;
+    setBotStatus("waiting", `auto local chat send (msg ${picked.index + 1}/${messages.length})`);
+    Logger.log("CHAT", "Auto local chat send due", {
+      messageIndex: picked.index,
+      messageLength: picked.message.length,
+      timeSlot: picked.slot || null,
+      reason: opts.reason || null
+    });
+    const sendResult = await sendLocalChatPromocodeMessage(picked.message);
+    rt.lastResult = sendResult;
+    if (sendResult && sendResult.ok) {
+      rt.sends += 1;
+      rt.lastSendAt = Date.now();
+      rt.lastMessage = picked.message;
+      rt.lastMessageIndex = picked.index;
+      Logger.log("CHAT", "Auto local chat send complete", {
+        sends: rt.sends,
+        messageIndex: picked.index,
+        messageLength: picked.message.length,
+        timeSlot: picked.slot || null
+      });
+      scheduleNextAutoChatSpammer("sent", { nowMs: rt.lastSendAt });
+      return Object.assign({
+        ok: true,
+        sent: true,
+        messageIndex: picked.index,
+        nextSendAt: rt.nextSendAt,
+        lastDelayMs: rt.lastDelayMs
+      }, sendResult);
+    }
+    rt.failures += 1;
+    Logger.warn("CHAT", "Auto local chat send failed", {
+      failures: rt.failures,
+      messageIndex: picked.index,
+      result: sendResult
+    });
+    scheduleNextAutoChatSpammer("send_failed", { nowMs: Date.now() });
+    return {
+      ok: false,
+      sent: false,
+      messageIndex: picked.index,
+      failures: rt.failures,
+      nextSendAt: rt.nextSendAt,
+      lastDelayMs: rt.lastDelayMs,
+      result: sendResult
+    };
+  }
+
+  // AI CHANGED: Night resilience — health runtime tracks degraded-session timers and last healthy/progress points.
+  function getAutoFarmHealthRuntime() {
+    if (!Runtime.autoFarm.health || typeof Runtime.autoFarm.health !== "object") {
+      Runtime.autoFarm.health = {};
+    }
+    const health = Runtime.autoFarm.health;
+    if (!Object.prototype.hasOwnProperty.call(health, "lastHealthyAt")) {
+      health.lastHealthyAt = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(health, "lastProgressAt")) {
+      health.lastProgressAt = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(health, "lastActionVerifiedAt")) {
+      health.lastActionVerifiedAt = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(health, "lastStateReadAt")) {
+      health.lastStateReadAt = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(health, "poorConnectionSince")) {
+      health.poorConnectionSince = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(health, "deadSince")) {
+      health.deadSince = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(health, "missingCoreUiSince")) {
+      health.missingCoreUiSince = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(health, "highPingSince")) {
+      health.highPingSince = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(health, "staleSince")) {
+      health.staleSince = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(health, "suspectedOverload")) {
+      health.suspectedOverload = false;
+    }
+    if (!Object.prototype.hasOwnProperty.call(health, "lastRiskReason")) {
+      health.lastRiskReason = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(health, "lastSummary")) {
+      health.lastSummary = null;
+    }
+    return health;
+  }
+
+  // AI CHANGED: Night resilience — recovery runtime tracks soft recoveries, refreshes, and last refresh reason.
+  function getAutoFarmRecoveryRuntime() {
+    if (!Runtime.autoFarm.recovery || typeof Runtime.autoFarm.recovery !== "object") {
+      Runtime.autoFarm.recovery = {};
+    }
+    const recovery = Runtime.autoFarm.recovery;
+    if (!Number.isFinite(recovery.softAttempts)) {
+      recovery.softAttempts = 0;
+    }
+    if (!Number.isFinite(recovery.refreshAttempts)) {
+      recovery.refreshAttempts = 0;
+    }
+    if (!Object.prototype.hasOwnProperty.call(recovery, "lastSoftRecoveryAt")) {
+      recovery.lastSoftRecoveryAt = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(recovery, "lastRefreshAt")) {
+      recovery.lastRefreshAt = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(recovery, "lastRefreshReason")) {
+      recovery.lastRefreshReason = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(recovery, "lastRefreshToken")) {
+      recovery.lastRefreshToken = null;
+    }
+    return recovery;
+  }
+
+  function resetAutoFarmHealthRuntime(startedAt) {
+    const health = getAutoFarmHealthRuntime();
+    const when = Number.isFinite(startedAt) ? startedAt : Date.now();
+    health.lastHealthyAt = when;
+    health.lastProgressAt = when;
+    health.lastActionVerifiedAt = when;
+    health.lastStateReadAt = when;
+    health.poorConnectionSince = null;
+    health.deadSince = null;
+    health.missingCoreUiSince = null;
+    health.highPingSince = null;
+    health.staleSince = null;
+    health.suspectedOverload = false;
+    health.lastRiskReason = null;
+    health.lastSummary = null;
+    return health;
+  }
+
+  function resetAutoFarmRecoveryRuntime() {
+    const recovery = getAutoFarmRecoveryRuntime();
+    recovery.softAttempts = 0;
+    recovery.lastSoftRecoveryAt = null;
+    recovery.lastRefreshAt = null;
+    recovery.lastRefreshReason = null;
+    recovery.lastRefreshToken = null;
+    return recovery;
+  }
+
+  function markAutoFarmProgress(kind, detail, userOpts) {
+    const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
+    const when = Number.isFinite(opts.whenMs) ? opts.whenMs : Date.now();
+    const health = getAutoFarmHealthRuntime();
+    health.lastProgressAt = when;
+    health.lastActionVerifiedAt = when;
+    if (!health.lastRiskReason) {
+      health.lastHealthyAt = when;
+    }
+    if (kind) {
+      health.lastSummary = Object.assign({}, health.lastSummary || {}, {
+        lastProgressKind: kind,
+        lastProgressDetail: detail || null,
+        lastProgressAt: when
+      });
+    }
+    return when;
+  }
+
+  // AI CHANGED: Wait verifications now feed the watchdog so stale sessions use "last verified action" instead of only cycle-level success.
+  function noteAutoFarmActionVerified(kind, detail, userOpts) {
+    const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
+    const when = Number.isFinite(opts.whenMs) ? opts.whenMs : Date.now();
+    const health = getAutoFarmHealthRuntime();
+    health.lastActionVerifiedAt = when;
+    if (kind && /progress|opened|settled|acquired|effect/i.test(kind)) {
+      health.lastProgressAt = when;
+    }
+    health.lastSummary = Object.assign({}, health.lastSummary || {}, {
+      lastVerifiedKind: kind || null,
+      lastVerifiedDetail: detail || null,
+      lastVerifiedAt: when
+    });
+    return when;
+  }
+
+  function getAutoRecoveryResumeStorageKey() {
+    return Config.recovery && typeof Config.recovery.resumeStorageKey === "string" && Config.recovery.resumeStorageKey.trim()
+      ? Config.recovery.resumeStorageKey
+      : "ligmarbot.autoRecoveryResume.v1";
+  }
+
+  function readPersistedAutoRecoveryResume() {
+    try {
+      const raw = window.localStorage.getItem(getAutoRecoveryResumeStorageKey());
+      if (!raw) {
+        return null;
+      }
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? parsed : null;
+    } catch (err) {
+      Logger.warn("RECOVERY", "Failed to read persisted auto-recovery resume token", err);
+      return null;
+    }
+  }
+
+  function writePersistedAutoRecoveryResume(token) {
+    try {
+      window.localStorage.setItem(getAutoRecoveryResumeStorageKey(), JSON.stringify(token));
+      return true;
+    } catch (err) {
+      Logger.warn("RECOVERY", "Failed to persist auto-recovery resume token", err);
+      return false;
+    }
+  }
+
+  function clearPersistedAutoRecoveryResume() {
+    try {
+      window.localStorage.removeItem(getAutoRecoveryResumeStorageKey());
+      return true;
+    } catch (err) {
+      Logger.warn("RECOVERY", "Failed to clear auto-recovery resume token", err);
+      return false;
+    }
+  }
+
+  function updateRecoverySince(flag, currentValue, nowMs) {
+    if (!flag) {
+      return { since: null, durationMs: 0 };
+    }
+    const since = Number.isFinite(currentValue) ? currentValue : nowMs;
+    return { since: since, durationMs: Math.max(0, nowMs - since) };
+  }
+
+  // AI CHANGED: Night resilience — summarize current session health into one recovery decision object.
+  function evaluateAutoFarmHealth(liveState, userOpts) {
+    const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
+    const now = Number.isFinite(opts.nowMs) ? opts.nowMs : Date.now();
+    const state = liveState && typeof liveState === "object" ? liveState : readBasicState();
+    const health = opts.healthRuntime && typeof opts.healthRuntime === "object"
+      ? opts.healthRuntime
+      : getAutoFarmHealthRuntime();
+    const recovery = opts.recoveryRuntime && typeof opts.recoveryRuntime === "object"
+      ? opts.recoveryRuntime
+      : getAutoFarmRecoveryRuntime();
+    const running = typeof opts.running === "boolean" ? opts.running : !!Runtime.autoFarm.running;
+    const readonly = opts.readonly === true;
+    const session = state && state.session ? state.session : {};
+    const coreUi = session && session.coreUi ? session.coreUi : {};
+    const pingMs = state && state.network && Number.isFinite(state.network.pingMs) ? state.network.pingMs : null;
+    const dead = !!session.dead;
+    const poorConnection = !!session.poorConnection;
+    const inGame = session.inGame !== false;
+    const missingCoreUi = !!coreUi.missing;
+    const highPing = Number.isFinite(pingMs) && pingMs >= (Number.isFinite(Config.recovery && Config.recovery.highPingThresholdMs) ? Config.recovery.highPingThresholdMs : 450);
+    const lastObservedActionAt =
+      Number.isFinite(health.lastActionVerifiedAt)
+        ? health.lastActionVerifiedAt
+        : Number.isFinite(health.lastProgressAt)
+          ? health.lastProgressAt
+          : Number.isFinite(Runtime.autoFarm.startedAt)
+            ? Runtime.autoFarm.startedAt
+            : now;
+    const staleActionMs = running ? Math.max(0, now - lastObservedActionAt) : 0;
+
+    if (!readonly) {
+      health.lastStateReadAt = now;
+    }
+
+    const deadMeta = updateRecoverySince(dead, health.deadSince, now);
+    const poorMeta = updateRecoverySince(poorConnection, health.poorConnectionSince, now);
+    const missingCoreUiMeta = updateRecoverySince(missingCoreUi, health.missingCoreUiSince, now);
+    const highPingMeta = updateRecoverySince(highPing, health.highPingSince, now);
+    const staleMeta = updateRecoverySince(staleActionMs >= (Number.isFinite(Config.recovery && Config.recovery.staleActionGraceMs) ? Config.recovery.staleActionGraceMs : 30000), health.staleSince || lastObservedActionAt, now);
+
+    if (!readonly) {
+      health.deadSince = deadMeta.since;
+      health.poorConnectionSince = poorMeta.since;
+      health.missingCoreUiSince = missingCoreUiMeta.since;
+      health.highPingSince = highPingMeta.since;
+      health.staleSince = staleMeta.since;
+    }
+
+    const reasons = [];
+    let severity = "healthy";
+    let recommendedAction = "continue";
+    const deadCritical = deadMeta.durationMs >= (Number.isFinite(Config.recovery && Config.recovery.deadGraceMs) ? Config.recovery.deadGraceMs : 7000);
+    const poorCritical = poorMeta.durationMs >= (Number.isFinite(Config.recovery && Config.recovery.poorConnectionGraceMs) ? Config.recovery.poorConnectionGraceMs : 9000);
+    const coreUiCritical = missingCoreUiMeta.durationMs >= (Number.isFinite(Config.recovery && Config.recovery.missingCoreUiGraceMs) ? Config.recovery.missingCoreUiGraceMs : 12000);
+    const highPingCritical = highPingMeta.durationMs >= (Number.isFinite(Config.recovery && Config.recovery.highPingGraceMs) ? Config.recovery.highPingGraceMs : 25000);
+    const staleCritical = staleActionMs >= (Number.isFinite(Config.recovery && Config.recovery.staleActionGraceMs) ? Config.recovery.staleActionGraceMs : 30000);
+    const suspectedOverload = !!(staleCritical && (highPing || poorConnection || missingCoreUi));
+
+    if (!inGame) {
+      severity = "critical";
+      recommendedAction = "refresh";
+      reasons.push("not_in_game");
+    }
+    if (dead) {
+      reasons.push(deadCritical ? "dead_screen" : "dead_screen_pending");
+      severity = deadCritical ? "critical" : severity === "healthy" ? "degraded" : severity;
+      if (deadCritical) {
+        recommendedAction = "soft_recover";
+      }
+    }
+    if (poorConnection) {
+      reasons.push(poorCritical ? "poor_connection" : "poor_connection_pending");
+      severity = poorCritical ? "critical" : severity === "healthy" ? "degraded" : severity;
+      if (poorCritical) {
+        recommendedAction = "soft_recover";
+      }
+    }
+    if (missingCoreUi) {
+      reasons.push(coreUiCritical ? "missing_core_ui" : "missing_core_ui_pending");
+      severity = coreUiCritical ? "critical" : severity === "healthy" ? "degraded" : severity;
+      if (coreUiCritical) {
+        recommendedAction = "soft_recover";
+      }
+    }
+    if (highPing) {
+      reasons.push(highPingCritical ? "high_ping" : "high_ping_pending");
+      if (severity === "healthy") {
+        severity = "degraded";
+      }
+      if (recommendedAction === "continue" && highPingCritical) {
+        recommendedAction = "monitor";
+      }
+    }
+    if (staleCritical) {
+      reasons.push(suspectedOverload ? "stale_session_overload" : "stale_session");
+      if (severity === "healthy") {
+        severity = "degraded";
+      }
+      if (suspectedOverload) {
+        severity = "critical";
+      }
+      if (recommendedAction === "continue" || recommendedAction === "monitor") {
+        recommendedAction = "soft_recover";
+      }
+    }
+
+    const hardRefreshGraceMs = Number.isFinite(Config.recovery && Config.recovery.hardRefreshGraceMs)
+      ? Config.recovery.hardRefreshGraceMs
+      : 45000;
+    const longestRiskMs = Math.max(deadMeta.durationMs, poorMeta.durationMs, missingCoreUiMeta.durationMs, staleActionMs, highPingMeta.durationMs);
+    const refreshCap = Number.isFinite(Config.recovery && Config.recovery.maxAutoRefreshAttemptsPerSession)
+      ? Math.max(0, Config.recovery.maxAutoRefreshAttemptsPerSession)
+      : 3;
+
+    if (severity === "critical" && recommendedAction === "soft_recover") {
+      if (recovery.softAttempts >= (Number.isFinite(Config.recovery && Config.recovery.softRecoveryMaxAttemptsBeforeRefresh)
+        ? Config.recovery.softRecoveryMaxAttemptsBeforeRefresh
+        : 2) || longestRiskMs >= hardRefreshGraceMs) {
+        recommendedAction = recovery.refreshAttempts >= refreshCap ? "halt" : "refresh";
+      }
+    }
+
+    if (severity === "healthy" || reasons.length === 0) {
+      recommendedAction = "continue";
+      if (!readonly) {
+        health.lastHealthyAt = now;
+        health.lastRiskReason = null;
+      }
+    } else if (!readonly) {
+      health.lastRiskReason = reasons[0] || null;
+    }
+
+    if (!readonly) {
+      health.suspectedOverload = suspectedOverload;
+    }
+
+    const summary = {
+      severity: severity,
+      recommendedAction: recommendedAction,
+      reasons: reasons,
+      primaryReason: reasons[0] || null,
+      dead: dead,
+      poorConnection: poorConnection,
+      missingCoreUi: missingCoreUi,
+      highPing: highPing,
+      suspectedOverload: suspectedOverload,
+      pingMs: pingMs,
+      staleActionMs: staleActionMs,
+      lastActionVerifiedAt: lastObservedActionAt,
+      durationsMs: {
+        dead: deadMeta.durationMs,
+        poorConnection: poorMeta.durationMs,
+        missingCoreUi: missingCoreUiMeta.durationMs,
+        highPing: highPingMeta.durationMs,
+        stale: staleActionMs
+      },
+      coreUi: coreUi,
+      lastHealthyAt: health.lastHealthyAt,
+      softAttempts: recovery.softAttempts,
+      refreshAttempts: recovery.refreshAttempts
+    };
+    if (!readonly) {
+      health.lastSummary = summary;
+    }
+    return summary;
+  }
+
+  // AI CHANGED: Verify waits abort early only on true critical session risk, not on mild ping spikes or short overlays.
+  function shouldAbortWaitForSessionRisk(summary) {
+    return !!(
+      Runtime.autoFarm.running &&
+      summary &&
+      summary.severity === "critical" &&
+      (summary.recommendedAction === "soft_recover" || summary.recommendedAction === "refresh" || summary.recommendedAction === "halt")
+    );
+  }
+
+  function isStateHealthyForAutoResume(state, summary) {
+    const session = state && state.session ? state.session : {};
+    const coreUi = session && session.coreUi ? session.coreUi : {};
+    return !!(
+      session.inGame !== false &&
+      !session.dead &&
+      !session.poorConnection &&
+      coreUi.visible !== false &&
+      (!summary || summary.severity !== "critical")
+    );
+  }
+
+  async function performSoftSessionRecovery(liveState, summary, userOpts) {
+    const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
+    const recovery = getAutoFarmRecoveryRuntime();
+    recovery.softAttempts += 1;
+    recovery.lastSoftRecoveryAt = Date.now();
+    setBotStatus("waiting", `soft recovery (${summary && summary.primaryReason ? summary.primaryReason : "session risk"})`);
+    Logger.warn("RECOVERY", "Soft recovery started", {
+      attempt: recovery.softAttempts,
+      reason: summary && summary.primaryReason ? summary.primaryReason : null,
+      summary: summary || null
+    });
+    const cleanup = typeof closeTransientUiForRecovery === "function"
+      ? await closeTransientUiForRecovery()
+      : { ok: true, detail: null };
+    const currentState = liveState && typeof liveState === "object" ? liveState : readBasicState();
+    resetZoomAssumptionIfSessionRisk(currentState.session);
+    const delayMs = Number.isFinite(Config.recovery && Config.recovery.softRecoveryDelayMs)
+      ? Math.max(0, Config.recovery.softRecoveryDelayMs)
+      : 1400;
+    if (delayMs > 0) {
+      await sleep(delayMs, { bypassStop: true });
+    }
+    if (Runtime.autoFarm.stopRequested) {
+      return { ok: false, recovered: false, reason: "stop_requested", cleanup: cleanup };
+    }
+    const mapOpen = await ensureMapOpen();
+    let center = { ok: false, skipped: true, reason: "map_not_open" };
+    if (mapOpen.ok) {
+      const centerRetries = Number.isFinite(Config.recovery && Config.recovery.centerMapRetryCount)
+        ? Math.max(1, Config.recovery.centerMapRetryCount)
+        : 2;
+      for (let attempt = 0; attempt < centerRetries; attempt += 1) {
+        center = await clickCenterMapVerified();
+        if (center.ok) {
+          break;
+        }
+        await sleep(180, { bypassStop: true });
+      }
+    }
+    const afterState = readBasicState();
+    const afterSummary = evaluateAutoFarmHealth(afterState, { reason: opts.reason || "after_soft_recovery" });
+    if (afterSummary.severity === "healthy" || afterSummary.recommendedAction === "continue" || afterSummary.recommendedAction === "monitor") {
+      recovery.softAttempts = 0;
+      markAutoFarmProgress("soft_recovery", {
+        primaryReason: summary && summary.primaryReason ? summary.primaryReason : null
+      });
+      Logger.log("RECOVERY", "Soft recovery cleared session risk", {
+        cleanup: cleanup,
+        mapOpen: mapOpen,
+        center: center,
+        summary: afterSummary
+      });
+      return {
+        ok: true,
+        recovered: true,
+        cleanup: cleanup,
+        mapOpen: mapOpen,
+        center: center,
+        summary: afterSummary
+      };
+    }
+    Logger.warn("RECOVERY", "Soft recovery did not clear session risk", {
+      cleanup: cleanup,
+      mapOpen: mapOpen,
+      center: center,
+      summary: afterSummary
+    });
+    return {
+      ok: false,
+      recovered: false,
+      cleanup: cleanup,
+      mapOpen: mapOpen,
+      center: center,
+      summary: afterSummary
+    };
+  }
+
+  function buildAutoRecoveryResumeToken(reason, summary, userOpts) {
+    const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
+    const recovery = getAutoFarmRecoveryRuntime();
+    return {
+      version: BotVersion.version,
+      createdAt: new Date().toISOString(),
+      reason: reason || (summary && summary.primaryReason) || "session_risk",
+      resumeAutoFarm: !(Config.recovery && Config.recovery.autoResumeAfterRefresh === false),
+      refreshAttempts: Number.isFinite(opts.refreshAttempts) ? opts.refreshAttempts : recovery.refreshAttempts,
+      summary: summary || null
+    };
+  }
+
+  function requestHardSessionRefresh(reason, summary, userOpts) {
+    const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
+    const recovery = getAutoFarmRecoveryRuntime();
+    const refreshCap = Number.isFinite(Config.recovery && Config.recovery.maxAutoRefreshAttemptsPerSession)
+      ? Math.max(0, Config.recovery.maxAutoRefreshAttemptsPerSession)
+      : 3;
+    if (recovery.refreshAttempts >= refreshCap) {
+      setBotStatus("halted", `recovery refresh cap reached (${reason || "session risk"})`);
+      Logger.warn("RECOVERY", "Hard refresh skipped: refresh cap reached", {
+        reason: reason || null,
+        summary: summary || null,
+        refreshAttempts: recovery.refreshAttempts,
+        refreshCap: refreshCap
+      });
+      return { ok: false, halted: true, reason: "refresh_cap_reached", summary: summary || null };
+    }
+    recovery.refreshAttempts += 1;
+    recovery.lastRefreshAt = Date.now();
+    recovery.lastRefreshReason = reason || (summary && summary.primaryReason) || "session_risk";
+    const token = buildAutoRecoveryResumeToken(recovery.lastRefreshReason, summary, {
+      refreshAttempts: recovery.refreshAttempts
+    });
+    recovery.lastRefreshToken = token;
+    writePersistedAutoRecoveryResume(token);
+    setBotStatus("waiting", `refreshing after ${recovery.lastRefreshReason}`);
+    Logger.warn("RECOVERY", "Hard recovery refresh requested", token);
+    window.setTimeout(function () {
+      window.location.reload();
+    }, Number.isFinite(opts.delayMs) ? Math.max(0, opts.delayMs) : 60);
+    return { ok: true, refreshing: true, token: token, summary: summary || null };
+  }
+
+  async function maybeRecoverUnhealthySession(liveState, userOpts) {
+    const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
+    if (!Runtime.autoFarm.running) {
+      return { ok: true, skipped: true, reason: "not_running" };
+    }
+    const summary = evaluateAutoFarmHealth(liveState, { reason: opts.reason || "cycle_boundary" });
+    if (summary.severity === "healthy" || summary.recommendedAction === "continue" || summary.recommendedAction === "monitor") {
+      return { ok: true, skipped: true, summary: summary };
+    }
+    if (summary.recommendedAction === "halt") {
+      setBotStatus("halted", `session risk: ${summary.primaryReason || "unknown"}`);
+      Runtime.autoFarm.stopRequested = true;
+      return { ok: false, halted: true, summary: summary };
+    }
+    const soft = await performSoftSessionRecovery(liveState, summary, opts);
+    if (soft.ok) {
+      return { ok: true, recovered: true, summary: soft.summary, soft: soft };
+    }
+    const postSummary = soft.summary || summary;
+    if (postSummary.recommendedAction === "refresh" || postSummary.recommendedAction === "halt") {
+      return requestHardSessionRefresh(postSummary.primaryReason || summary.primaryReason, postSummary, opts);
+    }
+    return { ok: false, recovered: false, summary: postSummary, soft: soft };
+  }
+
+  // AI CHANGED: After an auto-refresh recovery, wait for a healthy game surface and restart AUTO ON automatically.
+  function resumeAutoFarmAfterRecoveryBootIfNeeded() {
+    const token = readPersistedAutoRecoveryResume();
+    if (!token || token.resumeAutoFarm !== true) {
+      return false;
+    }
+    if (Runtime.autoFarm.running) {
+      clearPersistedAutoRecoveryResume();
+      return true;
+    }
+    const pollMs = Number.isFinite(Config.recovery && Config.recovery.bootResumePollMs)
+      ? Math.max(100, Config.recovery.bootResumePollMs)
+      : 800;
+    const maxWaitMs = Number.isFinite(Config.recovery && Config.recovery.bootResumeMaxWaitMs)
+      ? Math.max(pollMs, Config.recovery.bootResumeMaxWaitMs)
+      : 45000;
+    const refreshCap = Number.isFinite(Config.recovery && Config.recovery.maxAutoRefreshAttemptsPerSession)
+      ? Math.max(0, Config.recovery.maxAutoRefreshAttemptsPerSession)
+      : 3;
+    const started = Date.now();
+    Logger.warn("RECOVERY", "Pending AUTO resume after refresh", token);
+    setBotStatus("waiting", "recovery boot health check");
+    const tick = function () {
+      const state = readBasicState();
+      const summary = evaluateAutoFarmHealth(state, {
+        readonly: true,
+        running: false,
+        nowMs: Date.now()
+      });
+      if (isStateHealthyForAutoResume(state, summary)) {
+        clearPersistedAutoRecoveryResume();
+        Logger.log("RECOVERY", "Boot recovery healthy — restarting AUTO", {
+          summary: summary,
+          token: token
+        });
+        startAutoFarmLoop();
+        return;
+      }
+      if (Date.now() - started >= maxWaitMs) {
+        const usedRefreshes = Number.isFinite(token.refreshAttempts) ? token.refreshAttempts : 0;
+        if (usedRefreshes < refreshCap) {
+          const retryToken = Object.assign({}, token, {
+            refreshAttempts: usedRefreshes + 1,
+            updatedAt: new Date().toISOString(),
+            reason: summary.primaryReason || token.reason || "boot_not_healthy"
+          });
+          writePersistedAutoRecoveryResume(retryToken);
+          Logger.warn("RECOVERY", "Boot recovery still unhealthy — refreshing again", {
+            summary: summary,
+            token: retryToken
+          });
+          window.location.reload();
+          return;
+        }
+        clearPersistedAutoRecoveryResume();
+        setBotStatus("halted", `recovery exhausted (${summary.primaryReason || "boot_not_healthy"})`);
+        Logger.warn("RECOVERY", "Boot recovery exhausted — AUTO will stay idle", {
+          summary: summary,
+          token: token
+        });
+        return;
+      }
+      window.setTimeout(tick, pollMs);
+    };
+    window.setTimeout(tick, pollMs);
+    return true;
+  }
+
   // AI CHANGED: Potion sustain now keeps state for active HoTs, shared cooldown, recent HP-loss trend, and the last protected mana requirement.
   function getCombatSustainRuntime() {
     if (!Runtime.autoFarm.combatSustain || typeof Runtime.autoFarm.combatSustain !== "object") {
@@ -777,6 +1618,492 @@
     return { ok: false, reason: "stop_requested", thresholdPct: thresholdPct };
   }
 
+  function getCombatQueueRuntime() {
+    if (!Runtime.autoFarm.combatQueue || typeof Runtime.autoFarm.combatQueue !== "object") {
+      Runtime.autoFarm.combatQueue = {};
+    }
+    const queue = Runtime.autoFarm.combatQueue;
+    if (!Object.prototype.hasOwnProperty.call(queue, "active")) {
+      queue.active = false;
+    }
+    if (!Object.prototype.hasOwnProperty.call(queue, "mode")) {
+      queue.mode = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(queue, "slot")) {
+      queue.slot = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(queue, "name")) {
+      queue.name = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(queue, "source")) {
+      queue.source = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(queue, "anchorMode")) {
+      queue.anchorMode = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(queue, "anchorSlot")) {
+      queue.anchorSlot = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(queue, "anchorName")) {
+      queue.anchorName = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(queue, "anchorSource")) {
+      queue.anchorSource = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(queue, "openerSlot")) {
+      queue.openerSlot = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(queue, "openerName")) {
+      queue.openerName = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(queue, "armedAt")) {
+      queue.armedAt = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(queue, "firedAt")) {
+      queue.firedAt = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(queue, "clearedAt")) {
+      queue.clearedAt = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(queue, "clearReason")) {
+      queue.clearReason = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(queue, "targetHpMaxAtArm")) {
+      queue.targetHpMaxAtArm = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(queue, "enemyCountAtArm")) {
+      queue.enemyCountAtArm = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(queue, "postRetargetGuarded")) {
+      queue.postRetargetGuarded = false;
+    }
+    if (!Object.prototype.hasOwnProperty.call(queue, "lastMatchedCastText")) {
+      queue.lastMatchedCastText = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(queue, "advanceCount")) {
+      queue.advanceCount = 0;
+    }
+    if (!Object.prototype.hasOwnProperty.call(queue, "anchorNeedsReset")) {
+      queue.anchorNeedsReset = false;
+    }
+    return queue;
+  }
+
+  function clearCombatActionQueue(reason, detail) {
+    const queue = getCombatQueueRuntime();
+    queue.active = false;
+    queue.clearedAt = Date.now();
+    queue.clearReason = reason || null;
+    if (detail && typeof detail === "object") {
+      if (Object.prototype.hasOwnProperty.call(detail, "mode")) {
+        queue.mode = detail.mode;
+      }
+      if (Object.prototype.hasOwnProperty.call(detail, "slot")) {
+        queue.slot = detail.slot;
+      }
+      if (Object.prototype.hasOwnProperty.call(detail, "name")) {
+        queue.name = detail.name;
+      }
+      if (Object.prototype.hasOwnProperty.call(detail, "source")) {
+        queue.source = detail.source;
+      }
+      if (Object.prototype.hasOwnProperty.call(detail, "anchorMode")) {
+        queue.anchorMode = detail.anchorMode;
+      }
+      if (Object.prototype.hasOwnProperty.call(detail, "anchorSlot")) {
+        queue.anchorSlot = detail.anchorSlot;
+      }
+      if (Object.prototype.hasOwnProperty.call(detail, "anchorName")) {
+        queue.anchorName = detail.anchorName;
+      }
+      if (Object.prototype.hasOwnProperty.call(detail, "anchorSource")) {
+        queue.anchorSource = detail.anchorSource;
+      }
+    }
+    return queue;
+  }
+
+  function normalizeCombatQueueActionName(rawName) {
+    if (typeof plannerNormalizeSkillNameForMatch === "function") {
+      return plannerNormalizeSkillNameForMatch(rawName || "");
+    }
+    if (typeof normalizeSkillName === "function") {
+      return normalizeSkillName(rawName || "").toLowerCase();
+    }
+    return String(rawName || "").replace(/\s+/g, " ").trim().toLowerCase();
+  }
+
+  function resolveCombatQueueActionName(mode, name) {
+    if (mode === "basic") {
+      return "Basic Attack";
+    }
+    return name || "";
+  }
+
+  function buildCombatQueueActionAliases(mode, name) {
+    const base = resolveCombatQueueActionName(mode, name);
+    const aliases = [];
+    const pushAlias = function (raw) {
+      const normalized = normalizeCombatQueueActionName(raw);
+      if (!normalized) {
+        return;
+      }
+      if (aliases.indexOf(normalized) === -1) {
+        aliases.push(normalized);
+      }
+    };
+    pushAlias(base);
+    if (mode === "basic") {
+      pushAlias("Attack");
+      pushAlias("Basic Attack");
+    }
+    return aliases;
+  }
+
+  function findCombatQueueAnchorCastMatch(queue) {
+    const texts = typeof readVisibleCombatCastBarTexts === "function" ? readVisibleCombatCastBarTexts() : [];
+    if (!queue || !queue.anchorMode || !queue.anchorName) {
+      return null;
+    }
+    const aliases = buildCombatQueueActionAliases(queue.anchorMode, queue.anchorName);
+    if (aliases.length <= 0 || texts.length <= 0) {
+      return null;
+    }
+    for (let i = 0; i < texts.length; i += 1) {
+      const text = texts[i];
+      const normalized = normalizeCombatQueueActionName(text);
+      if (!normalized) {
+        continue;
+      }
+      if (aliases.indexOf(normalized) !== -1) {
+        return text;
+      }
+    }
+    return null;
+  }
+
+  function buildCombatQueueAnchorAction(userOpts) {
+    const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
+    return {
+      mode: opts.mode === "skill" && Number.isFinite(opts.slot) ? "skill" : "basic",
+      slot: opts.mode === "skill" && Number.isFinite(opts.slot) ? opts.slot : null,
+      name: resolveCombatQueueActionName(opts.mode === "skill" ? "skill" : "basic", opts.name || ""),
+      source: opts.source || null
+    };
+  }
+
+  function armCombatActionQueue(action, meta) {
+    if (!action || !action.mode) {
+      return null;
+    }
+    const liveState = meta && meta.liveState ? meta.liveState : readBasicState();
+    const queue = getCombatQueueRuntime();
+    queue.active = true;
+    queue.mode = action.mode;
+    queue.slot = Number.isFinite(action.slot) ? action.slot : null;
+    queue.name = resolveCombatQueueActionName(action.mode, action.name || "");
+    queue.source = action.source || null;
+    queue.anchorMode = meta && meta.anchorMode ? meta.anchorMode : null;
+    queue.anchorSlot = meta && Number.isFinite(meta.anchorSlot) ? meta.anchorSlot : null;
+    queue.anchorName = meta && meta.anchorName ? resolveCombatQueueActionName(meta.anchorMode, meta.anchorName) : null;
+    queue.anchorSource = meta && meta.anchorSource ? meta.anchorSource : null;
+    queue.openerSlot = meta && Number.isFinite(meta.openerSlot) ? meta.openerSlot : null;
+    queue.openerName = meta && meta.openerName ? meta.openerName : null;
+    queue.armedAt = Date.now();
+    queue.firedAt = null;
+    queue.clearedAt = null;
+    queue.clearReason = null;
+    queue.lastMatchedCastText = null;
+    queue.advanceCount = 0;
+    queue.anchorNeedsReset = false;
+    queue.targetHpMaxAtArm =
+      liveState &&
+      liveState.combat &&
+      liveState.combat.targetHp &&
+      liveState.combat.targetHp.valid &&
+      Number.isFinite(liveState.combat.targetHp.max)
+        ? liveState.combat.targetHp.max
+        : null;
+    queue.enemyCountAtArm =
+      liveState && liveState.combat && Number.isFinite(liveState.combat.enemyCount)
+        ? liveState.combat.enemyCount
+        : null;
+    queue.postRetargetGuarded = !!(meta && meta.postRetargetGuarded);
+    return queue;
+  }
+
+  function fireCombatActionQueue(userOpts) {
+    const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
+    const queue = getCombatQueueRuntime();
+    if (!queue.active) {
+      return { fired: false, reason: "no_active_queue" };
+    }
+    if (Runtime.autoFarm.stopRequested) {
+      clearCombatActionQueue("stop_requested_before_queue_fire");
+      return { fired: false, reason: "stop_requested" };
+    }
+    const liveState = opts.liveState || readBasicState();
+    const targetNow =
+      liveState &&
+      liveState.combat &&
+      liveState.combat.targetHp &&
+      liveState.combat.targetHp.valid &&
+      Number.isFinite(liveState.combat.targetHp.cur) &&
+      liveState.combat.targetHp.cur > 0
+        ? liveState.combat.targetHp
+        : null;
+    if (!targetNow) {
+      clearCombatActionQueue("no_live_target_before_queue_fire");
+      return { fired: false, reason: "no_live_target" };
+    }
+    if (Number.isFinite(queue.targetHpMaxAtArm) && Number.isFinite(targetNow.max) && queue.targetHpMaxAtArm !== targetNow.max) {
+      clearCombatActionQueue("target_changed_before_queue_fire");
+      return { fired: false, reason: "target_changed" };
+    }
+    const enemyCount =
+      liveState && liveState.combat && Number.isFinite(liveState.combat.enemyCount)
+        ? liveState.combat.enemyCount
+        : null;
+    if (Number.isFinite(enemyCount) && enemyCount <= 0) {
+      clearCombatActionQueue("no_enemies_before_queue_fire");
+      return { fired: false, reason: "no_enemies" };
+    }
+    const matchedCastText = findCombatQueueAnchorCastMatch(queue);
+    if (queue.anchorNeedsReset) {
+      if (matchedCastText) {
+        return { fired: false, reason: "anchor_cast_not_reset_yet" };
+      }
+      queue.anchorNeedsReset = false;
+      return { fired: false, reason: "anchor_cast_reset_wait" };
+    }
+    if (!matchedCastText) {
+      return { fired: false, reason: "anchor_not_casting_yet" };
+    }
+    if (!queue.mode) {
+      clearCombatActionQueue("no_pending_queue_action", {
+        anchorMode: queue.anchorMode,
+        anchorSlot: queue.anchorSlot,
+        anchorName: queue.anchorName,
+        anchorSource: queue.anchorSource
+      });
+      return { fired: false, reason: "no_pending_queue_action" };
+    }
+    const queuedAction = {
+      mode: queue.mode,
+      slot: Number.isFinite(queue.slot) ? queue.slot : null,
+      name: resolveCombatQueueActionName(queue.mode, queue.name || ""),
+      source: queue.source || null
+    };
+    let clicked = false;
+    if (queuedAction.mode === "skill" && Number.isFinite(queuedAction.slot)) {
+      if (typeof isActionBarSlotShowingCooldown === "function" && isActionBarSlotShowingCooldown(queuedAction.slot)) {
+        clearCombatActionQueue("queued_skill_cooldown_hint", {
+          mode: queuedAction.mode,
+          slot: queuedAction.slot,
+          name: queuedAction.name,
+          source: queuedAction.source,
+          anchorMode: queue.anchorMode,
+          anchorSlot: queue.anchorSlot,
+          anchorName: queue.anchorName,
+          anchorSource: queue.anchorSource
+        });
+        return { fired: false, reason: "cooldown_or_blocked_hint" };
+      }
+      const row = Runtime.skills && Array.isArray(Runtime.skills.slots) ? Runtime.skills.slots[queuedAction.slot] : null;
+      if (!row || row.kind !== "skill" || !row.isAttack || !row.targetsEnemy || !plannerSkillHasDirectDamageForOpener(row)) {
+        clearCombatActionQueue("queued_skill_invalid", {
+          mode: queuedAction.mode,
+          slot: queuedAction.slot,
+          name: queuedAction.name,
+          source: queuedAction.source,
+          anchorMode: queue.anchorMode,
+          anchorSlot: queue.anchorSlot,
+          anchorName: queue.anchorName,
+          anchorSource: queue.anchorSource
+        });
+        return { fired: false, reason: "skill_invalid" };
+      }
+      if (typeof plannerGetChargeSkillEffect === "function" && plannerGetChargeSkillEffect(row)) {
+        clearCombatActionQueue("queued_skill_charge_disallowed", {
+          mode: queuedAction.mode,
+          slot: queuedAction.slot,
+          name: row.name || queuedAction.name || null,
+          source: queuedAction.source,
+          anchorMode: queue.anchorMode,
+          anchorSlot: queue.anchorSlot,
+          anchorName: queue.anchorName,
+          anchorSource: queue.anchorSource
+        });
+        return { fired: false, reason: "charge_disallowed" };
+      }
+      const manaCost = Number.isFinite(row.manaCost) ? row.manaCost : 0;
+      const mpCur =
+        liveState &&
+        liveState.player &&
+        liveState.player.mp &&
+        liveState.player.mp.valid &&
+        Number.isFinite(liveState.player.mp.cur)
+          ? liveState.player.mp.cur
+          : null;
+      if (manaCost > 0 && Number.isFinite(mpCur) && mpCur < manaCost) {
+        clearCombatActionQueue("queued_skill_mp_gate", {
+          mode: queuedAction.mode,
+          slot: queuedAction.slot,
+          name: row.name || queuedAction.name || null,
+          source: queuedAction.source,
+          anchorMode: queue.anchorMode,
+          anchorSlot: queue.anchorSlot,
+          anchorName: queue.anchorName,
+          anchorSource: queue.anchorSource
+        });
+        return { fired: false, reason: "mp_gate" };
+      }
+      clicked = clickActionBarSlot(queuedAction.slot);
+    } else if (queuedAction.mode === "basic") {
+      clicked = clickBasicAttack();
+    } else {
+      clearCombatActionQueue("bad_queue_mode", {
+        mode: queuedAction.mode,
+        slot: queuedAction.slot,
+        name: queuedAction.name,
+        source: queuedAction.source,
+        anchorMode: queue.anchorMode,
+        anchorSlot: queue.anchorSlot,
+        anchorName: queue.anchorName,
+        anchorSource: queue.anchorSource
+      });
+      return { fired: false, reason: "bad_queue_mode" };
+    }
+    if (!clicked) {
+      clearCombatActionQueue("queue_click_failed", {
+        mode: queuedAction.mode,
+        slot: queuedAction.slot,
+        name: queuedAction.name,
+        source: queuedAction.source,
+        anchorMode: queue.anchorMode,
+        anchorSlot: queue.anchorSlot,
+        anchorName: queue.anchorName,
+        anchorSource: queue.anchorSource
+      });
+      return { fired: false, reason: "click_failed" };
+    }
+    queue.firedAt = Date.now();
+    queue.lastMatchedCastText = matchedCastText;
+    queue.advanceCount = Number.isFinite(queue.advanceCount) ? (queue.advanceCount + 1) : 1;
+    Logger.log("COMBAT", "Queued combat action fired", {
+      mode: queuedAction.mode,
+      slot: queuedAction.slot,
+      name: queuedAction.name,
+      source: queuedAction.source,
+      matchedCastText: matchedCastText,
+      anchorMode: queue.anchorMode,
+      anchorSlot: queue.anchorSlot,
+      anchorName: queue.anchorName,
+      anchorSource: queue.anchorSource,
+      openerSlot: queue.openerSlot,
+      openerName: queue.openerName
+    });
+    plannerRecordOpenerRuntimeEvent("queued_action_fired", {
+      mode: queuedAction.mode,
+      slot: queuedAction.slot,
+      openerSlot: queue.openerSlot
+    });
+    queue.anchorMode = queuedAction.mode;
+    queue.anchorSlot = queuedAction.slot;
+    queue.anchorName = queuedAction.name;
+    queue.anchorSource = queuedAction.source;
+    queue.anchorNeedsReset = true;
+    const postQueueState = readBasicState();
+    const nextQueuedAction =
+      typeof plannerBuildCombatQueueAction === "function"
+        ? plannerBuildCombatQueueAction({
+            afterSlot: queuedAction.mode === "skill" ? queuedAction.slot : null,
+            liveState: postQueueState,
+            disallowChargeSkills: opts.disallowChargeSkills !== false
+          })
+        : null;
+    if (!nextQueuedAction || !nextQueuedAction.mode) {
+      clearCombatActionQueue("no_followup_after_queue_fire", {
+        anchorMode: queue.anchorMode,
+        anchorSlot: queue.anchorSlot,
+        anchorName: queue.anchorName,
+        anchorSource: queue.anchorSource
+      });
+      return {
+        fired: true,
+        mode: queuedAction.mode,
+        slot: queuedAction.slot,
+        name: queuedAction.name,
+        source: queuedAction.source,
+        chainContinues: false
+      };
+    }
+    queue.mode = nextQueuedAction.mode;
+    queue.slot = Number.isFinite(nextQueuedAction.slot) ? nextQueuedAction.slot : null;
+    queue.name = resolveCombatQueueActionName(nextQueuedAction.mode, nextQueuedAction.name || "");
+    queue.source = nextQueuedAction.source || null;
+    queue.armedAt = Date.now();
+    queue.targetHpMaxAtArm =
+      postQueueState &&
+      postQueueState.combat &&
+      postQueueState.combat.targetHp &&
+      postQueueState.combat.targetHp.valid &&
+      Number.isFinite(postQueueState.combat.targetHp.max)
+        ? postQueueState.combat.targetHp.max
+        : null;
+    queue.enemyCountAtArm =
+      postQueueState && postQueueState.combat && Number.isFinite(postQueueState.combat.enemyCount)
+        ? postQueueState.combat.enemyCount
+        : null;
+    return {
+      fired: true,
+      mode: queuedAction.mode,
+      slot: queuedAction.slot,
+      name: queuedAction.name,
+      source: queuedAction.source,
+      chainContinues: true,
+      nextMode: queue.mode,
+      nextSlot: queue.slot,
+      nextName: queue.name,
+      nextSource: queue.source
+    };
+  }
+
+  // AI CHANGED: After attackers-popup re-target, the first HP>0 verify already happened inside clickAttackersRetargetVerified(); cancel immediately from that confirmed state.
+  async function performPostAttackersRetargetCancel() {
+    const now = readBasicState();
+    const targetReady = !!(
+      now &&
+      now.combat &&
+      now.combat.targetHp &&
+      now.combat.targetHp.valid &&
+      Number.isFinite(now.combat.targetHp.cur) &&
+      now.combat.targetHp.cur > 0
+    );
+    if (!targetReady) {
+      return { ok: false, reason: "target_lost_before_post_attackers_cancel" };
+    }
+    const clickedCancel = clickChargingSkillCancelUi();
+    const settleMs = Number.isFinite(Config.combat && Config.combat.postRankedSkillClickSettleMs)
+      ? Math.max(0, Config.combat.postRankedSkillClickSettleMs)
+      : 0;
+    if (clickedCancel && settleMs > 0) {
+      await sleep(settleMs);
+    }
+    return {
+      ok: true,
+      clickedCancel: clickedCancel,
+      targetHpCur:
+        now &&
+        now.combat &&
+        now.combat.targetHp &&
+        now.combat.targetHp.valid &&
+        Number.isFinite(now.combat.targetHp.cur)
+          ? now.combat.targetHp.cur
+          : null
+    };
+  }
+
   // AI CHANGED: Phase C4 slice 8 — first swing: ranked attack skill (if enabled + pick), else basic attack.
   // AI CHANGED: slice 9 — optional opts.useRankedSkillOpener === false forces basic-only (follow-up bursts).
   // AI CHANGED: slice 22 — combat opener is tap-only (clickActionBarSlot); no synthetic bar hold — game uses tap for skills including charge start.
@@ -786,7 +2113,10 @@
       Config.planner.useRankedAttackSkillsInCombat &&
       (!opts || opts.useRankedSkillOpener !== false);
     if (useSkill) {
-      const opening = plannerPickSkillOpeningPick({ excludeSlots: excludeSlots || [] });
+      const opening = plannerPickSkillOpeningPick({
+        excludeSlots: excludeSlots || [],
+        disallowChargeSkills: !!(opts && opts.disallowChargeSkills)
+      });
       if (opening != null) {
         const ok = clickActionBarSlot(opening.slot); // AI CHANGED: slice 22 — always normal bar click
         if (ok) {
@@ -796,7 +2126,8 @@
             ok: true,
             skillSlot: opening.slot,
             skillRecord: opening.record || null,
-            chargeReleasePlan: opening.chargeReleasePlan || null
+            chargeReleasePlan: opening.chargeReleasePlan || null,
+            queuedAction: opening.queuedAction || null
           };
         }
         plannerRecordOpenerRuntimeEvent("ranked_click_failed", { slot: opening.slot });
@@ -808,7 +2139,19 @@
       }
     }
     const basicOk = clickBasicAttack();
-    return { ok: basicOk, skillSlot: null, skillRecord: null, chargeReleasePlan: null };
+    const basicQueuedAction =
+      basicOk &&
+      !(opts && opts.allowCombatQueue === false) &&
+      Config.combat &&
+      Config.combat.combatQueueEnabled !== false &&
+      typeof plannerBuildCombatQueueAction === "function"
+        ? plannerBuildCombatQueueAction({
+            afterSlot: null,
+            liveState: readBasicState(),
+            disallowChargeSkills: true
+          })
+        : null;
+    return { ok: basicOk, skillSlot: null, skillRecord: null, chargeReleasePlan: null, queuedAction: basicQueuedAction };
   }
 
   // AI CHANGED: slice 8b — true if enemy died (count) or target red bar dropped (same max HP baseline).
@@ -826,6 +2169,24 @@
       const t = now.combat.targetHp;
       if (b && b.valid && t && t.valid && b.max === t.max && t.cur < b.cur) {
         return true;
+      }
+      return false;
+    };
+  }
+
+  function buildAttackProgressOrQueueAdvancePredicate(baselineState, userOpts) {
+    const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
+    const progressCheck = hasCombatProgressSince(baselineState);
+    return function () {
+      if (progressCheck()) {
+        return true;
+      }
+      if (typeof opts.onQueueAdvance === "function") {
+        try {
+          opts.onQueueAdvance();
+        } catch (error) {
+          Logger.warn("COMBAT", "Queue advance tick failed", error);
+        }
       }
       return false;
     };
@@ -918,6 +2279,9 @@
   // AI CHANGED: Added helper to verify attack effect by enemy count drop or target HP change.
   // AI CHANGED: slice 9 — opts.useRankedSkillOpener (default true) gates ranked opener vs basic-only burst.
   async function attackUntilProgress(beforeState, opts) {
+    if (getCombatQueueRuntime().active) {
+      clearCombatActionQueue("new_attack_cycle");
+    }
     const fullTimeoutMs = Number.isFinite(Config.combat.attackProgressTimeoutMs)
       ? Config.combat.attackProgressTimeoutMs
       : 4500;
@@ -943,11 +2307,74 @@
     if (open.skillSlot != null && settleRanked > 0) {
       await sleep(settleRanked);
     }
+    const isChargeOpening =
+      !!(
+        open &&
+        open.skillRecord &&
+        typeof plannerGetChargeSkillEffect === "function" &&
+        plannerGetChargeSkillEffect(open.skillRecord)
+      );
+    const queueAllowed =
+      !(opts && opts.allowCombatQueue === false) &&
+      Config.combat &&
+      Config.combat.combatQueueEnabled !== false &&
+      !isChargeOpening;
+    let queuedActionFired = false;
+    const queueAdvanceTick = function () {
+      if (!queueAllowed || !getCombatQueueRuntime().active) {
+        return;
+      }
+      const queueFire = fireCombatActionQueue({
+        liveState: readBasicState(),
+        disallowChargeSkills: !!(opts && opts.disallowChargeSkills)
+      });
+      if (queueFire && queueFire.fired) {
+        queuedActionFired = true;
+      }
+    };
+    if (queueAllowed && open && open.queuedAction) {
+      const queuedState = armCombatActionQueue(open.queuedAction, {
+        anchorMode: open.skillSlot != null ? "skill" : "basic",
+        anchorSlot: open.skillSlot,
+        anchorName: open.skillRecord && open.skillRecord.name ? open.skillRecord.name : "Basic Attack",
+        anchorSource: open.skillSlot != null ? "opening_attack" : "opening_basic",
+        openerSlot: open.skillSlot,
+        openerName: open.skillRecord && open.skillRecord.name ? open.skillRecord.name : (open.skillSlot == null ? "Basic Attack" : null),
+        liveState: readBasicState(),
+        postRetargetGuarded: !!(opts && opts.firstBurstAfterRetarget)
+      });
+      if (queuedState) {
+        Logger.log("COMBAT", "Queued combat action armed", {
+          mode: queuedState.mode,
+          slot: queuedState.slot,
+          name: queuedState.name,
+          source: queuedState.source,
+          anchorMode: queuedState.anchorMode,
+          anchorSlot: queuedState.anchorSlot,
+          anchorName: queuedState.anchorName,
+          openerSlot: queuedState.openerSlot,
+          postRetargetGuarded: queuedState.postRetargetGuarded
+        });
+        plannerRecordOpenerRuntimeEvent("queued_action_armed", {
+          mode: queuedState.mode,
+          slot: queuedState.slot,
+          openerSlot: queuedState.openerSlot
+        });
+      }
+    }
 
     const chargeOutcome = await handleChargeSkillOpener(beforeState, open, settleRanked, pollMs, fullTimeoutMs);
     const chargeSkillHandled = !!(chargeOutcome && chargeOutcome.handled);
     if (chargeSkillHandled) {
       if (chargeOutcome.progressed) {
+        if (queuedActionFired) {
+          const queueSettleMs = Number.isFinite(Config.combat && Config.combat.combatQueuePostProgressSettleMs)
+            ? Math.max(0, Config.combat.combatQueuePostProgressSettleMs)
+            : 0;
+          if (queueSettleMs > 0) {
+            await sleep(queueSettleMs);
+          }
+        }
         return true;
       }
       if (Runtime.autoFarm.stopRequested) {
@@ -993,12 +2420,20 @@
       if (earlyCancelMs > 0) {
         progressed = await waitForCondition(
           "attack progress (early window)",
-          hasCombatProgressSince(beforeState),
+          buildAttackProgressOrQueueAdvancePredicate(beforeState, { onQueueAdvance: queueAdvanceTick }),
           { timeoutMs: earlyCancelMs, pollMs: pollMs }
         );
         if (progressed) {
           if (open.skillSlot != null) {
             plannerRecordOpenerRuntimeEvent("ranked_progress", { slot: open.skillSlot, stage: "early_or_late_wait" });
+          }
+          if (queuedActionFired) {
+            const queueSettleMs = Number.isFinite(Config.combat && Config.combat.combatQueuePostProgressSettleMs)
+              ? Math.max(0, Config.combat.combatQueuePostProgressSettleMs)
+              : 0;
+            if (queueSettleMs > 0) {
+              await sleep(queueSettleMs);
+            }
           }
           return true;
         }
@@ -1024,22 +2459,38 @@
           }
           progressed = await waitForCondition(
             "attack progress after early charge cancel",
-            hasCombatProgressSince(beforeState),
+            buildAttackProgressOrQueueAdvancePredicate(beforeState, { onQueueAdvance: queueAdvanceTick }),
             { timeoutMs: fullTimeoutMs, pollMs: pollMs }
           );
           if (progressed) {
             plannerRecordOpenerRuntimeEvent("ranked_progress", { slot: open.skillSlot, stage: "after_early_cancel" });
+            if (queuedActionFired) {
+              const queueSettleMs = Number.isFinite(Config.combat && Config.combat.combatQueuePostProgressSettleMs)
+                ? Math.max(0, Config.combat.combatQueuePostProgressSettleMs)
+                : 0;
+              if (queueSettleMs > 0) {
+                await sleep(queueSettleMs);
+              }
+            }
             return true;
           }
         } else {
           progressed = await waitForCondition(
             "attack progress (late window)",
-            hasCombatProgressSince(beforeState),
+            buildAttackProgressOrQueueAdvancePredicate(beforeState, { onQueueAdvance: queueAdvanceTick }),
             { timeoutMs: firstWaitTimeoutMs - earlyCancelMs, pollMs: pollMs }
           );
           if (progressed) {
             if (open.skillSlot != null) {
               plannerRecordOpenerRuntimeEvent("ranked_progress", { slot: open.skillSlot, stage: "late_window" });
+            }
+            if (queuedActionFired) {
+              const queueSettleMs = Number.isFinite(Config.combat && Config.combat.combatQueuePostProgressSettleMs)
+                ? Math.max(0, Config.combat.combatQueuePostProgressSettleMs)
+                : 0;
+              if (queueSettleMs > 0) {
+                await sleep(queueSettleMs);
+              }
             }
             return true;
           }
@@ -1047,12 +2498,20 @@
       } else {
         progressed = await waitForCondition(
           "attack progress",
-          hasCombatProgressSince(beforeState),
+          buildAttackProgressOrQueueAdvancePredicate(beforeState, { onQueueAdvance: queueAdvanceTick }),
           { timeoutMs: firstWaitTimeoutMs, pollMs: pollMs }
         );
         if (progressed) {
           if (open.skillSlot != null) {
             plannerRecordOpenerRuntimeEvent("ranked_progress", { slot: open.skillSlot, stage: "first_wait" });
+          }
+          if (queuedActionFired) {
+            const queueSettleMs = Number.isFinite(Config.combat && Config.combat.combatQueuePostProgressSettleMs)
+              ? Math.max(0, Config.combat.combatQueuePostProgressSettleMs)
+              : 0;
+            if (queueSettleMs > 0) {
+              await sleep(queueSettleMs);
+            }
           }
           return true;
         }
@@ -1098,11 +2557,19 @@
           : Math.min(3200, fullTimeoutMs);
       progressed = await waitForCondition(
         "attack progress after charge cancel ui",
-        hasCombatProgressSince(beforeState),
+        buildAttackProgressOrQueueAdvancePredicate(beforeState, { onQueueAdvance: queueAdvanceTick }),
         { timeoutMs: postCancelTimeout, pollMs: pollMs }
       );
       if (progressed) {
         plannerRecordOpenerRuntimeEvent("ranked_progress", { slot: open.skillSlot, stage: "after_charge_cancel" });
+        if (queuedActionFired) {
+          const queueSettleMs = Number.isFinite(Config.combat && Config.combat.combatQueuePostProgressSettleMs)
+            ? Math.max(0, Config.combat.combatQueuePostProgressSettleMs)
+            : 0;
+          if (queueSettleMs > 0) {
+            await sleep(queueSettleMs);
+          }
+        }
         return true;
       }
     }
@@ -1130,16 +2597,36 @@
         attempt: alt + 1
       });
       plannerRecordOpenerRuntimeEvent("ranked_alt_pick", { slot: open2.skillSlot, attempt: alt + 1 });
+      if (queueAllowed && open2 && open2.queuedAction) {
+        armCombatActionQueue(open2.queuedAction, {
+          anchorMode: "skill",
+          anchorSlot: open2.skillSlot,
+          anchorName: open2.skillRecord && open2.skillRecord.name ? open2.skillRecord.name : "",
+          anchorSource: "alternate_ranked_opening",
+          openerSlot: open.skillSlot,
+          openerName: open.skillRecord && open.skillRecord.name ? open.skillRecord.name : (open.skillSlot == null ? "Basic Attack" : null),
+          liveState: readBasicState(),
+          postRetargetGuarded: !!(opts && opts.firstBurstAfterRetarget)
+        });
+      }
       if (settleRanked > 0) {
         await sleep(settleRanked);
       }
       progressed = await waitForCondition(
         "attack progress",
-        hasCombatProgressSince(beforeState),
+        buildAttackProgressOrQueueAdvancePredicate(beforeState, { onQueueAdvance: queueAdvanceTick }),
         { timeoutMs: fullTimeoutMs, pollMs: pollMs }
       );
       if (progressed) {
         plannerRecordOpenerRuntimeEvent("ranked_progress", { slot: open2.skillSlot, stage: "alternate_wait" });
+        if (queuedActionFired) {
+          const queueSettleMs = Number.isFinite(Config.combat && Config.combat.combatQueuePostProgressSettleMs)
+            ? Math.max(0, Config.combat.combatQueuePostProgressSettleMs)
+            : 0;
+          if (queueSettleMs > 0) {
+            await sleep(queueSettleMs);
+          }
+        }
         return true;
       }
       // AI CHANGED: slice 21b — same as primary opener: do not chain more attacks after Stop.
@@ -1160,16 +2647,43 @@
         Logger.warn("LOOP", "Basic attack click failed after skill opener");
         return false;
       }
+      if (queueAllowed && typeof plannerBuildCombatQueueAction === "function") {
+        const basicFallbackQueuedAction = plannerBuildCombatQueueAction({
+          afterSlot: null,
+          liveState: readBasicState(),
+          disallowChargeSkills: !!(opts && opts.disallowChargeSkills)
+        });
+        if (basicFallbackQueuedAction && basicFallbackQueuedAction.mode) {
+          armCombatActionQueue(basicFallbackQueuedAction, {
+            anchorMode: "basic",
+            anchorSlot: null,
+            anchorName: "Basic Attack",
+            anchorSource: "basic_fallback_after_ranked",
+            openerSlot: open.skillSlot,
+            openerName: open.skillRecord && open.skillRecord.name ? open.skillRecord.name : (open.skillSlot == null ? "Basic Attack" : null),
+            liveState: readBasicState(),
+            postRetargetGuarded: !!(opts && opts.firstBurstAfterRetarget)
+          });
+        }
+      }
       if (Runtime.autoFarm.stopRequested) {
         Logger.log("LOOP", "attackUntilProgress: stop requested before basic-attack wait");
         return false;
       }
       progressed = await waitForCondition(
         "attack progress",
-        hasCombatProgressSince(baselineAfterSkill),
+        buildAttackProgressOrQueueAdvancePredicate(baselineAfterSkill, { onQueueAdvance: queueAdvanceTick }),
         { timeoutMs: fullTimeoutMs, pollMs: pollMs }
       );
       if (progressed) {
+        if (queuedActionFired) {
+          const queueSettleMs = Number.isFinite(Config.combat && Config.combat.combatQueuePostProgressSettleMs)
+            ? Math.max(0, Config.combat.combatQueuePostProgressSettleMs)
+            : 0;
+          if (queueSettleMs > 0) {
+            await sleep(queueSettleMs);
+          }
+        }
         return true;
       }
       if (Runtime.autoFarm.stopRequested) {
@@ -1179,6 +2693,7 @@
     }
 
     Logger.warn("LOOP", "No attack progress detected (enemy count + target HP unchanged for baseline)");
+    clearCombatActionQueue("no_progress_detected");
     if (triedSlots.length > 0 || open.skillSlot != null) {
       plannerRecordOpenerRuntimeEvent("ranked_no_progress", {
         initialSlot: open.skillSlot,
@@ -1313,6 +2828,8 @@
         ? Config.combat.maxCombatAttackBurstsPerFind
         : 24;
       let attackBursts = 0;
+      let firstBurstAfterRetarget = false;
+      let chargeGuardUntilRetargetProgress = false;
       // AI CHANGED: Step 4 — allow configurable number of ranked bursts per find cycle.
       let rankedBurstsLeft = getRankedBurstsPerFindEffective();
       while (
@@ -1342,6 +2859,20 @@
           useRankedBurst: useRankedBurst
         });
         current = readBasicState();
+        const disallowChargeSkills =
+          !!(
+            chargeGuardUntilRetargetProgress &&
+            Config.combat &&
+            Config.combat.disallowChargeSkillFirstBurstAfterRetarget !== false
+          );
+        if (disallowChargeSkills) {
+          Logger.log("LOOP", "Post-retarget charge guard active (until first verified progress)", {
+            enemyCount: current.combat.enemyCount,
+            attackBursts: attackBursts,
+            findAttempts: findAttempts,
+            firstBurstAfterRetarget: firstBurstAfterRetarget
+          });
+        }
 
         // AI CHANGED: Surface attack as live status (slice 9 — burst index for multi-mob pulls).
         setBotStatus(
@@ -1350,8 +2881,20 @@
         );
         const beforeAttack = readBasicState();
         const attackProgressed = await attackUntilProgress(beforeAttack, {
-          useRankedSkillOpener: useRankedBurst
+          useRankedSkillOpener: useRankedBurst,
+          firstBurstAfterRetarget: firstBurstAfterRetarget,
+          disallowChargeSkills: disallowChargeSkills,
+          allowCombatQueue: !firstBurstAfterRetarget
         });
+        firstBurstAfterRetarget = false;
+        if (attackProgressed && chargeGuardUntilRetargetProgress) {
+          chargeGuardUntilRetargetProgress = false;
+          Logger.log("LOOP", "Post-retarget charge guard cleared after first verified progress", {
+            enemyCount: current.combat.enemyCount,
+            attackBursts: attackBursts,
+            findAttempts: findAttempts
+          });
+        }
         if (!attackProgressed) {
           if (Runtime.autoFarm.stopRequested) {
             Logger.log("LOOP", "Secure-tile cycle aborted after attack burst (stop requested)", {
@@ -1421,7 +2964,22 @@
             countAfterBurst,
             attackBursts
           });
-          const refindOk = await clickFindEnemyVerified();
+          let refindOk = null;
+          if (
+            Config.combat &&
+            Config.combat.useAttackersPanelRetargetAfterKill !== false &&
+            typeof clickAttackersRetargetVerified === "function"
+          ) {
+            refindOk = await clickAttackersRetargetVerified();
+            if (refindOk && refindOk.ok) {
+              Logger.log("LOOP", "Retargeted next enemy via attackers popup", refindOk);
+            } else {
+              Logger.warn("LOOP", "Attackers popup retarget failed; falling back to find-enemy", refindOk);
+            }
+          }
+          if (!refindOk || !refindOk.ok) {
+            refindOk = await clickFindEnemyVerified();
+          }
           if (!refindOk.ok) {
             if (Runtime.autoFarm.stopRequested) {
               Logger.log("LOOP", "Secure-tile cycle aborted after re-find wait (stop requested)", {
@@ -1439,15 +2997,27 @@
             Logger.warn("LOOP", "Re-find-enemy after burst failed", refindOk);
             break;
           }
-          const reAcquired = await waitForTargetAcquired();
-          if (!reAcquired) {
-            Logger.warn("LOOP", "Target HP not detected after re-find; continuing by enemy-count logic");
+          if (!refindOk || refindOk.via !== "attackers_popup") {
+            const reAcquired = await waitForTargetAcquired();
+            if (!reAcquired) {
+              Logger.warn("LOOP", "Target HP not detected after re-find; continuing by enemy-count logic");
+            }
+          }
+          if (refindOk && refindOk.via === "attackers_popup") {
+            const postRetargetCancel = await performPostAttackersRetargetCancel();
+            if (!postRetargetCancel.ok) {
+              Logger.warn("LOOP", "Post-attackers-retarget cancel pre-step failed", postRetargetCancel);
+              break;
+            }
+            Logger.log("LOOP", "Post-attackers-retarget cancel pre-step complete", postRetargetCancel);
           }
           current = readBasicState();
           if (typeof current.combat.enemyCount === "number" && current.combat.enemyCount <= 0) {
             Logger.log("LOOP", "Enemies cleared during re-find after kill");
             break;
           }
+          firstBurstAfterRetarget = true;
+          chargeGuardUntilRetargetProgress = true;
           rankedBurstsLeft = getRankedBurstsPerFindEffective();
         }
       }
@@ -1537,6 +3107,9 @@
       lastResult: status.lastResult,
       startedAt: status.startedAt,
       reliability: status.reliability || null,
+      chatSpammer: status.chatSpammer || null,
+      health: status.health || null,
+      recovery: status.recovery || null,
       lastSessionSummary: status.lastSessionSummary || null
     };
   }
@@ -1566,6 +3139,11 @@
     Runtime.autoFarm.lastResult = null;
     Runtime.autoFarm.startedAt = Date.now();
     Runtime.autoFarm.reliability.noProgressStreak = 0;
+    resetAutoChatSpammerRuntime();
+    resetAutoFarmHealthRuntime(Runtime.autoFarm.startedAt);
+    resetAutoFarmRecoveryRuntime();
+    clearPersistedAutoRecoveryResume();
+    scheduleNextAutoChatSpammer("auto_loop_start", { nowMs: Runtime.autoFarm.startedAt });
     let exitReason = "unknown";
 
     // AI CHANGED: Surface loop start as live status.
@@ -1580,15 +3158,65 @@
       setBotStatus("waiting", "movement settle gate");
       // AI CHANGED: Block new cycle start until movement bar clears to avoid scan-vs-move overlap.
       await waitUntilNotMoving("auto-loop");
+      const preCycleState = readBasicState();
       // AI CHANGED: slice 21 — fresh session flags each cycle so zoom flag tracks UI, not stale assumptions.
-      resetZoomAssumptionIfSessionRisk(readBasicState().session);
+      resetZoomAssumptionIfSessionRisk(preCycleState.session);
+      const preCycleRecovery = await maybeRecoverUnhealthySession(preCycleState, {
+        reason: "cycle_start"
+      });
+      if (preCycleRecovery && preCycleRecovery.refreshing) {
+        exitReason = "session_refresh";
+        break;
+      }
+      if (preCycleRecovery && preCycleRecovery.halted) {
+        exitReason = "session_risk";
+        break;
+      }
+      if (preCycleRecovery && preCycleRecovery.recovered) {
+        await sleep(Config.farmLoop.cycleDelayMs, { bypassStop: true });
+      }
+      if (Runtime.autoFarm.stopRequested) {
+        exitReason = "user_stop";
+        break;
+      }
       const cycleResult = await runPreparedSecureCycle();
       Runtime.autoFarm.lastResult = cycleResult;
       Runtime.autoFarm.cyclesCompleted += 1;
 
+      const recoveryAfterCycle = !cycleResult || !cycleResult.ok
+        ? await maybeRecoverUnhealthySession(readBasicState(), {
+            reason: cycleResult && cycleResult.stage ? cycleResult.stage : "cycle_failure"
+          })
+        : { ok: true, skipped: true };
+      if (recoveryAfterCycle && recoveryAfterCycle.refreshing) {
+        exitReason = "session_refresh";
+        break;
+      }
+      if (recoveryAfterCycle && recoveryAfterCycle.halted) {
+        exitReason = "session_risk";
+        break;
+      }
+      if (recoveryAfterCycle && recoveryAfterCycle.recovered) {
+        Runtime.autoFarm.consecutiveFailures = 0;
+        Runtime.autoFarm.reliability.noProgressStreak = 0;
+        markAutoFarmProgress("recovered_cycle_boundary", {
+          stage: cycleResult ? cycleResult.stage || null : null
+        });
+        Logger.log("AUTO", "Cycle boundary recovered by session watchdog", {
+          cycle: Runtime.autoFarm.cyclesCompleted,
+          stage: cycleResult ? cycleResult.stage : null
+        });
+        await sleep(Config.farmLoop.cycleDelayMs, { bypassStop: true });
+        continue;
+      }
+
       if (cycleResult && cycleResult.ok) {
         Runtime.autoFarm.consecutiveFailures = 0;
         Runtime.autoFarm.reliability.noProgressStreak = 0;
+        getAutoFarmRecoveryRuntime().softAttempts = 0;
+        markAutoFarmProgress("cycle_completed", {
+          stage: cycleResult.stage || null
+        });
         Logger.log("AUTO", "Cycle completed", {
           cycle: Runtime.autoFarm.cyclesCompleted,
           stage: cycleResult.stage
@@ -1653,6 +3281,12 @@
       }
 
       if (!Runtime.autoFarm.stopRequested) {
+        const chatAttempt = await maybeRunAutoChatSpammer(readBasicState(), {
+          reason: cycleResult && cycleResult.stage ? cycleResult.stage : "cycle_boundary"
+        });
+        if (!chatAttempt.ok && !chatAttempt.skipped) {
+          Logger.warn("CHAT", "Auto local chat attempt did not complete cleanly", chatAttempt);
+        }
         // AI CHANGED: Back off when we're idling on empty tiles to avoid spammy repeated actions.
         const nowState = readBasicState();
         const shouldIdleBackoff =
@@ -1715,6 +3349,9 @@
       cyclesCompleted: Runtime.autoFarm.cyclesCompleted,
       consecutiveFailures: Runtime.autoFarm.consecutiveFailures,
       reliability: Object.assign({}, Runtime.autoFarm.reliability || {}),
+      chatSpammer: Object.assign({}, getAutoChatSpammerRuntime()),
+      health: Object.assign({}, getAutoFarmHealthRuntime()),
+      recovery: Object.assign({}, getAutoFarmRecoveryRuntime()),
       exitReason: exitReason,
       lastStage: Runtime.autoFarm.lastResult ? Runtime.autoFarm.lastResult.stage || null : null
     };

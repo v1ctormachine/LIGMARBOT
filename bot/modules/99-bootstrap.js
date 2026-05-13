@@ -114,6 +114,15 @@
       readEnemyCount: readEnemyCount,
       clickFindEnemy: clickFindEnemy,
       clickLootOrActivate: clickLootOrActivate,
+      // AI CHANGED: AUTO ON chat spammer helpers — smoke-test without sending, or manually send one configured line from console.
+      ensureChatDialogOpen: ensureChatDialogOpen,
+      closeChatDialog: closeChatDialog,
+      probeLocalChatPromocodeUi: probeLocalChatPromocodeUi,
+      sendLocalChatPromocodeMessage: sendLocalChatPromocodeMessage,
+      // AI CHANGED: AUTO chat banks — local-clock slot + flattened pool for diagnostics.
+      getTimeOfDayChatSlot: getTimeOfDayChatSlot,
+      getChatSpammerMessagesForSlot: getChatSpammerMessagesForSlot,
+      getAllChatSpammerMessagesFlat: getAllChatSpammerMessagesFlat,
       waitForCondition: waitForCondition,
       clickFindEnemyVerified: clickFindEnemyVerified,
       clickLootOrActivateVerified: clickLootOrActivateVerified,
@@ -151,6 +160,12 @@
       startAutoFarmLoop: startAutoFarmLoop,
       stopAutoFarmLoop: stopAutoFarmLoop,
       getAutoFarmStatus: getAutoFarmStatus,
+      // AI CHANGED: Night resilience — debug the watchdog and persisted refresh-resume behavior from console.
+      evaluateAutoFarmHealth: evaluateAutoFarmHealth,
+      maybeRecoverUnhealthySession: maybeRecoverUnhealthySession,
+      readPersistedAutoRecoveryResume: readPersistedAutoRecoveryResume,
+      clearPersistedAutoRecoveryResume: clearPersistedAutoRecoveryResume,
+      resumeAutoFarmAfterRecoveryBootIfNeeded: resumeAutoFarmAfterRecoveryBootIfNeeded,
       createControlPanel: createControlPanel,
       updateControlPanelStatus: updateControlPanelStatus,
       // AI CHANGED: grouped slice 34 — planner localStorage sync from console (panel had no toggles since slice 29).
@@ -239,6 +254,8 @@
     Logger.log("BOOT", "Debug API exposed as window.ligmarBot");
     // AI CHANGED: Auto-create GUI control panel at startup.
     createControlPanel();
+    // AI CHANGED: Night resilience — if the previous page refresh was a recovery action, wait for a healthy game surface and resume AUTO.
+    resumeAutoFarmAfterRecoveryBootIfNeeded();
 
     // AI CHANGED: grouped slice 34 — obvious console hint when ranked planner is on but scanSkills never ran.
     if (

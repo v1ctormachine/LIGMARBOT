@@ -450,9 +450,33 @@
       : "unknown";
     const onMs = auto.running && Number.isFinite(auto.startedAt) ? (Date.now() - auto.startedAt) : 0;
     const onText = formatOnDuration(onMs);
+    const healthSummary = typeof evaluateAutoFarmHealth === "function"
+      ? evaluateAutoFarmHealth(state, {
+          readonly: true,
+          running: !!auto.running
+        })
+      : null;
+    const sessionText = state.session.dead
+      ? "dead"
+      : state.session.poorConnection
+        ? "poor-connection"
+        : state.session.coreUi && state.session.coreUi.missing
+          ? "ui-missing"
+          : "ok";
+    const healthState = healthSummary && healthSummary.severity ? healthSummary.severity : "unknown";
+    const recoverySoft = auto.recovery && Number.isFinite(auto.recovery.softAttempts) ? auto.recovery.softAttempts : 0;
+    const recoveryRefresh = auto.recovery && Number.isFinite(auto.recovery.refreshAttempts) ? auto.recovery.refreshAttempts : 0;
+    const lastVerifiedAt =
+      auto.health && Number.isFinite(auto.health.lastActionVerifiedAt)
+        ? auto.health.lastActionVerifiedAt
+        : auto.health && Number.isFinite(auto.health.lastProgressAt)
+          ? auto.health.lastProgressAt
+          : null;
     const lines = [
       `HP ${hpPct !== null ? hpPct + "%" : "?"} · MP ${mpPct !== null ? mpPct + "%" : "?"} · Ping ${state.network.pingMs !== null ? state.network.pingMs + "ms" : "?"}`,
       `Enemies: ${enemyText} · Coords: ${coordsText}`,
+      `Session: ${sessionText} · Health: ${healthState}${healthSummary && healthSummary.primaryReason ? " (" + healthSummary.primaryReason + ")" : ""}`,
+      `Recovery: soft ${recoverySoft} · refresh ${recoveryRefresh} · Last action: ${lastVerifiedAt ? formatAgo(Date.now() - lastVerifiedAt) + " ago" : "—"}`,
       `Cycles: ${auto.cyclesCompleted} · Failures: ${auto.consecutiveFailures} · ON: ${onText}`
     ];
     Runtime.ui.statusNode.textContent = lines.join("\n");
@@ -485,6 +509,14 @@
       planner_golden_comparator: "Golden comparator",
       planner_charge_release_policy: "Charge release policy",
       planner_dynamic_charge_scoring: "Dynamic charge scoring",
+      combat_attackers_retarget_ui: "Attackers retarget UI",
+      combat_post_retarget_guard: "Post-retarget no-charge guard",
+      combat_queue_policy: "Combat queue",
+      session_risk_detection: "Session risk",
+      recovery_policy: "Recovery policy",
+      auto_resume_after_refresh: "Auto-resume refresh",
+      watchdog_surface: "Watchdog surface",
+      chat_spammer_auto: "Chat spammer auto",
       combat_sustain_policy: "Combat sustain",
       auto_farm_resume_policy: "Farm resume policy",
       auto_farm_reliability: "Combat reliability",
@@ -924,6 +956,283 @@
       } catch (err) {
         Logger.warn("TEST", "probeSelectors threw", err);
         addCheck("probe_selectors", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      try {
+        const attackersButton = document.querySelector(Config.selectors.attackersButton);
+        addCheck("combat_attackers_retarget_ui", !!(attackersButton && isElementVisible(attackersButton)), {
+          enabled: !(Config.combat && Config.combat.useAttackersPanelRetargetAfterKill === false),
+          // AI CHANGED: Attackers-popup retarget path now reuses the first HP>0 confirmation and sends cancel immediately from that confirmed state.
+          postRetargetCancelBeforeAttacks: true,
+          postRetargetCancelConfirmMode: "reuse_first_hp_confirm",
+          attackersButtonFound: !!attackersButton,
+          attackersButtonVisible: !!(attackersButton && isElementVisible(attackersButton)),
+          popupListSelector: Config.selectors.attackersPopupList,
+          popupCardSelector: Config.selectors.attackersPopupCard
+        }, false);
+      } catch (err) {
+        addCheck("combat_attackers_retarget_ui", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+      try {
+        const lastPickDetail =
+          Runtime &&
+          Runtime.planner &&
+          Runtime.planner.lastOpeningPickDetail &&
+          typeof Runtime.planner.lastOpeningPickDetail === "object"
+            ? Runtime.planner.lastOpeningPickDetail
+            : null;
+        addCheck("combat_post_retarget_guard", Config.combat.disallowChargeSkillFirstBurstAfterRetarget !== false, {
+          enabled: Config.combat.disallowChargeSkillFirstBurstAfterRetarget !== false,
+          policy: "until_first_verified_progress",
+          observedOnLastPick: !!(lastPickDetail && lastPickDetail.postRetargetNoChargeGuard),
+          lastPickReason: Runtime && Runtime.planner ? Runtime.planner.lastOpeningPickReason || null : null,
+          filteredChargeCount:
+            lastPickDetail &&
+            lastPickDetail.filteredOut &&
+            Number.isFinite(lastPickDetail.filteredOut.chargeGuard)
+              ? lastPickDetail.filteredOut.chargeGuard
+              : 0
+        }, false);
+      } catch (err) {
+        addCheck("combat_post_retarget_guard", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+      try {
+        const queueRt =
+          Runtime &&
+          Runtime.autoFarm &&
+          Runtime.autoFarm.combatQueue &&
+          typeof Runtime.autoFarm.combatQueue === "object"
+            ? Runtime.autoFarm.combatQueue
+            : null;
+        const queueEvents =
+          Runtime &&
+          Runtime.planner &&
+          Runtime.planner.openerRuntime &&
+          Runtime.planner.openerRuntime.events &&
+          typeof Runtime.planner.openerRuntime.events === "object"
+            ? Runtime.planner.openerRuntime.events
+            : null;
+        addCheck("combat_queue_policy", Config.combat.combatQueueEnabled !== false, {
+          enabled: Config.combat.combatQueueEnabled !== false,
+          // AI CHANGED: Queue v2 trigger — advance the chain when the previous queued action name is visible in the cast/progress bar.
+          trigger: "progress_bar_name_match",
+          visibleCastBarTexts: typeof readVisibleCombatCastBarTexts === "function" ? readVisibleCombatCastBarTexts() : [],
+          postProgressSettleMs: Number.isFinite(Config.combat.combatQueuePostProgressSettleMs) ? Config.combat.combatQueuePostProgressSettleMs : null,
+          queuedActionArmed: queueEvents && Number.isFinite(queueEvents.queued_action_armed) ? queueEvents.queued_action_armed : 0,
+          queuedActionFired: queueEvents && Number.isFinite(queueEvents.queued_action_fired) ? queueEvents.queued_action_fired : 0,
+          runtimeQueue: queueRt ? Object.assign({}, queueRt) : null
+        }, false);
+      } catch (err) {
+        addCheck("combat_queue_policy", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+      try {
+        const nowMs = Date.now();
+        const healthyFixture = evaluateAutoFarmHealth({
+          session: {
+            inGame: true,
+            dead: false,
+            poorConnection: false,
+            coreUi: { visible: true, missing: false }
+          },
+          network: { pingMs: 80 },
+          combat: { enemyCount: 0, targetHp: { valid: false } }
+        }, {
+          readonly: true,
+          running: true,
+          nowMs: nowMs,
+          healthRuntime: {
+            lastHealthyAt: nowMs - 1000,
+            lastProgressAt: nowMs - 1000,
+            lastActionVerifiedAt: nowMs - 1000,
+            lastStateReadAt: nowMs - 1000,
+            poorConnectionSince: null,
+            deadSince: null,
+            missingCoreUiSince: null,
+            highPingSince: null,
+            staleSince: null,
+            suspectedOverload: false,
+            lastRiskReason: null,
+            lastSummary: null
+          },
+          recoveryRuntime: {
+            softAttempts: 0,
+            refreshAttempts: 0
+          }
+        });
+        const criticalFixture = evaluateAutoFarmHealth({
+          session: {
+            inGame: true,
+            dead: false,
+            poorConnection: true,
+            coreUi: { visible: false, missing: true }
+          },
+          network: { pingMs: 900 },
+          combat: { enemyCount: 0, targetHp: { valid: false } }
+        }, {
+          readonly: true,
+          running: true,
+          nowMs: nowMs,
+          healthRuntime: {
+            lastHealthyAt: nowMs - 60000,
+            lastProgressAt: nowMs - 60000,
+            lastActionVerifiedAt: nowMs - 60000,
+            lastStateReadAt: nowMs - 1000,
+            poorConnectionSince: nowMs - (Config.recovery.poorConnectionGraceMs + 1000),
+            deadSince: null,
+            missingCoreUiSince: nowMs - (Config.recovery.missingCoreUiGraceMs + 1000),
+            highPingSince: nowMs - (Config.recovery.highPingGraceMs + 1000),
+            staleSince: nowMs - (Config.recovery.staleActionGraceMs + 1000),
+            suspectedOverload: true,
+            lastRiskReason: "poor_connection",
+            lastSummary: null
+          },
+          recoveryRuntime: {
+            softAttempts: Config.recovery.softRecoveryMaxAttemptsBeforeRefresh,
+            refreshAttempts: 0
+          }
+        });
+        addCheck("session_risk_detection", !!(
+          healthyFixture &&
+          healthyFixture.severity === "healthy" &&
+          criticalFixture &&
+          criticalFixture.severity === "critical"
+        ), {
+          healthyFixture: healthyFixture,
+          criticalFixture: criticalFixture
+        }, false);
+      } catch (err) {
+        addCheck("session_risk_detection", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+      try {
+        const nowMs = Date.now();
+        const refreshFixture = evaluateAutoFarmHealth({
+          session: {
+            inGame: true,
+            dead: false,
+            poorConnection: true,
+            coreUi: { visible: false, missing: true }
+          },
+          network: { pingMs: 700 },
+          combat: { enemyCount: 0, targetHp: { valid: false } }
+        }, {
+          readonly: true,
+          running: true,
+          nowMs: nowMs,
+          healthRuntime: {
+            lastHealthyAt: nowMs - 90000,
+            lastProgressAt: nowMs - 90000,
+            lastActionVerifiedAt: nowMs - 90000,
+            lastStateReadAt: nowMs - 1000,
+            poorConnectionSince: nowMs - (Config.recovery.poorConnectionGraceMs + 2000),
+            deadSince: null,
+            missingCoreUiSince: nowMs - (Config.recovery.missingCoreUiGraceMs + 2000),
+            highPingSince: nowMs - (Config.recovery.highPingGraceMs + 2000),
+            staleSince: nowMs - (Config.recovery.staleActionGraceMs + 2000),
+            suspectedOverload: true,
+            lastRiskReason: "stale_session_overload",
+            lastSummary: null
+          },
+          recoveryRuntime: {
+            softAttempts: Config.recovery.softRecoveryMaxAttemptsBeforeRefresh,
+            refreshAttempts: 0
+          }
+        });
+        addCheck("recovery_policy", !!(
+          refreshFixture &&
+          refreshFixture.recommendedAction === "refresh"
+        ), {
+          fixture: refreshFixture,
+          softRecoveryMaxAttemptsBeforeRefresh: Config.recovery.softRecoveryMaxAttemptsBeforeRefresh,
+          maxAutoRefreshAttemptsPerSession: Config.recovery.maxAutoRefreshAttemptsPerSession
+        }, false);
+      } catch (err) {
+        addCheck("recovery_policy", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+      try {
+        const existingToken = typeof readPersistedAutoRecoveryResume === "function" ? readPersistedAutoRecoveryResume() : null;
+        const testToken = {
+          version: BotVersion.version,
+          createdAt: new Date().toISOString(),
+          reason: "test_probe",
+          resumeAutoFarm: true,
+          refreshAttempts: 1
+        };
+        let roundTripOk = false;
+        if (typeof writePersistedAutoRecoveryResume === "function" && typeof clearPersistedAutoRecoveryResume === "function" && typeof readPersistedAutoRecoveryResume === "function") {
+          writePersistedAutoRecoveryResume(testToken);
+          const readBack = readPersistedAutoRecoveryResume();
+          roundTripOk = !!(readBack && readBack.reason === "test_probe" && readBack.resumeAutoFarm === true);
+          clearPersistedAutoRecoveryResume();
+          if (existingToken) {
+            writePersistedAutoRecoveryResume(existingToken);
+          }
+        }
+        addCheck("auto_resume_after_refresh", !!(
+          Config.recovery &&
+          Config.recovery.autoResumeAfterRefresh !== false &&
+          roundTripOk
+        ), {
+          enabled: !!(Config.recovery && Config.recovery.autoResumeAfterRefresh !== false),
+          storageKey: Config.recovery && Config.recovery.resumeStorageKey ? Config.recovery.resumeStorageKey : null,
+          roundTripOk: roundTripOk
+        }, false);
+      } catch (err) {
+        addCheck("auto_resume_after_refresh", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+      try {
+        const autoStatus = getAutoFarmStatus();
+        addCheck("watchdog_surface", !!(
+          autoStatus &&
+          autoStatus.health &&
+          autoStatus.recovery &&
+          typeof evaluateAutoFarmHealth === "function"
+        ), {
+          health: autoStatus ? autoStatus.health || null : null,
+          recovery: autoStatus ? autoStatus.recovery || null : null,
+          summary: typeof evaluateAutoFarmHealth === "function"
+            ? evaluateAutoFarmHealth(readBasicState(), { readonly: true, running: !!(autoStatus && autoStatus.running) })
+            : null
+        }, false);
+      } catch (err) {
+        addCheck("watchdog_surface", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+      try {
+        const chatMessages =
+          typeof getAllChatSpammerMessagesFlat === "function"
+            ? getAllChatSpammerMessagesFlat()
+            : Config.chat && Array.isArray(Config.chat.messages)
+              ? Config.chat.messages.filter(Boolean)
+              : [];
+        const probeMessage =
+          Config.chat &&
+          Config.chat.messagesByTimeOfDay &&
+          Array.isArray(Config.chat.messagesByTimeOfDay.morning) &&
+          typeof Config.chat.messagesByTimeOfDay.morning[0] === "string"
+            ? Config.chat.messagesByTimeOfDay.morning[0]
+            : chatMessages.length > 0
+              ? chatMessages[0]
+              : "";
+        const maxMessageLength = chatMessages.reduce(function (maxLen, row) {
+          return Math.max(maxLen, typeof row === "string" ? row.length : 0);
+        }, 0);
+        const smoke =
+          probeMessage && typeof probeLocalChatPromocodeUi === "function"
+            ? await probeLocalChatPromocodeUi(probeMessage)
+            : { ok: false, reason: probeMessage ? "probe_helper_missing" : "no_messages" };
+        addCheck("chat_spammer_auto", !!(Config.chat && Config.chat.autoLocalPromocodeSpammerEnabled !== false && smoke && smoke.ok), {
+          enabled: !!(Config.chat && Config.chat.autoLocalPromocodeSpammerEnabled !== false),
+          mode: "auto_on_cycle_boundary",
+          intervalMinMs: Number.isFinite(Config.chat && Config.chat.messageIntervalMinMs) ? Config.chat.messageIntervalMinMs : null,
+          intervalMaxMs: Number.isFinite(Config.chat && Config.chat.messageIntervalMaxMs) ? Config.chat.messageIntervalMaxMs : null,
+          messageCount: chatMessages.length,
+          maxMessageLength: maxMessageLength,
+          timeSlotSample:
+            typeof getTimeOfDayChatSlot === "function" ? getTimeOfDayChatSlot({ nowMs: Date.now() }) : null,
+          probe: smoke,
+          runtime: Runtime && Runtime.autoFarm ? Runtime.autoFarm.chatSpammer || null : null
+        }, false);
+      } catch (err) {
+        addCheck("chat_spammer_auto", false, { error: String(err && err.message ? err.message : err) }, false);
       }
 
       try {
@@ -1848,6 +2157,9 @@
           outOfCombatHealBeforeExplore: Config.combat.outOfCombatHealBeforeExplore !== false,
           outOfCombatHealWaitHpPct: Number.isFinite(Config.combat.outOfCombatHealWaitHpPct) ? Config.combat.outOfCombatHealWaitHpPct : null,
           outOfCombatHealPollMs: Number.isFinite(Config.combat.outOfCombatHealPollMs) ? Config.combat.outOfCombatHealPollMs : null,
+          postRetargetNoChargeGuard: Config.combat.disallowChargeSkillFirstBurstAfterRetarget !== false,
+          combatQueueEnabled: Config.combat.combatQueueEnabled !== false,
+          combatQueuePostProgressSettleMs: Number.isFinite(Config.combat.combatQueuePostProgressSettleMs) ? Config.combat.combatQueuePostProgressSettleMs : null,
           hpPotionUseBelowPct: Number.isFinite(Config.combat.hpPotionUseBelowPct) ? Config.combat.hpPotionUseBelowPct : null,
           hpPotionEmergencyBelowPct: Number.isFinite(Config.combat.hpPotionEmergencyBelowPct) ? Config.combat.hpPotionEmergencyBelowPct : null,
           hpPotionSafeMissingHealFraction: Number.isFinite(Config.combat.hpPotionSafeMissingHealFraction) ? Config.combat.hpPotionSafeMissingHealFraction : null,
