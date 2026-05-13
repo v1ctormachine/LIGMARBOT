@@ -1603,18 +1603,21 @@
     sustain.lastPreferredManaNeed = preferred;
     if (preferred && Number.isFinite(preferred.manaNeed) && preferred.manaNeed > 0) {
       const shortage = preferred.manaNeed - (mpCur + activeRemaining);
-      return {
-        needed: shortage > 0,
-        reason: shortage > 0 ? "preferred_skill_shortage" : "preferred_skill_mana_available",
-        mpCur: +mpCur.toFixed(2),
-        mpPct: +mpPct.toFixed(4),
-        activeRemaining: +activeRemaining.toFixed(2),
-        shortage: +Math.max(0, shortage).toFixed(2),
-        preferredSkill: preferred,
-        potionTotalValue: bestKnown.spec.totalValue,
-        potionDurationSec: bestKnown.spec.durationSec,
-        potionPerSec: bestKnown.spec.perSec
-      };
+      if (shortage > 0) {
+        return {
+          needed: true,
+          reason: "preferred_skill_shortage",
+          mpCur: +mpCur.toFixed(2),
+          mpPct: +mpPct.toFixed(4),
+          activeRemaining: +activeRemaining.toFixed(2),
+          shortage: +Math.max(0, shortage).toFixed(2),
+          preferredSkill: preferred,
+          potionTotalValue: bestKnown.spec.totalValue,
+          potionDurationSec: bestKnown.spec.durationSec,
+          potionPerSec: bestKnown.spec.perSec
+        };
+      }
+      // AI CHANGED: Preferred skill has enough MP — still allow max-minus-heal top-off below (do not return early).
     }
     const mpMax =
       liveState &&

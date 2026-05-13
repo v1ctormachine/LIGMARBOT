@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.206",
-    "description":  "AUTO Fast/Safe/Easy combat modes, MP potion max-minus-heal threshold",
-    "builtAt":  "2026-05-13T22:41:14.7438419+03:00",
+    "version":  "0.3.207",
+    "description":  "MP potion: allow max-minus-heal top-off after preferred mana ok",
+    "builtAt":  "2026-05-13T22:42:00.9463596+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.207",
+                        "description":  "MP potion: allow max-minus-heal top-off after preferred mana ok",
+                        "date":  "2026-05-13T22:42:00.9463596+03:00"
+                    },
                     {
                         "version":  "0.3.206",
                         "description":  "AUTO Fast/Safe/Easy combat modes, MP potion max-minus-heal threshold",
@@ -247,11 +252,6 @@
                         "version":  "0.3.158",
                         "description":  "AUTO chat: time-of-day promo banks + local-clock slot picker",
                         "date":  "2026-05-13T09:52:41.8140112+03:00"
-                    },
-                    {
-                        "version":  "0.3.157",
-                        "description":  "AUTO chat: sync promo line v1ctorY; docs: Enemy DB scope + buff research roadmap",
-                        "date":  "2026-05-13T09:36:37.6280617+03:00"
                     }
                 ]
 }
