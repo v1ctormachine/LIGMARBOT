@@ -482,9 +482,9 @@
     Runtime.ui.statusNode.textContent = lines.join("\n");
   }
 
-  // AI CHANGED: Single copy-paste line for patch verification (console + panel); one entry per addCheck step.
-  function buildTestBundleHumanReport(checks, versionSemver) {
-    const labelById = {
+  // AI CHANGED: Human labels for TEST reports, failures list, and self-test JSON export.
+  function getTestBundleHumanLabels() {
+    return {
       version: "Version",
       probe_selectors: "Selector probe",
       skill_scan: "Skill data",
@@ -525,6 +525,11 @@
       planner_ranked_openers: "Ranked opener",
       calibration_observe: "Calibration"
     };
+  }
+
+  // AI CHANGED: Single copy-paste line for patch verification (console + panel); one entry per addCheck step.
+  function buildTestBundleHumanReport(checks, versionSemver) {
+    const labelById = getTestBundleHumanLabels();
     const segs = [];
     segs.push("bot v" + String(versionSemver || "?"));
     for (let i = 0; i < checks.length; i += 1) {
@@ -568,6 +573,180 @@
       };
     }
     return report;
+  }
+
+  // AI CHANGED: Serializable opts for self-test export (no functions / circular refs).
+  function pickSerializableTestOpts(userOpts) {
+    const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
+    const keys = [
+      "testProfile",
+      "runQuickCalibration",
+      "resumeAutoFarm",
+      "forceSkillScan",
+      "runSkillScanIfNeeded",
+      "runHeroStatsInTest",
+      "strictCalibration",
+      "strictRankedChecks",
+      "autoRankedSoak",
+      "rankedSoakMinMs",
+      "rankedSoakMaxMs",
+      "rankedSoakMinEvents",
+      "forceRankedSkillName",
+      "forceChargeReleaseFraction",
+      "fireChargeCancelIfHint",
+      "forcedOpenerReadyWaitMs",
+      "naturalSniperReadyWaitMs",
+      "naturalSniperProbeWaitMs"
+    ];
+    const out = {};
+    for (let i = 0; i < keys.length; i += 1) {
+      const k = keys[i];
+      if (Object.prototype.hasOwnProperty.call(opts, k)) {
+        const v = opts[k];
+        const t = typeof v;
+        if (v === null || t === "string" || t === "number" || t === "boolean") {
+          out[k] = v;
+        }
+      }
+    }
+    return out;
+  }
+
+  // AI CHANGED: End-of-bundle game/planner snapshot for offline analysis (best-effort).
+  function buildGameSnapshotForTestExport() {
+    const snap = {};
+    try {
+      if (typeof readBasicState === "function") {
+        snap.basicState = readBasicState();
+      }
+    } catch (e) {
+      snap.basicStateError = String(e && e.message ? e.message : e);
+    }
+    try {
+      if (typeof getAutoFarmStatus === "function") {
+        snap.autoFarm = getAutoFarmStatus();
+      }
+    } catch (e2) {
+      snap.autoFarmError = String(e2 && e2.message ? e2.message : e2);
+    }
+    try {
+      if (typeof getPlannerOpeningPickDiagnostics === "function") {
+        snap.plannerDiagnostics = getPlannerOpeningPickDiagnostics();
+      }
+    } catch (e3) {
+      snap.plannerDiagnosticsError = String(e3 && e3.message ? e3.message : e3);
+    }
+    return snap;
+  }
+
+  // AI CHANGED: Single JSON document for support — full steps, failures, environment, timing.
+  function buildTestSelfTestExportPayload(params) {
+    const checks = params.checks;
+    const labelById = getTestBundleHumanLabels();
+    const finishedAt = Date.now();
+    const startedAt = params.startedAt;
+    const failures = [];
+    let passed = 0;
+    let failed = 0;
+    let skipped = 0;
+    for (let i = 0; i < checks.length; i += 1) {
+      const c = checks[i];
+      if (c.detail && c.detail.skipped) {
+        skipped += 1;
+      } else if (c.ok) {
+        passed += 1;
+      } else {
+        failed += 1;
+        const reason =
+          c.detail && (c.detail.reason || c.detail.error)
+            ? String(c.detail.reason || c.detail.error)
+            : "";
+        failures.push({
+          id: c.id,
+          label: labelById[c.id] || c.id,
+          critical: !!c.critical,
+          reason: reason,
+          detail: c.detail !== undefined ? c.detail : null
+        });
+      }
+    }
+    return {
+      ligmarbotSelfTest: 1,
+      version: params.botVersion,
+      timing: {
+        startedAt: startedAt,
+        finishedAt: finishedAt,
+        durationMs: finishedAt - startedAt,
+        startedIso: new Date(startedAt).toISOString(),
+        finishedIso: new Date(finishedAt).toISOString()
+      },
+      environment: {
+        pageUrl: typeof location !== "undefined" && location.href ? String(location.href) : "",
+        userAgent: typeof navigator !== "undefined" && navigator.userAgent ? String(navigator.userAgent) : ""
+      },
+      testProfile: params.testProfile,
+      optionsResolved: params.optsResolved,
+      result: {
+        ok: params.criticalFail === false,
+        criticalFail: params.criticalFail,
+        softFail: params.softFail,
+        overall: params.humanReport.overall,
+        oneLine: params.humanReport.fullText
+      },
+      counts: {
+        steps: checks.length,
+        passed: passed,
+        failed: failed,
+        skipped: skipped,
+        failuresListed: failures.length
+      },
+      failures: failures,
+      steps: buildTestDebugReport(checks),
+      gameSnapshotEnd: params.gameSnapshot || buildGameSnapshotForTestExport(),
+      extras: params.extras || null
+    };
+  }
+
+  // AI CHANGED: Highlight DevTools copy region + Logger lines filterable by [TEST].
+  function emitTestSelfTestPackage(payload, checksLength) {
+    let json = "";
+    try {
+      json = JSON.stringify(payload, null, 2);
+    } catch (err) {
+      json = JSON.stringify({
+        ligmarbotSelfTest: 1,
+        error: "JSON.stringify failed",
+        message: String(err && err.message ? err.message : err)
+      });
+    }
+    const styleBanner = "background:#1a2332;color:#58a6ff;font-weight:bold;font-size:13px;padding:8px 10px;border-radius:6px;margin:4px 0";
+    const styleCopy = "background:#0d1117;color:#7ee787;font-family:Consolas,Menlo,monospace;font-size:11px;padding:10px;border:2px solid #238636;border-radius:6px;white-space:pre-wrap";
+    const styleHint = "color:#8b949e;font-size:11px;padding:4px 0";
+    try {
+      /* eslint-disable no-console */
+      console.log("%c[TEST] ►►► COPY FOR SUPPORT / AI — SELECT TEXT BETWEEN BEGIN AND END BELOW ◄◄◄", styleBanner);
+      console.log("%c---LIGMAR_TEST_EXPORT_BEGIN---\n" + json + "\n---LIGMAR_TEST_EXPORT_END---", styleCopy);
+      console.log("%c[TEST] Tip: DevTools filter [TEST] | Search: LIGMAR_TEST_EXPORT_BEGIN | ligmarBot.getLastTestExport()", styleHint);
+      /* eslint-enable no-console */
+    } catch (e) {
+      // ignore — cosmetic only
+    }
+    Logger.log("TEST", "SELF_TEST_COPY_BLOCK", "Copy JSON between ---LIGMAR_TEST_EXPORT_BEGIN--- and ---LIGMAR_TEST_EXPORT_END--- (console, green block)");
+    Logger.log("TEST", "SELF_TEST_JSON", json);
+    Logger.log("TEST", "SELF_TEST_SUMMARY", {
+      version: payload.version && payload.version.version,
+      ok: payload.result && payload.result.ok,
+      overall: payload.result && payload.result.overall,
+      durationMs: payload.timing && payload.timing.durationMs,
+      failureCount: payload.failures && payload.failures.length,
+      stepCount: checksLength
+    });
+    if (Runtime && Runtime.ui) {
+      Runtime.ui.lastTestExportJson = json;
+      Runtime.ui.lastTestExportAt = Date.now();
+      Runtime.ui.lastTestExportOk = !!(payload.result && payload.result.ok);
+    }
+    return json;
   }
 
   // AI CHANGED: Compact always-on comparator payload for TEST — one object summarizes the opener decision context without cross-reading multiple diagnostics.
@@ -697,6 +876,7 @@
 
   // AI CHANGED: One-click TEST — default **`panel`** profile runs the full automated suite (ranked soak, strict calibration, watchdog/chat/miss probes, skill scan when needed, resume farm). Use **`testProfile: "quick"`** for a fast dev pass; **`release`** for longest soak windows (console).
   async function runUiTestBundle(userOpts) {
+    const testBundleStartedAt = Date.now();
     const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
     const requestedProfileRaw =
       typeof opts.testProfile === "string" && opts.testProfile.trim() ? opts.testProfile.trim().toLowerCase() : "";
@@ -930,6 +1110,11 @@
     }
 
     try {
+      Logger.log("TEST", "BUNDLE_START", {
+        at: testBundleStartedAt,
+        iso: new Date(testBundleStartedAt).toISOString(),
+        testProfile: requestedProfile
+      });
       Logger.log("TEST", `bundle start v${BotVersion.version}`, {
         testProfile: requestedProfile,
         runQuickCalibration: runCalibration,
@@ -2473,6 +2658,30 @@
       }
       /* eslint-enable no-console */
 
+      const gameSnapEnd = buildGameSnapshotForTestExport();
+      const selfTestPayload = buildTestSelfTestExportPayload({
+        checks: checks,
+        startedAt: testBundleStartedAt,
+        botVersion: {
+          version: BotVersion.version,
+          description: BotVersion.description,
+          builtAt: BotVersion.builtAt
+        },
+        testProfile: requestedProfile,
+        optsResolved: pickSerializableTestOpts(opts),
+        criticalFail: criticalFail,
+        softFail: softFail,
+        humanReport: humanReport,
+        gameSnapshot: gameSnapEnd,
+        extras: {
+          skillsSlotCount: Runtime.skills && Array.isArray(Runtime.skills.slots) ? Runtime.skills.slots.length : null,
+          chargeCancelTest: chargeCancelTest,
+          calibrationError: calibrationError || null,
+          skillsMeta: skillsMeta || null
+        }
+      });
+      const testExportJson = emitTestSelfTestPackage(selfTestPayload, checks.length);
+
       bundleResult = {
         ok: !criticalFail,
         criticalOk: !criticalFail,
@@ -2484,7 +2693,8 @@
         calibration: calibration,
         calibrationError: calibrationError,
         skillsMeta: skillsMeta,
-        chargeCancelTest: chargeCancelTest
+        chargeCancelTest: chargeCancelTest,
+        testExportJson: testExportJson
       };
     } finally {
       if (plannerBackup) {
@@ -2621,8 +2831,10 @@
           Logger.log("TEST", "finished", res);
           // AI CHANGED: panel mirrors copy-paste `Test result:` line from console (per-step + OVERALL).
           if (testResultLine) {
-            testResultLine.textContent =
+            const line =
               (res && res.testReportLine) ? res.testReportLine : (res && res.ok ? "Test result: OK (no report line)" : "Test result: failed");
+            testResultLine.textContent =
+              line + " — DevTools: green [TEST] COPY block (LIGMAR_TEST_EXPORT_BEGIN) or ligmarBot.getLastTestExport().json";
             testResultLine.style.color = res && res.ok ? "#7dffb3" : "#ff6b6b";
             testResultLine.style.fontSize = "9px";
           }
@@ -2651,7 +2863,7 @@
 
     // AI CHANGED: last TEST pass/fail line — filled when runUiTestBundle resolves (no manual console steps).
     const testResultLine = document.createElement("div");
-    testResultLine.textContent = "Test result: — (press TEST; console shows [TEST] SUMMARY)";
+    testResultLine.textContent = "Test result: — (TEST → console green COPY block + [TEST] SUMMARY)";
     testResultLine.style.fontSize = "10px";
     testResultLine.style.lineHeight = "1.35";
     testResultLine.style.marginBottom = "8px";

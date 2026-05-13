@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.163",
-    "description":  "chat: uniform 1/6 pick — smart pair vs five slot bank lines",
-    "builtAt":  "2026-05-13T11:25:09.1207991+03:00",
+    "version":  "0.3.164",
+    "description":  "TEST: self-test JSON export block + getLastTestExport for support handoff",
+    "builtAt":  "2026-05-13T11:42:31.5561134+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.164",
+                        "description":  "TEST: self-test JSON export block + getLastTestExport for support handoff",
+                        "date":  "2026-05-13T11:42:31.5561134+03:00"
+                    },
                     {
                         "version":  "0.3.163",
                         "description":  "chat: uniform 1/6 pick — smart pair vs five slot bank lines",
@@ -247,11 +252,6 @@
                         "version":  "0.3.118",
                         "description":  "planner: context-aware dynamic charge",
                         "date":  "2026-05-11T20:46:57.6429969+03:00"
-                    },
-                    {
-                        "version":  "0.3.117",
-                        "description":  "combat: generic dynamic charge release",
-                        "date":  "2026-05-11T20:30:15.1673686+03:00"
                     }
                 ]
 }

@@ -179,6 +179,18 @@
       loadAllUiPrefs: loadAllUiPrefs,
       // AI CHANGED: Panel TEST and console — same entry point; default profile is **panel** unless opts override `testProfile`.
       runUiTestBundle: runUiTestBundle,
+      // AI CHANGED: Last full TEST JSON export (same as green DevTools block) for copy without selecting console text.
+      getLastTestExport: function () {
+        if (!Runtime.ui || !Runtime.ui.lastTestExportJson) {
+          return { ok: false, reason: "no_test_export_yet", hint: "Run TEST from panel or ligmarBot.runUiTestBundle()" };
+        }
+        return {
+          ok: true,
+          at: Runtime.ui.lastTestExportAt,
+          passed: Runtime.ui.lastTestExportOk,
+          json: Runtime.ui.lastTestExportJson
+        };
+      },
       // AI CHANGED: Phase C0 -- skill scanner public API. scanSkills() is the only "active" call;
       // the rest are getters / cache helpers for inspection and recovery.
       scanSkills: scanSkills,

@@ -15,6 +15,81 @@
         totalNoProgressFailures: 0,
         lastNoProgressAt: null,
         lastCooldownAt: null
+      },
+      // AI CHANGED: Combat readiness pack — live potion/sustain telemetry for unattended farming diagnostics.
+      combatSustain: {
+        hpPotionUses: 0,
+        mpPotionUses: 0,
+        lastPotionAt: null,
+        lastPotionResource: null,
+        lastPotionReason: null,
+        potionCooldownUntil: null,
+        activeHpPotion: null,
+        activeMpPotion: null,
+        lastHpSampleAt: null,
+        lastHpSampleCur: null,
+        recentHpLossPerSec: 0,
+        lastPreferredManaNeed: null
+      },
+      // AI CHANGED: Runtime queue v1 — one buffered follow-up action for non-charge/basic combat chaining.
+      combatQueue: {
+        active: false,
+        mode: null,
+        slot: null,
+        name: null,
+        source: null,
+        anchorMode: null,
+        anchorSlot: null,
+        anchorName: null,
+        anchorSource: null,
+        openerSlot: null,
+        openerName: null,
+        armedAt: null,
+        firedAt: null,
+        clearedAt: null,
+        clearReason: null,
+        targetHpMaxAtArm: null,
+        enemyCountAtArm: null,
+        postRetargetGuarded: false,
+        lastMatchedCastText: null,
+        advanceCount: 0,
+        anchorNeedsReset: false
+      },
+      // AI CHANGED: AUTO ON chat spammer — next due time, last sent line, and recent send/fail telemetry.
+      chatSpammer: {
+        nextSendAt: null,
+        lastDelayMs: null,
+        lastAttemptAt: null,
+        lastSendAt: null,
+        lastMessage: null,
+        lastMessageIndex: null,
+        sends: 0,
+        failures: 0,
+        lastResult: null
+      },
+      // AI CHANGED: Night resilience — session-health timestamps and last evaluated risk for overloaded tabs / server drops.
+      health: {
+        lastHealthyAt: null,
+        lastProgressAt: null,
+        lastActionVerifiedAt: null,
+        lastStateReadAt: null,
+        poorConnectionSince: null,
+        deadSince: null,
+        missingCoreUiSince: null,
+        highPingSince: null,
+        staleSince: null,
+        suspectedOverload: false,
+        lastRiskReason: null,
+        lastSummary: null
+      },
+      // AI CHANGED: Night resilience — bounded soft/hard recovery attempts and refresh metadata.
+      recovery: {
+        softAttempts: 0,
+        refreshAttempts: 0,
+        lastSoftRecoveryAt: null,
+        lastRefreshAt: null,
+        lastRefreshReason: null,
+        lastRefreshToken: null
       }
     },
     // AI CHANGED: Added exploration state so idle movement rotates through nearby directions.
@@ -56,6 +131,10 @@
       testButton: null,
       // AI CHANGED: one-line last TEST outcome under the TEST button (90-ui.js runUiTestBundle).
       testResultLine: null,
+      // AI CHANGED: Last full TEST self-export JSON for support / AI analysis (90-ui.js).
+      lastTestExportJson: null,
+      lastTestExportAt: null,
+      lastTestExportOk: null,
       // AI CHANGED: periodic GUI footer/phase refresh interval id (single-instance ticker in 90-ui.js).
       statusRefreshTimer: null,
       // AI CHANGED: slice 26 — ranked opener ms inputs (90-ui.js).
@@ -115,7 +194,10 @@
           ranked_progress: 0,
           ranked_no_progress: 0,
           ranked_alt_pick: 0,
-          basic_fallback_after_ranked: 0
+          basic_fallback_after_ranked: 0,
+          // AI CHANGED: Runtime queue v1 telemetry for armed/fired follow-up clicks.
+          queued_action_armed: 0,
+          queued_action_fired: 0
         },
         lastEvent: null,
         lastAt: null,
