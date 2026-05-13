@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.205",
-    "description":  "charge cancel: require cast bar skill name + cancel hint before tap",
-    "builtAt":  "2026-05-13T22:22:21.2309606+03:00",
+    "version":  "0.3.206",
+    "description":  "AUTO Fast/Safe/Easy combat modes, MP potion max-minus-heal threshold",
+    "builtAt":  "2026-05-13T22:41:14.7438419+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.206",
+                        "description":  "AUTO Fast/Safe/Easy combat modes, MP potion max-minus-heal threshold",
+                        "date":  "2026-05-13T22:41:14.7438419+03:00"
+                    },
                     {
                         "version":  "0.3.205",
                         "description":  "charge cancel: require cast bar skill name + cancel hint before tap",
@@ -247,11 +252,6 @@
                         "version":  "0.3.157",
                         "description":  "AUTO chat: sync promo line v1ctorY; docs: Enemy DB scope + buff research roadmap",
                         "date":  "2026-05-13T09:36:37.6280617+03:00"
-                    },
-                    {
-                        "version":  "0.3.156",
-                        "description":  "night resilience watchdog and auto refresh resume",
-                        "date":  "2026-05-13T00:24:58.7091300+03:00"
                     }
                 ]
 }

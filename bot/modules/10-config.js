@@ -113,6 +113,8 @@
       hpPotionForecastWindowSec: 4,
       // AI CHANGED: Use MP potion below this mp pct so ranked combat does not degrade into basic-only farming for long windows.
       mpPotionUseBelowPct: 0.22,
+      // AI CHANGED: When true (default), drink MP potions once missing mana ≥ largest bar MP potion heal (cur+HoT remainder ≤ max−heal), i.e. at least one pot’s worth of headroom to fill without massive overheal. Falls back to mpPotionUseBelowPct when max MP or pot heal is unknown.
+      mpPotionUseWhenBelowMaxMinusHeal: true,
       // AI CHANGED: Before idle tile-to-tile explore when enemyCount===0, wait until HP reaches this pct using HP potions (parsed bar) + passive regen.
       outOfCombatHealBeforeExplore: true,
       // AI CHANGED: HP floor before exploreByScan on empty tiles (enemyCount 0); stay idle below this and keep trying HP potions when ready.

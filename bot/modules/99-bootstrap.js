@@ -162,6 +162,8 @@
       startAutoFarmLoop: startAutoFarmLoop,
       stopAutoFarmLoop: stopAutoFarmLoop,
       getAutoFarmStatus: getAutoFarmStatus,
+      setAutoFarmCombatMode: setAutoFarmCombatMode,
+      applyAutoFarmCombatMode: applyAutoFarmCombatMode,
       getCombatEpisode: function () {
         return Runtime.autoFarm && Runtime.autoFarm.combatEpisode ? Runtime.autoFarm.combatEpisode : null;
       },
@@ -179,6 +181,8 @@
       // AI CHANGED: slice 35 — combat opener prefs (`ligmarbot.combatUi.v1`): grace ms, charge fraction, optional `chargeSkillReleaseOverrideMs`; load/save from console.
       loadCombatUiPrefs: loadCombatUiPrefs,
       saveCombatUiPrefs: saveCombatUiPrefs,
+      loadAutoFarmUiPrefs: loadAutoFarmUiPrefs,
+      saveAutoFarmUiPrefs: saveAutoFarmUiPrefs,
       // AI CHANGED: slice 36 — persist / reload both storage keys; console shows `{ ok, … }` not `undefined`.
       saveAllUiPrefs: saveAllUiPrefs,
       loadAllUiPrefs: loadAllUiPrefs,

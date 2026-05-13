@@ -291,6 +291,69 @@
     }
   }
 
+  // AI CHANGED: AUTO panel — persist combat mode (Fast/Safe/Easy) in ligmarbot.autoFarmUi.v1; applied when AUTO loop runs.
+  function autoFarmUiPrefsSnapshot() {
+    const raw =
+      Runtime.autoFarm && Runtime.autoFarm.combatMode ? String(Runtime.autoFarm.combatMode).toLowerCase() : "fast";
+    const cm = raw === "easy" || raw === "safe" || raw === "fast" ? raw : "fast";
+    return { combatMode: cm };
+  }
+
+  function loadAutoFarmUiPrefs() {
+    try {
+      const raw = window.localStorage.getItem("ligmarbot.autoFarmUi.v1");
+      if (!raw) {
+        return { ok: true, fromStorage: false, autoFarm: autoFarmUiPrefsSnapshot() };
+      }
+      const p = JSON.parse(raw);
+      if (typeof p.combatMode === "string") {
+        const m = p.combatMode.toLowerCase();
+        if (m === "fast" || m === "safe" || m === "easy") {
+          Runtime.autoFarm.combatMode = m;
+        }
+      }
+      return { ok: true, fromStorage: true, autoFarm: autoFarmUiPrefsSnapshot() };
+    } catch (err) {
+      return {
+        ok: false,
+        fromStorage: false,
+        error: String(err && err.message ? err.message : err),
+        autoFarm: autoFarmUiPrefsSnapshot()
+      };
+    }
+  }
+
+  function saveAutoFarmUiPrefs() {
+    const payload = autoFarmUiPrefsSnapshot();
+    try {
+      window.localStorage.setItem("ligmarbot.autoFarmUi.v1", JSON.stringify(payload));
+      return { ok: true, storageKey: "ligmarbot.autoFarmUi.v1", autoFarm: payload };
+    } catch (err) {
+      return { ok: false, error: String(err && err.message ? err.message : err), autoFarm: payload };
+    }
+  }
+
+  // AI CHANGED: Highlight selected AUTO combat mode buttons on panel.
+  function refreshAutoFarmModeButtonsVisual() {
+    const map = Runtime.ui && Runtime.ui.autoFarmModeButtons ? Runtime.ui.autoFarmModeButtons : null;
+    if (!map) {
+      return;
+    }
+    const raw =
+      Runtime.autoFarm && Runtime.autoFarm.combatMode ? String(Runtime.autoFarm.combatMode).toLowerCase() : "fast";
+    const norm = raw === "easy" || raw === "safe" || raw === "fast" ? raw : "fast";
+    ["fast", "safe", "easy"].forEach(function (key) {
+      const btn = map[key];
+      if (!btn) {
+        return;
+      }
+      const on = key === norm;
+      btn.style.background = on ? "#7a8cff" : "#2a3351";
+      btn.style.borderColor = on ? "#aab6ff" : "#4a5672";
+      btn.style.color = on ? "#0e121e" : "#dce3ff";
+    });
+  }
+
   // AI CHANGED: slice 26 — persist ranked opener timing (slice 25) from panel; returns result object (slice 36).
   function combatPrefsSnapshot() {
     return {
@@ -344,14 +407,27 @@
   function saveAllUiPrefs() {
     const planner = savePlannerUiPrefs();
     const combat = saveCombatUiPrefs();
-    return { ok: !!(planner.ok && combat.ok), planner: planner, combat: combat };
+    const autoFarm = saveAutoFarmUiPrefs();
+    return {
+      ok: !!(planner.ok && combat.ok && autoFarm.ok),
+      planner: planner,
+      combat: combat,
+      autoFarm: autoFarm
+    };
   }
 
   function loadAllUiPrefs() {
     const planner = loadPlannerUiPrefs();
     const combat = loadCombatUiPrefs();
+    const autoFarm = loadAutoFarmUiPrefs();
+    refreshAutoFarmModeButtonsVisual();
     updateControlPanelStatus();
-    return { ok: !!(planner.ok && combat.ok), planner: planner, combat: combat };
+    return {
+      ok: !!(planner.ok && combat.ok && autoFarm.ok),
+      planner: planner,
+      combat: combat,
+      autoFarm: autoFarm
+    };
   }
 
   // AI CHANGED: Keep exactly one live GUI refresh ticker; recover if callback throws.
@@ -454,9 +530,10 @@
       `Enemies: ${enemyText} · Coords: ${coordsText}`,
       `Session: ${sessionText} · Health: ${healthState}${healthSummary && healthSummary.primaryReason ? " (" + healthSummary.primaryReason + ")" : ""}`,
       `Recovery: soft ${recoverySoft} · refresh ${recoveryRefresh} · Last action: ${lastVerifiedAt ? formatAgo(Date.now() - lastVerifiedAt) + " ago" : "—"}`,
-      `Cycles: ${auto.cyclesCompleted} · Failures: ${auto.consecutiveFailures} · ON: ${onText}`
+      `AUTO: ${auto.combatMode || "fast"} · Cycles: ${auto.cyclesCompleted} · Failures: ${auto.consecutiveFailures} · ON: ${onText}`
     ];
     Runtime.ui.statusNode.textContent = lines.join("\n");
+    refreshAutoFarmModeButtonsVisual();
   }
 
   // AI CHANGED: Human labels for TEST reports, failures list, and self-test JSON export.
@@ -3209,6 +3286,8 @@
           hpPotionCombatMissingHealFraction: Number.isFinite(Config.combat.hpPotionCombatMissingHealFraction) ? Config.combat.hpPotionCombatMissingHealFraction : null,
           hpPotionForecastWindowSec: Number.isFinite(Config.combat.hpPotionForecastWindowSec) ? Config.combat.hpPotionForecastWindowSec : null,
           mpPotionUseBelowPct: Number.isFinite(Config.combat.mpPotionUseBelowPct) ? Config.combat.mpPotionUseBelowPct : null,
+          mpPotionUseWhenBelowMaxMinusHeal: Config.combat.mpPotionUseWhenBelowMaxMinusHeal !== false,
+          autoCombatMode: Runtime.autoFarm && Runtime.autoFarm.combatMode ? String(Runtime.autoFarm.combatMode) : "fast",
           hpPotionSlot: hpPotionRow ? {
             slot: hpPotionRow.slot,
             counter: hpPotionRow.counter ? hpPotionRow.counter.value : null,
@@ -3611,6 +3690,7 @@
     }
 
     loadPlannerUiPrefs();
+    loadAutoFarmUiPrefs();
 
     const panel = document.createElement("div");
     panel.id = "ligmar-bot-panel";
@@ -3702,6 +3782,49 @@
     buttonsWrap.appendChild(startButton);
     buttonsWrap.appendChild(stopButton);
     panel.appendChild(buttonsWrap);
+
+    // AI CHANGED: AUTO combat mode — Fast / Safe / Easy; persisted in ligmarbot.autoFarmUi.v1; planner applied when AUTO runs.
+    const autoModeLabel = document.createElement("div");
+    autoModeLabel.textContent = "AUTO combat mode";
+    autoModeLabel.style.fontSize = "10px";
+    autoModeLabel.style.opacity = "0.75";
+    autoModeLabel.style.marginBottom = "4px";
+    panel.appendChild(autoModeLabel);
+    const autoModeRow = document.createElement("div");
+    autoModeRow.style.display = "flex";
+    autoModeRow.style.gap = "4px";
+    autoModeRow.style.marginBottom = "10px";
+    function makeModeButton(label, modeKey) {
+      const b = document.createElement("button");
+      b.textContent = label;
+      b.style.flex = "1";
+      b.style.padding = "6px 4px";
+      b.style.borderRadius = "5px";
+      b.style.border = "1px solid #4a5672";
+      b.style.background = "#2a3351";
+      b.style.color = "#dce3ff";
+      b.style.fontSize = "10px";
+      b.style.fontWeight = "700";
+      b.style.cursor = "pointer";
+      b.addEventListener("click", function () {
+        Runtime.autoFarm.combatMode = modeKey;
+        saveAutoFarmUiPrefs();
+        refreshAutoFarmModeButtonsVisual();
+        if (Runtime.autoFarm.running && typeof applyAutoFarmCombatMode === "function") {
+          applyAutoFarmCombatMode();
+        }
+        Logger.log("UI", "AUTO combat mode selected", { mode: modeKey, running: !!Runtime.autoFarm.running });
+        setTimeout(updateControlPanelStatus, 20);
+      });
+      return b;
+    }
+    const modeBtnFast = makeModeButton("Fast", "fast");
+    const modeBtnSafe = makeModeButton("Safe", "safe");
+    const modeBtnEasy = makeModeButton("Easy", "easy");
+    autoModeRow.appendChild(modeBtnFast);
+    autoModeRow.appendChild(modeBtnSafe);
+    autoModeRow.appendChild(modeBtnEasy);
+    panel.appendChild(autoModeRow);
 
     // AI CHANGED: TEST — one-click **`panel`** profile (full automated suite: soak, strict calibration, probes, resume farm). Console: `ligmarBot.runUiTestBundle({ testProfile: "quick" })` or `"release"`.
     const testButton = makeButton(`TEST (${BotVersion.version})`, "#737fff", "#8f94ff", () => {
@@ -3861,6 +3984,8 @@
     Runtime.ui.issueStopCopyButton = issueStopCopyButton;
     Runtime.ui.issueReportLine = issueReportLine;
     Runtime.ui.combatGraceInput = null;
+    Runtime.ui.autoFarmModeButtons = { fast: modeBtnFast, safe: modeBtnSafe, easy: modeBtnEasy };
+    refreshAutoFarmModeButtonsVisual();
 
     updateControlPanelStatus();
     // AI CHANGED: Faster refresh (500ms) so ON timer + HP/MP/Ping/phase stay live during auto-farm.

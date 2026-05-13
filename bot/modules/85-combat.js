@@ -1616,6 +1616,43 @@
         potionPerSec: bestKnown.spec.perSec
       };
     }
+    const mpMax =
+      liveState &&
+      liveState.player &&
+      liveState.player.mp &&
+      liveState.player.mp.valid &&
+      Number.isFinite(liveState.player.mp.max)
+        ? liveState.player.mp.max
+        : null;
+    const healAmt =
+      bestKnown.spec && Number.isFinite(bestKnown.spec.totalValue) && bestKnown.spec.totalValue > 0
+        ? bestKnown.spec.totalValue
+        : null;
+    // AI CHANGED: Drink when missing MP ≥ one bar MP potion heal (equivalent to cur+remainder ≤ maxMP − heal) to limit overheal waste; uses largest parsed MP pot on bar as heal reference.
+    if (
+      Config.combat.mpPotionUseWhenBelowMaxMinusHeal !== false &&
+      Number.isFinite(mpMax) &&
+      mpMax > 0 &&
+      healAmt !== null
+    ) {
+      const effectiveMp = mpCur + activeRemaining;
+      const missing = mpMax - effectiveMp;
+      if (missing >= healAmt) {
+        return {
+          needed: true,
+          reason: "mp_missing_at_least_one_potion_heal",
+          mpCur: +mpCur.toFixed(2),
+          mpPct: +mpPct.toFixed(4),
+          activeRemaining: +activeRemaining.toFixed(2),
+          shortage: +missing.toFixed(2),
+          mpMax: +mpMax.toFixed(2),
+          manaPotionHeal: +healAmt.toFixed(2),
+          potionTotalValue: bestKnown.spec.totalValue,
+          potionDurationSec: bestKnown.spec.durationSec,
+          potionPerSec: bestKnown.spec.perSec
+        };
+      }
+    }
     const minAttackManaNeed = getCombatMinimumAttackManaNeed();
     const fallbackNeeded =
       mpPct <= lowMpPct &&
@@ -3521,12 +3558,61 @@
       consecutiveFailures: status.consecutiveFailures,
       lastResult: status.lastResult,
       startedAt: status.startedAt,
+      combatMode: status.combatMode || "fast",
       reliability: status.reliability || null,
       chatSpammer: status.chatSpammer || null,
       health: status.health || null,
       recovery: status.recovery || null,
       lastSessionSummary: status.lastSessionSummary || null
     };
+  }
+
+  // AI CHANGED: AUTO panel combat mode — Fast (ranked every burst, min MP reserve), Safe (placeholder — conservative defaults), Easy (basics only).
+  function applyAutoFarmCombatMode() {
+    const raw =
+      Runtime.autoFarm && Runtime.autoFarm.combatMode ? String(Runtime.autoFarm.combatMode).toLowerCase() : "fast";
+    const mode = raw === "easy" || raw === "safe" || raw === "fast" ? raw : "fast";
+    Runtime.autoFarm.combatMode = mode;
+    if (mode === "easy") {
+      Config.planner.useRankedAttackSkillsInCombat = false;
+      Logger.log("AUTO", "combat mode easy: ranked skills off (basic attacks only)");
+      return;
+    }
+    Config.planner.useRankedAttackSkillsInCombat = true;
+    if (mode === "fast") {
+      Config.planner.useRankedSkillOnlyFirstBurstAfterFind = false;
+      Config.planner.skillMpReserve = 0;
+      Logger.log("AUTO", "combat mode fast: ranked every burst, skillMpReserve 0 (max DPS)");
+    } else {
+      Config.planner.useRankedSkillOnlyFirstBurstAfterFind = true;
+      Config.planner.skillMpReserve = 5;
+      Logger.log("AUTO", "combat mode safe: placeholder — conservative ranked defaults (TODO: deeper safety policy)");
+    }
+  }
+
+  function setAutoFarmCombatMode(mode) {
+    const raw = String(mode || "fast").toLowerCase();
+    const norm = raw === "easy" || raw === "safe" || raw === "fast" ? raw : "fast";
+    Runtime.autoFarm.combatMode = norm;
+    applyAutoFarmCombatMode();
+    return { ok: true, combatMode: norm };
+  }
+
+  function restorePlannerAfterAutoFarmLoop() {
+    const snap = Runtime.autoFarm.plannerSnapshotBeforeAuto;
+    if (snap && typeof snap === "object") {
+      if (typeof snap.useRankedAttackSkillsInCombat === "boolean") {
+        Config.planner.useRankedAttackSkillsInCombat = snap.useRankedAttackSkillsInCombat;
+      }
+      if (typeof snap.useRankedSkillOnlyFirstBurstAfterFind === "boolean") {
+        Config.planner.useRankedSkillOnlyFirstBurstAfterFind = snap.useRankedSkillOnlyFirstBurstAfterFind;
+      }
+      if (typeof snap.skillMpReserve === "number" && Number.isFinite(snap.skillMpReserve)) {
+        Config.planner.skillMpReserve = snap.skillMpReserve;
+      }
+      Runtime.autoFarm.plannerSnapshotBeforeAuto = null;
+      Logger.log("AUTO", "restored planner flags after AUTO session", snap);
+    }
   }
 
   // AI CHANGED: Added stop API to gracefully halt loop after current cycle.
@@ -3554,6 +3640,13 @@
     Runtime.autoFarm.lastResult = null;
     Runtime.autoFarm.startedAt = Date.now();
     Runtime.autoFarm.reliability.noProgressStreak = 0;
+    Runtime.autoFarm.plannerSnapshotBeforeAuto = {
+      useRankedAttackSkillsInCombat: !!Config.planner.useRankedAttackSkillsInCombat,
+      useRankedSkillOnlyFirstBurstAfterFind: !!Config.planner.useRankedSkillOnlyFirstBurstAfterFind,
+      skillMpReserve: Number.isFinite(Config.planner.skillMpReserve) ? Config.planner.skillMpReserve : 5
+    };
+    // AI CHANGED: Apply Fast/Safe/Easy combat pipeline for this AUTO session (restored when loop exits).
+    applyAutoFarmCombatMode();
     resetAutoChatSpammerRuntime();
     resetAutoFarmHealthRuntime(Runtime.autoFarm.startedAt);
     resetAutoFarmRecoveryRuntime();
@@ -3569,6 +3662,8 @@
     });
 
     while (Runtime.autoFarm.running && !Runtime.autoFarm.stopRequested) {
+      // AI CHANGED: Re-apply combat mode each cycle so mid-session panel changes take effect without restart.
+      applyAutoFarmCombatMode();
       // AI CHANGED: Surface waiting-for-settle as live status.
       setBotStatus("waiting", "movement settle gate");
       // AI CHANGED: Block new cycle start until movement bar clears to avoid scan-vs-move overlap.
@@ -3768,10 +3863,12 @@
       health: Object.assign({}, getAutoFarmHealthRuntime()),
       recovery: Object.assign({}, getAutoFarmRecoveryRuntime()),
       exitReason: exitReason,
-      lastStage: Runtime.autoFarm.lastResult ? Runtime.autoFarm.lastResult.stage || null : null
+      lastStage: Runtime.autoFarm.lastResult ? Runtime.autoFarm.lastResult.stage || null : null,
+      combatMode: Runtime.autoFarm.combatMode || "fast"
     };
     // AI CHANGED: consume stop flag when loop ends — if it stays true, waitForCondition (hero stats, verifies) aborts on first tick and leaves profile on wrong tab after TEST.
     Runtime.autoFarm.stopRequested = false;
+    restorePlannerAfterAutoFarmLoop();
     // AI CHANGED: Only set "stopped" if we weren't already halted by failures.
     if (Runtime.status.phase !== "halted") {
       setBotStatus("stopped", `${Runtime.autoFarm.cyclesCompleted} cycles completed`);

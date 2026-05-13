@@ -9,6 +9,10 @@
       startedAt: null,
       // AI CHANGED: Last completed ON session summary (duration/cycles/failures/stop reason).
       lastSessionSummary: null,
+      // AI CHANGED: Panel AUTO combat style — Fast (max DPS planner), Safe (placeholder, conservative defaults), Easy (basic attacks only). Applied when AUTO loop runs; planner knobs restored when loop exits.
+      combatMode: "fast",
+      // AI CHANGED: Snapshot of planner combat flags taken when AUTO starts; restored on loop exit.
+      plannerSnapshotBeforeAuto: null,
       // AI CHANGED: Reliability counters for repeated combat no-progress loops.
       reliability: {
         noProgressStreak: 0,
