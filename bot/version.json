@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.209",
-    "description":  "prebuff before find-enemy; HP-spike safety cancel+bypass; Safe explore HP/MP+short prebuff gate",
-    "builtAt":  "2026-05-14T00:36:03.5547408+03:00",
+    "version":  "0.3.210",
+    "description":  "idle MP pots below 25%; party prebuffs from DB; exclude safety skills from prebuff",
+    "builtAt":  "2026-05-14T01:04:53.1102280+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.210",
+                        "description":  "idle MP pots below 25%; party prebuffs from DB; exclude safety skills from prebuff",
+                        "date":  "2026-05-14T01:04:53.1102280+03:00"
+                    },
                     {
                         "version":  "0.3.209",
                         "description":  "prebuff before find-enemy; HP-spike safety cancel+bypass; Safe explore HP/MP+short prebuff gate",
@@ -247,11 +252,6 @@
                         "version":  "0.3.161",
                         "description":  "damage observe: floating Miss scan + miss_text events + TEST",
                         "date":  "2026-05-13T11:11:06.6303035+03:00"
-                    },
-                    {
-                        "version":  "0.3.160",
-                        "description":  "AUTO chat: smart newbie pair vs bank (50%, 40s gap)",
-                        "date":  "2026-05-13T10:29:46.0910520+03:00"
                     }
                 ]
 }

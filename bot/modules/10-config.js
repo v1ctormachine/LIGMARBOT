@@ -123,6 +123,9 @@
       outOfCombatHealWaitHpPct: 0.75,
       // AI CHANGED: Poll cadence while topping off HP outside combat before the next explore step.
       outOfCombatHealPollMs: 600,
+      // AI CHANGED: When enemyCount===0 (idle), drink MP potions if mana falls below this fraction (then toward idleMpPotionTopOffTargetPct).
+      idleMpPotionUseBelowPct: 0.25,
+      idleMpPotionTopOffTargetPct: 0.5,
       // AI CHANGED: Avoid spamming repeated potion clicks into the same cooldown / latency window.
       combatPotionThrottleMs: 1200,
       // AI CHANGED: Brief settle after a potion click so the client can register the consumable before the next combat action.
@@ -154,6 +157,7 @@
         maxSkillsTotal: 10,
         prebuffLongDurationMinSec: 120,
         shortDurationMaxSec: 120,
+        // AI CHANGED: Substring blocklist; Windy Dome and other emergency barriers also excluded via safety.skillNames + DB/heuristic (see 85-combat).
         reserveSafetyNameSubstrings: ["windy dome"],
         treatAsBuffDespiteAttackNameSubstrings: ["enchanted arrow", "hunters tread", "hunter's tread"],
         forceLongDurationIfUnknownNameSubstrings: ["enchanted arrow", "hunters tread", "hunter's tread"],

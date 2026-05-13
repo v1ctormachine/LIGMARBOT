@@ -1844,6 +1844,130 @@
     return false;
   }
 
+  // AI CHANGED: Shared absorb/incoming barrier heuristic (safety prebuff exclusion + TEST list).
+  function supportBuffDescriptionMatchesSafetyIncomingAbsorbHeuristic(desc) {
+    const d = String(desc || "").toLowerCase();
+    return (
+      (d.indexOf("absorb") !== -1 && d.indexOf("incoming") !== -1) ||
+      (d.indexOf("absorbs") !== -1 && d.indexOf("incoming") !== -1) ||
+      (d.indexOf("incoming damage") !== -1 && (d.indexOf("barrier") !== -1 || d.indexOf("shield") !== -1))
+    );
+  }
+
+  // AI CHANGED: Skill DB — Support+Party without Attack (e.g. Hunter's Tread, Battle Song) = party prebuff.
+  function skillMasterEntryIsPartySupportNonAttackFromDb(entry) {
+    if (!entry || !Array.isArray(entry.tags)) {
+      return false;
+    }
+    const t = entry.tags;
+    const has = function (x) {
+      return t.indexOf(x) !== -1;
+    };
+    return has("support") && has("party") && !has("attack");
+  }
+
+  // AI CHANGED: Live scan tags — same party-support rule when DB row missing or class mismatch.
+  function skillRowScanTagsPartySupportNonAttack(row) {
+    if (!row || !Array.isArray(row.tags) || row.isAttack) {
+      return false;
+    }
+    const t = row.tags.map(function (x) {
+      return String(x || "").toLowerCase().trim();
+    });
+    return t.indexOf("support") !== -1 && t.indexOf("party") !== -1 && t.indexOf("attack") === -1;
+  }
+
+  // AI CHANGED: Never prebuff safety barriers — reserve list, safety.skillNames, scan/DB absorb+incoming on self-only support.
+  function isSupportSkillExcludedFromPrebuffSafetyPolicy(row, classKey) {
+    const root = Config.supportBuffs;
+    const pb = root && root.prebuff;
+    const reserveSubs = Array.isArray(pb && pb.reserveSafetyNameSubstrings) ? pb.reserveSafetyNameSubstrings : ["windy dome"];
+    if (skillNameMatchesAnySubstring(row.name, reserveSubs)) {
+      return true;
+    }
+    const cfgSafe = root && root.safety;
+    const explicit = Array.isArray(cfgSafe && cfgSafe.skillNames) ? cfgSafe.skillNames : [];
+    const rawName = typeof row.name === "string" ? row.name : "";
+    const nk =
+      typeof normalizeSkillName === "function"
+        ? String(normalizeSkillName(rawName)).toLowerCase()
+        : rawName.toLowerCase();
+    for (let e = 0; e < explicit.length; e++) {
+      const want = String(explicit[e] || "").trim();
+      if (!want) {
+        continue;
+      }
+      const wk =
+        typeof normalizeSkillName === "function"
+          ? String(normalizeSkillName(want)).toLowerCase()
+          : want.toLowerCase();
+      if (wk && (nk.indexOf(wk) !== -1 || wk.indexOf(nk) !== -1)) {
+        return true;
+      }
+    }
+    const scanDesc = getSupportBuffDescriptionForRow(row, classKey);
+    if (supportBuffDescriptionMatchesSafetyIncomingAbsorbHeuristic(scanDesc)) {
+      return true;
+    }
+    if (typeof getSkillMasterEntry === "function" && classKey) {
+      const ent = getSkillMasterEntry(classKey, row.name);
+      if (ent && typeof ent.description === "string" && supportBuffDescriptionMatchesSafetyIncomingAbsorbHeuristic(ent.description)) {
+        const tg = Array.isArray(ent.tags) ? ent.tags : [];
+        const sup = tg.indexOf("support") !== -1;
+        const atk = tg.indexOf("attack") !== -1;
+        const party = tg.indexOf("party") !== -1;
+        if (sup && !atk && !party) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  // AI CHANGED: Idle empty tile — drink MP pots when mana below idleMpPotionUseBelowPct (toward idleMpPotionTopOffTargetPct).
+  async function tryUseOutOfCombatIdleLowManaPotion(liveState) {
+    if (!(Config.combat && Config.combat.useCombatPotions !== false)) {
+      return { used: false, reason: "combat_potions_off" };
+    }
+    const rawFloor = Config.combat && Config.combat.idleMpPotionUseBelowPct;
+    if (!Number.isFinite(rawFloor) || rawFloor <= 0 || rawFloor > 0.95) {
+      return { used: false, reason: "idle_mp_floor_off" };
+    }
+    const floorPct = Math.max(0.02, Math.min(0.45, rawFloor));
+    const rawTarget = Config.combat && Config.combat.idleMpPotionTopOffTargetPct;
+    const targetPct = Number.isFinite(rawTarget)
+      ? Math.max(floorPct + 0.01, Math.min(1, rawTarget))
+      : Math.max(floorPct + 0.01, 0.5);
+    const enemyCount =
+      liveState && liveState.combat && Number.isFinite(liveState.combat.enemyCount)
+        ? liveState.combat.enemyCount
+        : null;
+    if (enemyCount !== 0) {
+      return { used: false, reason: "not_clear_tile" };
+    }
+    const mpPct =
+      liveState &&
+      liveState.player &&
+      liveState.player.mp &&
+      liveState.player.mp.valid &&
+      Number.isFinite(liveState.player.mp.pct)
+        ? liveState.player.mp.pct
+        : null;
+    if (!Number.isFinite(mpPct) || mpPct >= floorPct) {
+      return { used: false, reason: "mp_not_below_idle_floor", floorPct: floorPct, mpPct: mpPct };
+    }
+    const res = await tryUseOutOfCombatMpTopoff(liveState, targetPct);
+    if (res && res.used) {
+      Logger.log("COMBAT", "Idle MP potion (below floor)", {
+        floorPct: floorPct,
+        targetPct: targetPct,
+        mpPct: mpPct,
+        detail: res.detail || null
+      });
+    }
+    return res || { used: false, reason: "no_result" };
+  }
+
   function findActionBarSlotForSupportSkillNameCandidates(names) {
     const wantList = Array.isArray(names) ? names : [];
     const slots = Runtime.skills && Array.isArray(Runtime.skills.slots) ? Runtime.skills.slots : [];
@@ -1943,41 +2067,44 @@
     if (!root || root.enabled === false || !pb || pb.enabled === false) {
       return out;
     }
-    const reserveSubs = Array.isArray(pb.reserveSafetyNameSubstrings) ? pb.reserveSafetyNameSubstrings : ["windy dome"];
-    const treatAttackSubs = Array.isArray(pb.treatAsBuffDespiteAttackNameSubstrings)
-      ? pb.treatAsBuffDespiteAttackNameSubstrings
-      : ["enchanted arrow", "hunters tread", "hunter's tread"];
-    const forceLongSubs = Array.isArray(pb.forceLongDurationIfUnknownNameSubstrings)
-      ? pb.forceLongDurationIfUnknownNameSubstrings
-      : treatAttackSubs;
-    const longMin = Number.isFinite(pb.prebuffLongDurationMinSec)
-      ? pb.prebuffLongDurationMinSec
-      : Number.isFinite(root.longDurationMinSec)
-        ? root.longDurationMinSec
-        : 120;
-    const shortMax = Number.isFinite(pb.shortDurationMaxSec)
-      ? pb.shortDurationMaxSec
-      : Number.isFinite(root.shortPrebuffMaxSec)
-        ? root.shortPrebuffMaxSec
-        : 120;
-    const unknownLongSec = Number.isFinite(pb.unknownLongDefaultDurationSec) ? pb.unknownLongDefaultDurationSec : 900;
-    const classKey = typeof Config.skills.masterClassKey === "string" ? Config.skills.masterClassKey.trim() : "";
-    const slots = Runtime.skills && Array.isArray(Runtime.skills.slots) ? Runtime.skills.slots : [];
-    for (let i = 0; i < slots.length; i++) {
-      const row = slots[i];
-      if (!row || row.kind !== "skill") {
-        continue;
-      }
-      if (skillNameMatchesAnySubstring(row.name, reserveSubs)) {
-        continue;
-      }
-      const eligibleBuff = row.isSupport || skillNameMatchesAnySubstring(row.name, treatAttackSubs);
-      if (!eligibleBuff) {
-        continue;
-      }
-      if (row.isAttack && !skillNameMatchesAnySubstring(row.name, treatAttackSubs)) {
-        continue;
-      }
+      const treatAttackSubs = Array.isArray(pb.treatAsBuffDespiteAttackNameSubstrings)
+        ? pb.treatAsBuffDespiteAttackNameSubstrings
+        : ["enchanted arrow", "hunters tread", "hunter's tread"];
+      const forceLongSubs = Array.isArray(pb.forceLongDurationIfUnknownNameSubstrings)
+        ? pb.forceLongDurationIfUnknownNameSubstrings
+        : treatAttackSubs;
+      const longMin = Number.isFinite(pb.prebuffLongDurationMinSec)
+        ? pb.prebuffLongDurationMinSec
+        : Number.isFinite(root.longDurationMinSec)
+          ? root.longDurationMinSec
+          : 120;
+      const shortMax = Number.isFinite(pb.shortDurationMaxSec)
+        ? pb.shortDurationMaxSec
+        : Number.isFinite(root.shortPrebuffMaxSec)
+          ? root.shortPrebuffMaxSec
+          : 120;
+      const unknownLongSec = Number.isFinite(pb.unknownLongDefaultDurationSec) ? pb.unknownLongDefaultDurationSec : 900;
+      const classKey = typeof Config.skills.masterClassKey === "string" ? Config.skills.masterClassKey.trim() : "";
+      const slots = Runtime.skills && Array.isArray(Runtime.skills.slots) ? Runtime.skills.slots : [];
+      for (let i = 0; i < slots.length; i++) {
+        const row = slots[i];
+        if (!row || row.kind !== "skill") {
+          continue;
+        }
+        if (isSupportSkillExcludedFromPrebuffSafetyPolicy(row, classKey)) {
+          continue;
+        }
+        const masterEnt = typeof getSkillMasterEntry === "function" && classKey ? getSkillMasterEntry(classKey, row.name) : null;
+        const fromDbParty = skillMasterEntryIsPartySupportNonAttackFromDb(masterEnt);
+        const fromScanParty = skillRowScanTagsPartySupportNonAttack(row);
+        const eligibleBuff =
+          row.isSupport || skillNameMatchesAnySubstring(row.name, treatAttackSubs) || fromDbParty || fromScanParty;
+        if (!eligibleBuff) {
+          continue;
+        }
+        if (row.isAttack && !skillNameMatchesAnySubstring(row.name, treatAttackSubs)) {
+          continue;
+        }
       let dur = guessBuffDurationSecForSupportRow(row, classKey);
       if (!Number.isFinite(dur) && skillNameMatchesAnySubstring(row.name, forceLongSubs)) {
         dur = unknownLongSec;
@@ -2325,11 +2452,7 @@
         continue;
       }
       const desc = getSupportBuffDescriptionForRow(row, classKey);
-      const d = String(desc).toLowerCase();
-      const isSafetyLike =
-        (d.indexOf("absorb") !== -1 && d.indexOf("incoming") !== -1) ||
-        (d.indexOf("absorbs") !== -1 && d.indexOf("incoming") !== -1) ||
-        (d.indexOf("incoming damage") !== -1 && (d.indexOf("barrier") !== -1 || d.indexOf("shield") !== -1));
+      const isSafetyLike = supportBuffDescriptionMatchesSafetyIncomingAbsorbHeuristic(desc);
       if (isSafetyLike) {
         out.push({
           slot: typeof row.slot === "number" ? row.slot : i,
@@ -2655,6 +2778,7 @@
           detail: topoff.detail || null
         });
       }
+      await tryUseOutOfCombatIdleLowManaPotion(state);
       await sleep(pollMs, { bypassStop: true });
     }
     return { ok: false, reason: "stop_requested", thresholdPct: thresholdPct };
@@ -4579,6 +4703,7 @@
         if (shouldIdleBackoff) {
           // AI CHANGED: Renew long self-support buffs on empty tiles before heal gate / explore (OOC only).
           await maybeMaintainLongSelfSupportBuffsOutOfCombat(readBasicState());
+          await tryUseOutOfCombatIdleLowManaPotion(readBasicState());
           const modeIdle =
             Runtime.autoFarm && Runtime.autoFarm.combatMode ? String(Runtime.autoFarm.combatMode).toLowerCase() : "fast";
           if (modeIdle === "safe") {

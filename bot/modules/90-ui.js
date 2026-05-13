@@ -1981,6 +1981,14 @@
               Config.combat && Number.isFinite(Config.combat.safeModeExploreMinMpPct)
                 ? Config.combat.safeModeExploreMinMpPct
                 : null,
+            idleMpPotionUseBelowPct:
+              Config.combat && Number.isFinite(Config.combat.idleMpPotionUseBelowPct)
+                ? Config.combat.idleMpPotionUseBelowPct
+                : null,
+            idleMpPotionTopOffTargetPct:
+              Config.combat && Number.isFinite(Config.combat.idleMpPotionTopOffTargetPct)
+                ? Config.combat.idleMpPotionTopOffTargetPct
+                : null,
             safetySkillNames: sb && sb.safety ? sb.safety.skillNames : null,
             classifyCount: Array.isArray(cls) ? cls.length : null,
             safetyHeuristicCount: Array.isArray(safe) ? safe.length : null
