@@ -461,6 +461,8 @@
     const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
     const baseObserve = {
       includeFloatingTexts: false,
+      // AI CHANGED: Skip floating miss scan during default calibration — reduces DOM walks; pass observe:{ includeMissTexts:true } to enable.
+      includeMissTexts: false,
       mergeToEnemyDb: true,
       totalMs: 10000,
       // AI CHANGED: lethal-only fights (kill within window) still carry a real hp_drop — include in merge so TEST/calibration is not empty.
@@ -672,6 +674,16 @@
       Array.isArray(Config.combat.chargeSkillDynamicCandidateFractions)
         ? Config.combat.chargeSkillDynamicCandidateFractions
         : null;
+    const denseStep =
+      Config.combat && Number.isFinite(Config.combat.chargeSkillDynamicSearchStepFraction)
+        ? Config.combat.chargeSkillDynamicSearchStepFraction
+        : 0;
+    if (denseStep > 0 && denseStep < 1) {
+      for (let frac = denseStep; frac < 1; frac += denseStep) {
+        addFraction(frac, "chargeSkillDynamicSearchStepFraction");
+      }
+      addFraction(1, "chargeSkillDynamicSearchStepFraction.full");
+    }
     if (dynamicList) {
       for (let i = 0; i < dynamicList.length; i += 1) {
         addFraction(dynamicList[i], "chargeSkillDynamicCandidateFractions[" + i + "]");
@@ -686,6 +698,117 @@
     }
     rows.sort(function (a, b) { return a.fraction - b.fraction; });
     return rows;
+  }
+
+  function plannerReadLiveTargetHpSnapshot(liveState) {
+    const targetHp =
+      liveState &&
+      liveState.combat &&
+      liveState.combat.targetHp &&
+      liveState.combat.targetHp.valid
+        ? liveState.combat.targetHp
+        : null;
+    const cur = targetHp && Number.isFinite(targetHp.cur) && targetHp.cur > 0 ? targetHp.cur : null;
+    const max = targetHp && Number.isFinite(targetHp.max) && targetHp.max > 0 ? targetHp.max : null;
+    const pct = Number.isFinite(cur) && Number.isFinite(max) && max > 0 ? cur / max : null;
+    return {
+      cur: Number.isFinite(cur) ? +cur.toFixed(2) : null,
+      max: Number.isFinite(max) ? +max.toFixed(2) : null,
+      pct: Number.isFinite(pct) ? +pct.toFixed(4) : null
+    };
+  }
+
+  function plannerComputeExecuteCandidate(skillShape, actionSec, expectedBasicHit, liveState) {
+    const out = {
+      enabled: Config.planner && Config.planner.openerExecuteModeEnabled !== false,
+      actionSec: Number.isFinite(actionSec) ? +actionSec.toFixed(3) : 0,
+      targetHpCur: null,
+      targetHpMax: null,
+      targetHpPct: null,
+      lowTargetHpCap: null,
+      immediateDamage: skillShape && Number.isFinite(skillShape.immediateDamage) ? +skillShape.immediateDamage.toFixed(2) : 0,
+      eligibleWindow: false,
+      lethal: false,
+      killMargin: null,
+      reason: "disabled"
+    };
+    if (!out.enabled) {
+      return out;
+    }
+    const targetHp = plannerReadLiveTargetHpSnapshot(liveState);
+    out.targetHpCur = targetHp.cur;
+    out.targetHpMax = targetHp.max;
+    out.targetHpPct = targetHp.pct;
+    if (!Number.isFinite(targetHp.cur) || !(targetHp.cur > 0)) {
+      out.reason = "no_live_target_hp";
+      return out;
+    }
+    const executeWindowBasicHits =
+      Config.planner && Number.isFinite(Config.planner.openerExecuteLowTargetBasicHitWindow)
+        ? Math.max(0.5, Config.planner.openerExecuteLowTargetBasicHitWindow)
+        : 1.5;
+    const lowTargetHpCap =
+      Number.isFinite(expectedBasicHit) && expectedBasicHit > 0
+        ? expectedBasicHit * executeWindowBasicHits
+        : null;
+    out.lowTargetHpCap = Number.isFinite(lowTargetHpCap) ? +lowTargetHpCap.toFixed(2) : null;
+    if (!Number.isFinite(lowTargetHpCap) || !(lowTargetHpCap > 0)) {
+      out.reason = "no_basic_hit_estimate";
+      return out;
+    }
+    out.eligibleWindow = targetHp.cur <= lowTargetHpCap;
+    if (!out.eligibleWindow) {
+      out.reason = "target_not_in_execute_window";
+      return out;
+    }
+    if (!(out.immediateDamage > 0)) {
+      out.reason = "no_immediate_damage";
+      return out;
+    }
+    out.lethal = out.immediateDamage >= targetHp.cur;
+    out.killMargin = out.lethal ? +(out.immediateDamage - targetHp.cur).toFixed(2) : null;
+    out.reason = out.lethal ? "earliest_lethal_action" : "execute_window_not_lethal";
+    return out;
+  }
+
+  function plannerChooseExecuteCandidate(rows) {
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return null;
+    }
+    let best = null;
+    for (let i = 0; i < rows.length; i += 1) {
+      const row = rows[i];
+      const execute = row && row.execute ? row.execute : null;
+      if (!execute || !execute.enabled || !execute.eligibleWindow || !execute.lethal) {
+        continue;
+      }
+      if (!best) {
+        best = row;
+        continue;
+      }
+      const bestActionSec = best.execute && Number.isFinite(best.execute.actionSec) ? best.execute.actionSec : Number.POSITIVE_INFINITY;
+      const rowActionSec = Number.isFinite(execute.actionSec) ? execute.actionSec : Number.POSITIVE_INFINITY;
+      if (rowActionSec !== bestActionSec) {
+        if (rowActionSec < bestActionSec) {
+          best = row;
+        }
+        continue;
+      }
+      const bestMargin = best.execute && Number.isFinite(best.execute.killMargin) ? best.execute.killMargin : -Infinity;
+      const rowMargin = Number.isFinite(execute.killMargin) ? execute.killMargin : -Infinity;
+      if (rowMargin !== bestMargin) {
+        if (rowMargin > bestMargin) {
+          best = row;
+        }
+        continue;
+      }
+      const bestDamage = Number.isFinite(best.horizonDamage) ? best.horizonDamage : -Infinity;
+      const rowDamage = Number.isFinite(row.horizonDamage) ? row.horizonDamage : -Infinity;
+      if (rowDamage > bestDamage) {
+        best = row;
+      }
+    }
+    return best;
   }
 
   // AI CHANGED: Cooldown-aware opener forecast — long cooldowns extending far beyond the simulated horizon pay a mild opportunity tax scaled by basic DPS.
@@ -811,7 +934,21 @@
       }
     );
     const cooldownForecast = plannerComputeCooldownForecastPenalty(opts.slot || null, horizonSec, basicDps);
-    const totalDamage = releaseDamage + followUpAction.value - holdRiskPenalty - cooldownForecast.penalty;
+    const skillShape = {
+      totalDamage: +releaseDamageRaw.toFixed(2),
+      immediateDamage: +releaseDamageRaw.toFixed(2),
+      dotDamage: 0
+    };
+    const contextAdjustment = plannerComputeOpenerContextAdjustment(
+      opts.slot || null,
+      chargePlan.releaseSec,
+      skillShape,
+      basicDps,
+      expectedBasicHit,
+      liveState
+    );
+    const execute = plannerComputeExecuteCandidate(skillShape, chargePlan.releaseSec, expectedBasicHit, liveState);
+    const totalDamage = releaseDamage + followUpAction.value - holdRiskPenalty - cooldownForecast.penalty + contextAdjustment.total;
     return {
       horizonFit: horizonSec >= chargePlan.releaseSec,
       blockedSec: Math.min(horizonSec, chargePlan.releaseSec),
@@ -831,6 +968,9 @@
       enemyCountLive: enemyCountLive,
       playerHpPct: Number.isFinite(playerHpPct) ? +playerHpPct.toFixed(4) : null,
       targetHpCur: Number.isFinite(targetHpCur) ? +targetHpCur.toFixed(2) : null,
+      skillShape: skillShape,
+      contextAdjustment: contextAdjustment,
+      execute: execute,
       horizonDamage: +totalDamage.toFixed(2)
     };
   }
@@ -1007,14 +1147,16 @@
         scoredCandidates.push(Object.assign({}, candPlan, score, { candidateSource: cand.source }));
       }
       if (scoredCandidates.length > 0) {
-        scoredCandidates.sort(function (a, b) {
+        const executeBest = plannerChooseExecuteCandidate(scoredCandidates);
+        const orderedByTotal = scoredCandidates.slice().sort(function (a, b) {
           if (b.horizonDamage !== a.horizonDamage) {
             return b.horizonDamage - a.horizonDamage;
           }
           return a.releaseMs - b.releaseMs;
         });
-        const best = Object.assign({}, scoredCandidates[0]);
-        best.selectionMode = "dynamic_horizon_best_total";
+        const best = Object.assign({}, executeBest || orderedByTotal[0]);
+        best.selectionMode = executeBest ? "dynamic_execute_earliest_lethal" : "dynamic_horizon_best_total";
+        best.executeModeApplied = !!executeBest;
         best.candidates = scoredCandidates;
         best.scoringContext = {
           horizonSec: +horizonSec.toFixed(3),
@@ -1032,6 +1174,14 @@
           targetHpCur:
             liveState && liveState.combat && liveState.combat.targetHp && liveState.combat.targetHp.valid && Number.isFinite(liveState.combat.targetHp.cur)
               ? +liveState.combat.targetHp.cur.toFixed(2)
+              : null,
+          targetHpMax:
+            liveState && liveState.combat && liveState.combat.targetHp && liveState.combat.targetHp.valid && Number.isFinite(liveState.combat.targetHp.max)
+              ? +liveState.combat.targetHp.max.toFixed(2)
+              : null,
+          targetHpPct:
+            liveState && liveState.combat && liveState.combat.targetHp && liveState.combat.targetHp.valid && Number.isFinite(liveState.combat.targetHp.cur) && Number.isFinite(liveState.combat.targetHp.max) && liveState.combat.targetHp.max > 0
+              ? +(liveState.combat.targetHp.cur / liveState.combat.targetHp.max).toFixed(4)
               : null
         };
         return best;
@@ -1052,13 +1202,19 @@
     return fallbackPlan;
   }
 
-  // AI CHANGED: openerHorizonSim — rough skill damage over window from parsed effects (HP units, same scale as paper).
-  function plannerSkillPaperDamageInHorizon(slot, horizonSec, mobFactor, expectedBasicHit, prebuiltChargePlan) {
+  // AI CHANGED: openerHorizonSim — split skill paper damage into immediate vs delayed parts so live fight context can reward front-load / punish late-only value.
+  function plannerSummarizeSkillPaperDamageShape(slot, horizonSec, mobFactor, expectedBasicHit, prebuiltChargePlan) {
     if (!slot || !Array.isArray(slot.effects) || !(horizonSec > 0)) {
-      return 0;
+      return {
+        totalDamage: 0,
+        immediateDamage: 0,
+        dotDamage: 0
+      };
     }
     const mf = Number.isFinite(mobFactor) && mobFactor > 0 ? mobFactor : 1;
-    let add = 0;
+    let totalDamage = 0;
+    let immediateDamage = 0;
+    let dotDamage = 0;
     for (let i = 0; i < slot.effects.length; i += 1) {
       const e = slot.effects[i];
       if (!e || !e.type) {
@@ -1066,11 +1222,17 @@
       }
       if (e.type === "dot" && Number.isFinite(e.perSec)) {
         const dur = Number.isFinite(e.durationSec) ? e.durationSec : horizonSec;
-        add += e.perSec * Math.min(horizonSec, dur);
+        const add = e.perSec * Math.min(horizonSec, dur);
+        totalDamage += add;
+        dotDamage += add;
       } else if (e.type === "instant" && Number.isFinite(e.value)) {
-        add += e.value * mf;
+        const add = e.value * mf;
+        totalDamage += add;
+        immediateDamage += add;
       } else if (e.type === "basic_proc" && expectedBasicHit !== null && Number.isFinite(expectedBasicHit)) {
-        add += expectedBasicHit * mf;
+        const add = expectedBasicHit * mf;
+        totalDamage += add;
+        immediateDamage += add;
       } else if (e.type === "channel_gear" && expectedBasicHit !== null && Number.isFinite(expectedBasicHit)) {
         const chargePlan = prebuiltChargePlan || plannerBuildChargeReleasePlan(slot, { horizonSec: horizonSec, mobFactor: mf, expectedBasicHit: expectedBasicHit });
         const releaseSec =
@@ -1083,11 +1245,307 @@
             chargePlan && Number.isFinite(chargePlan.expectedBasePlusGearMultiplier)
               ? chargePlan.expectedBasePlusGearMultiplier
               : 1 + (Number.isFinite(e.gearDamagePercent) ? e.gearDamagePercent / 100 : 0);
-          add += basePart * mult;
+          const add = basePart * mult;
+          totalDamage += add;
+          immediateDamage += add;
         }
       }
     }
-    return add;
+    return {
+      totalDamage: totalDamage,
+      immediateDamage: immediateDamage,
+      dotDamage: dotDamage
+    };
+  }
+
+  // AI CHANGED: openerHorizonSim — rough skill damage over window from parsed effects (HP units, same scale as paper).
+  function plannerSkillPaperDamageInHorizon(slot, horizonSec, mobFactor, expectedBasicHit, prebuiltChargePlan) {
+    return plannerSummarizeSkillPaperDamageShape(slot, horizonSec, mobFactor, expectedBasicHit, prebuiltChargePlan).totalDamage;
+  }
+
+  // AI CHANGED: Live-fight danger model for generic opener scoring — reused so diagnostics can explain why long casts or control skills gained/lost value.
+  function plannerComputeOpenerDangerPressure(liveState) {
+    const enemyCountLive =
+      liveState && liveState.combat && typeof liveState.combat.enemyCount === "number"
+        ? Math.max(0, liveState.combat.enemyCount)
+        : 0;
+    const extraEnemies = Math.max(0, enemyCountLive - 1);
+    const playerHpPct =
+      liveState &&
+      liveState.player &&
+      liveState.player.hp &&
+      liveState.player.hp.valid &&
+      Number.isFinite(liveState.player.hp.pct)
+        ? liveState.player.hp.pct
+        : null;
+    const lowHpThresholdPct = Number.isFinite(Config.planner.openerContextLowHpThresholdPct)
+      ? Math.max(0.05, Math.min(1, Config.planner.openerContextLowHpThresholdPct))
+      : 0.65;
+    const lowHpPressureWeight = Number.isFinite(Config.planner.openerContextLowHpPressureWeight)
+      ? Math.max(0, Config.planner.openerContextLowHpPressureWeight)
+      : 1.25;
+    const lowHpPressure =
+      Number.isFinite(playerHpPct) && playerHpPct < lowHpThresholdPct
+        ? ((lowHpThresholdPct - playerHpPct) / lowHpThresholdPct) * lowHpPressureWeight
+        : 0;
+    return {
+      enemyCountLive: enemyCountLive,
+      extraEnemies: extraEnemies,
+      playerHpPct: playerHpPct,
+      lowHpThresholdPct: lowHpThresholdPct,
+      lowHpPressure: +lowHpPressure.toFixed(4),
+      totalPressure: +(extraEnemies + lowHpPressure).toFixed(4)
+    };
+  }
+
+  // AI CHANGED: Enemy-state-aware opener score nudges openers based on live danger, calm safe-setup windows, finisher urgency, and multi-target opportunity.
+  function plannerComputeOpenerContextAdjustment(slot, castBlockedSec, skillShape, basicDps, expectedBasicHit, liveState) {
+    const out = {
+      total: 0,
+      pressure: plannerComputeOpenerDangerPressure(liveState),
+      liveTargetHp: null,
+      liveTargetHpPct: null,
+      basicTtkSec: null,
+      immediateDamage: skillShape && Number.isFinite(skillShape.immediateDamage) ? +skillShape.immediateDamage.toFixed(2) : 0,
+      dotDamage: skillShape && Number.isFinite(skillShape.dotDamage) ? +skillShape.dotDamage.toFixed(2) : 0,
+      parts: []
+    };
+    if (Config.planner.openerContextAwareScoringEnabled === false || !(basicDps > 0)) {
+      return out;
+    }
+    const conception = plannerResolveSlotConception(slot);
+    const pressure = out.pressure;
+    const targetHpCur =
+      liveState &&
+      liveState.combat &&
+      liveState.combat.targetHp &&
+      liveState.combat.targetHp.valid &&
+      Number.isFinite(liveState.combat.targetHp.cur) &&
+      liveState.combat.targetHp.cur > 0
+        ? liveState.combat.targetHp.cur
+        : null;
+    const targetHpMax =
+      liveState &&
+      liveState.combat &&
+      liveState.combat.targetHp &&
+      liveState.combat.targetHp.valid &&
+      Number.isFinite(liveState.combat.targetHp.max) &&
+      liveState.combat.targetHp.max > 0
+        ? liveState.combat.targetHp.max
+        : null;
+    const targetHpPct =
+      Number.isFinite(targetHpCur) && Number.isFinite(targetHpMax) && targetHpMax > 0
+        ? targetHpCur / targetHpMax
+        : null;
+    out.liveTargetHp = Number.isFinite(targetHpCur) ? +targetHpCur.toFixed(2) : null;
+    out.liveTargetHpPct = Number.isFinite(targetHpPct) ? +targetHpPct.toFixed(4) : null;
+    const basicTtkSec = Number.isFinite(targetHpCur) ? targetHpCur / basicDps : null;
+    out.basicTtkSec = Number.isFinite(basicTtkSec) ? +basicTtkSec.toFixed(3) : null;
+    const castPressureCoeff = Number.isFinite(Config.planner.openerContextCastPressurePenaltyInBasicDps)
+      ? Math.max(0, Config.planner.openerContextCastPressurePenaltyInBasicDps)
+      : 0.12;
+    if (pressure.totalPressure > 0 && castBlockedSec > 0.35 && castPressureCoeff > 0) {
+      const penalty = castBlockedSec * basicDps * pressure.totalPressure * castPressureCoeff;
+      if (penalty > 0) {
+        out.total -= penalty;
+        out.parts.push({
+          type: "pressure_cast_penalty",
+          add: -+penalty.toFixed(2),
+          pressure: pressure.totalPressure,
+          castBlockedSec: +castBlockedSec.toFixed(3)
+        });
+      }
+    }
+    const controlCoeff = Number.isFinite(Config.planner.openerContextControlPressureBonusInBasicDps)
+      ? Math.max(0, Config.planner.openerContextControlPressureBonusInBasicDps)
+      : 0.18;
+    const controlFlags = conception && conception.flags ? conception.flags : null;
+    if (pressure.totalPressure > 0 && controlCoeff > 0 && controlFlags && (controlFlags.stun || controlFlags.slow)) {
+      const controlWeight = controlFlags.stun ? 1 : 0.55;
+      const bonus = basicDps * pressure.totalPressure * controlCoeff * controlWeight;
+      if (bonus > 0) {
+        out.total += bonus;
+        out.parts.push({
+          type: controlFlags.stun ? "pressure_control_bonus_stun" : "pressure_control_bonus_slow",
+          add: +bonus.toFixed(2),
+          pressure: pressure.totalPressure
+        });
+      }
+    }
+    const multiTargetCoeff = Number.isFinite(Config.planner.openerContextMultiTargetEnemyBonusInBasicDps)
+      ? Math.max(0, Config.planner.openerContextMultiTargetEnemyBonusInBasicDps)
+      : 0.1;
+    const tags = Array.isArray(slot && slot.tags) ? slot.tags.map((t) => String(t).toLowerCase()) : [];
+    const multiTargetSkill = tags.indexOf("close") >= 0 || tags.indexOf("party") >= 0;
+    if (pressure.extraEnemies > 0 && multiTargetSkill && multiTargetCoeff > 0) {
+      const bonus = pressure.extraEnemies * basicDps * multiTargetCoeff;
+      if (bonus > 0) {
+        out.total += bonus;
+        out.parts.push({
+          type: "multitarget_enemy_bonus",
+          add: +bonus.toFixed(2),
+          extraEnemies: pressure.extraEnemies
+        });
+      }
+    }
+    const immediateDamage = skillShape && Number.isFinite(skillShape.immediateDamage) ? skillShape.immediateDamage : 0;
+    const dotDamage = skillShape && Number.isFinite(skillShape.dotDamage) ? skillShape.dotDamage : 0;
+    const totalSkillDamage = Math.max(0, immediateDamage + dotDamage);
+    const frontloadShare = totalSkillDamage > 0 ? immediateDamage / totalSkillDamage : 0;
+    const dotShare = totalSkillDamage > 0 ? dotDamage / totalSkillDamage : 0;
+    const calmPressureMax = Number.isFinite(Config.planner.openerContextCalmPressureMax)
+      ? Math.max(0, Config.planner.openerContextCalmPressureMax)
+      : 0.2;
+    const calmTargetBasicHitWindow = Number.isFinite(Config.planner.openerContextCalmTargetBasicHitWindow)
+      ? Math.max(1, Config.planner.openerContextCalmTargetBasicHitWindow)
+      : 2.5;
+    const calmBurstImmediateRatio = Number.isFinite(Config.planner.openerContextCalmBurstImmediateBasicHitRatio)
+      ? Math.max(1, Config.planner.openerContextCalmBurstImmediateBasicHitRatio)
+      : 2.2;
+    const calmBurstCoeff = Number.isFinite(Config.planner.openerContextCalmBurstBonusInBasicDps)
+      ? Math.max(0, Config.planner.openerContextCalmBurstBonusInBasicDps)
+      : 0.16;
+    const calmTargetHpMin = Number.isFinite(expectedBasicHit) && expectedBasicHit > 0
+      ? expectedBasicHit * calmTargetBasicHitWindow
+      : null;
+    const calmImmediateMin = Number.isFinite(expectedBasicHit) && expectedBasicHit > 0
+      ? expectedBasicHit * calmBurstImmediateRatio
+      : null;
+    const chargeLike = !!plannerGetChargeSkillEffect(slot) || !!(controlFlags && controlFlags.channel);
+    if (
+      pressure.extraEnemies === 0 &&
+      calmBurstCoeff > 0 &&
+      Number.isFinite(targetHpCur) &&
+      Number.isFinite(calmTargetHpMin) &&
+      targetHpCur >= calmTargetHpMin &&
+      Number.isFinite(calmImmediateMin) &&
+      immediateDamage >= calmImmediateMin &&
+      (calmPressureMax <= 0 || pressure.totalPressure <= calmPressureMax)
+    ) {
+      const immediateToBasicHits = expectedBasicHit > 0 ? immediateDamage / expectedBasicHit : 0;
+      const targetToBasicHits = expectedBasicHit > 0 ? targetHpCur / expectedBasicHit : 0;
+      const calmFactor = calmPressureMax > 0 ? Math.max(0, 1 - (pressure.totalPressure / calmPressureMax)) : 1;
+      const burstWeight = Math.min(1.75, Math.max(0, immediateToBasicHits - calmBurstImmediateRatio));
+      const setupWeight = Math.min(1.25, Math.max(chargeLike ? 0.9 : 0.55, castBlockedSec > 0 ? 0.55 + (castBlockedSec / 2) : 0.55));
+      const targetRunwayWeight = Math.min(1.15, Math.max(1, targetToBasicHits / calmTargetBasicHitWindow));
+      const bonus = basicDps * calmBurstCoeff * calmFactor * burstWeight * setupWeight * targetRunwayWeight;
+      if (bonus > 0) {
+        out.total += bonus;
+        out.parts.push({
+          type: "calm_single_target_burst_bonus",
+          add: +bonus.toFixed(2),
+          pressure: pressure.totalPressure,
+          immediateToBasicHits: +immediateToBasicHits.toFixed(3),
+          targetToBasicHits: +targetToBasicHits.toFixed(3),
+          setupWeight: +setupWeight.toFixed(3),
+          chargeLike: chargeLike
+        });
+      }
+    }
+    // AI CHANGED: Fresh healthy targets should reward alpha/front-load more than generic 5s value and slightly discount delayed DoT payoff.
+    const freshTargetHpPctMin = Number.isFinite(Config.planner.openerContextFreshTargetHpPctMin)
+      ? Math.max(0.5, Math.min(1, Config.planner.openerContextFreshTargetHpPctMin))
+      : 0.85;
+    const freshTargetAlphaCoeff = Number.isFinite(Config.planner.openerContextFreshTargetAlphaBonusInBasicDps)
+      ? Math.max(0, Config.planner.openerContextFreshTargetAlphaBonusInBasicDps)
+      : 0.22;
+    const freshTargetDotPenaltyCoeff = Number.isFinite(Config.planner.openerContextFreshTargetDotPenaltyInBasicDps)
+      ? Math.max(0, Config.planner.openerContextFreshTargetDotPenaltyInBasicDps)
+      : 0.18;
+    const freshTargetWindow =
+      pressure.extraEnemies === 0 &&
+      Number.isFinite(targetHpPct) &&
+      targetHpPct >= freshTargetHpPctMin &&
+      (calmPressureMax <= 0 || pressure.totalPressure <= calmPressureMax);
+    if (freshTargetWindow) {
+      const freshness = Math.min(
+        1,
+        Math.max(0.35, (targetHpPct - freshTargetHpPctMin) / Math.max(0.05, 1 - freshTargetHpPctMin))
+      );
+      const immediateToBasicHits = expectedBasicHit > 0 ? immediateDamage / expectedBasicHit : 0;
+      const alphaWeight = Math.min(1.25, Math.max(0, immediateToBasicHits - 1.1));
+      const setupWeight = chargeLike ? 1.1 : Math.min(1, Math.max(0.65, 0.65 + (castBlockedSec * 0.35)));
+      if (freshTargetAlphaCoeff > 0 && alphaWeight > 0) {
+        const bonus = basicDps * freshTargetAlphaCoeff * freshness * alphaWeight * setupWeight * Math.max(0.65, frontloadShare);
+        if (bonus > 0) {
+          out.total += bonus;
+          out.parts.push({
+            type: "fresh_target_alpha_bonus",
+            add: +bonus.toFixed(2),
+            targetHpPct: +targetHpPct.toFixed(4),
+            immediateToBasicHits: +immediateToBasicHits.toFixed(3),
+            frontloadShare: +frontloadShare.toFixed(3),
+            chargeLike: chargeLike
+          });
+        }
+      }
+      if (freshTargetDotPenaltyCoeff > 0 && dotDamage > 0) {
+        const delayedWeight = Math.min(1, Math.max(0, (dotShare - 0.2) + Math.max(0, 0.7 - frontloadShare)));
+        if (delayedWeight > 0) {
+          const penalty = basicDps * freshTargetDotPenaltyCoeff * freshness * delayedWeight;
+          if (penalty > 0) {
+            out.total -= penalty;
+            out.parts.push({
+              type: "fresh_target_dot_penalty",
+              add: -+penalty.toFixed(2),
+              targetHpPct: +targetHpPct.toFixed(4),
+              dotShare: +dotShare.toFixed(3),
+              frontloadShare: +frontloadShare.toFixed(3)
+            });
+          }
+        }
+      }
+    }
+    const lowTargetBasicHitWindow = Number.isFinite(Config.planner.openerContextLowTargetBasicHitWindow)
+      ? Math.max(0.5, Config.planner.openerContextLowTargetBasicHitWindow)
+      : 1.5;
+    const finisherCoeff = Number.isFinite(Config.planner.openerContextFinisherBonusInBasicDps)
+      ? Math.max(0, Config.planner.openerContextFinisherBonusInBasicDps)
+      : 0.22;
+    const dotPenaltyCoeff = Number.isFinite(Config.planner.openerContextDotFinisherPenaltyInBasicDps)
+      ? Math.max(0, Config.planner.openerContextDotFinisherPenaltyInBasicDps)
+      : 0.12;
+    const lowTargetHpCap = Number.isFinite(expectedBasicHit) && expectedBasicHit > 0
+      ? expectedBasicHit * lowTargetBasicHitWindow
+      : null;
+    if (Number.isFinite(targetHpCur) && Number.isFinite(lowTargetHpCap) && lowTargetHpCap > 0 && targetHpCur <= lowTargetHpCap) {
+      const urgency = Math.max(0, 1 - (targetHpCur / lowTargetHpCap));
+      if (immediateDamage >= targetHpCur && finisherCoeff > 0 && Number.isFinite(basicTtkSec)) {
+        const savedSec = Math.max(0, basicTtkSec - Math.max(0, castBlockedSec));
+        const bonus = savedSec * basicDps * finisherCoeff;
+        if (bonus > 0) {
+          out.total += bonus;
+          out.parts.push({
+            type: "direct_finisher_bonus",
+            add: +bonus.toFixed(2),
+            savedSec: +savedSec.toFixed(3)
+          });
+        }
+      } else if (immediateDamage > 0 && finisherCoeff > 0) {
+        const bonus = basicDps * finisherCoeff * urgency;
+        if (bonus > 0) {
+          out.total += bonus;
+          out.parts.push({
+            type: "low_target_frontload_bonus",
+            add: +bonus.toFixed(2),
+            urgency: +urgency.toFixed(3)
+          });
+        }
+      }
+      if (dotDamage > immediateDamage && dotPenaltyCoeff > 0) {
+        const penalty = basicDps * dotPenaltyCoeff * Math.max(0.2, urgency);
+        if (penalty > 0) {
+          out.total -= penalty;
+          out.parts.push({
+            type: "low_target_dot_penalty",
+            add: -+penalty.toFixed(2),
+            urgency: +urgency.toFixed(3)
+          });
+        }
+      }
+    }
+    out.total = +out.total.toFixed(2);
+    return out;
   }
 
   // AI CHANGED: openerHorizonSim — closed-form: cast blocks basics for castTime, then basics rest; skill lump from effects.
@@ -1141,13 +1599,64 @@
       mpAvailable: mpAvailable
     });
     if (chargePlan && Number.isFinite(chargePlan.horizonDamage)) {
+      if (opts.withBreakdown) {
+        return {
+          totalDamage: +chargePlan.horizonDamage.toFixed(2),
+          skillPaper: Number.isFinite(chargePlan.releaseDamage) ? +chargePlan.releaseDamage.toFixed(2) : 0,
+          skillPaperRaw: Number.isFinite(chargePlan.releaseDamageRaw) ? +chargePlan.releaseDamageRaw.toFixed(2) : 0,
+          skillShape: chargePlan.skillShape
+            ? {
+                totalDamage: Number.isFinite(chargePlan.skillShape.totalDamage) ? +chargePlan.skillShape.totalDamage.toFixed(2) : 0,
+                immediateDamage: Number.isFinite(chargePlan.skillShape.immediateDamage) ? +chargePlan.skillShape.immediateDamage.toFixed(2) : 0,
+                dotDamage: Number.isFinite(chargePlan.skillShape.dotDamage) ? +chargePlan.skillShape.dotDamage.toFixed(2) : 0
+              }
+            : {
+                totalDamage: Number.isFinite(chargePlan.releaseDamageRaw) ? +chargePlan.releaseDamageRaw.toFixed(2) : 0,
+                immediateDamage: Number.isFinite(chargePlan.releaseDamageRaw) ? +chargePlan.releaseDamageRaw.toFixed(2) : 0,
+                dotDamage: 0
+              },
+          castBlockedSec: Number.isFinite(chargePlan.blockedSec) ? +chargePlan.blockedSec.toFixed(3) : +(Math.min(horizonSec, chargePlan.releaseSec || 0)).toFixed(3),
+          followUp: {
+            value: Number.isFinite(chargePlan.followUpActionValue) ? +chargePlan.followUpActionValue.toFixed(2) : 0,
+            mode: chargePlan.followUpActionMode || "basic_only",
+            slot: Number.isFinite(chargePlan.followUpActionSlot) ? chargePlan.followUpActionSlot : null
+          },
+          cooldownForecast: {
+            cooldownSec: Number.isFinite(chargePlan.cooldownSec) ? chargePlan.cooldownSec : null,
+            excessSec: Number.isFinite(chargePlan.cooldownExcessSec) ? chargePlan.cooldownExcessSec : null,
+            penalty: Number.isFinite(chargePlan.cooldownOpportunityPenalty) ? chargePlan.cooldownOpportunityPenalty : 0,
+            applied: Number.isFinite(chargePlan.cooldownOpportunityPenalty) ? chargePlan.cooldownOpportunityPenalty > 0 : false
+          },
+          contextAdjustment: chargePlan.contextAdjustment || {
+            total: 0,
+            pressure: plannerComputeOpenerDangerPressure(opts.liveState || null),
+            liveTargetHp: null,
+            basicTtkSec: null,
+            immediateDamage: Number.isFinite(chargePlan.releaseDamageRaw) ? +chargePlan.releaseDamageRaw.toFixed(2) : 0,
+            dotDamage: 0,
+            parts: []
+          },
+          execute: chargePlan.execute || plannerComputeExecuteCandidate(
+            {
+              totalDamage: Number.isFinite(chargePlan.releaseDamageRaw) ? +chargePlan.releaseDamageRaw.toFixed(2) : 0,
+              immediateDamage: Number.isFinite(chargePlan.releaseDamageRaw) ? +chargePlan.releaseDamageRaw.toFixed(2) : 0,
+              dotDamage: 0
+            },
+            Number.isFinite(chargePlan.releaseSec) ? chargePlan.releaseSec : 0,
+            expectedBasicHit,
+            opts.liveState || null
+          ),
+          chargePlan: chargePlan
+        };
+      }
       return chargePlan.horizonDamage;
     }
     const castBlocked =
       chargePlan && Number.isFinite(chargePlan.releaseSec) && chargePlan.releaseSec > 0
         ? Math.min(horizonSec, chargePlan.releaseSec)
         : (Number.isFinite(slot.castTimeSec) && slot.castTimeSec > 0 ? Math.min(horizonSec, slot.castTimeSec) : 0);
-    const skillPaperRaw = plannerSkillPaperDamageInHorizon(slot, horizonSec, mobFactor, expectedBasicHit, chargePlan);
+    const skillShape = plannerSummarizeSkillPaperDamageShape(slot, horizonSec, mobFactor, expectedBasicHit, chargePlan);
+    const skillPaperRaw = skillShape.totalDamage;
     const liveTargetHp =
       opts.liveState &&
       opts.liveState.combat &&
@@ -1178,7 +1687,35 @@
       }
     );
     const cooldownForecast = plannerComputeCooldownForecastPenalty(slot || opts.slot || null, horizonSec, basicDps);
-    return skillPaper + followUp.value - cooldownForecast.penalty;
+    const contextAdjustment = plannerComputeOpenerContextAdjustment(
+      slot,
+      castBlocked,
+      skillShape,
+      basicDps,
+      expectedBasicHit,
+      opts.liveState || null
+    );
+    const execute = plannerComputeExecuteCandidate(skillShape, castBlocked, expectedBasicHit, opts.liveState || null);
+    const totalDamage = skillPaper + followUp.value - cooldownForecast.penalty + contextAdjustment.total;
+    if (opts.withBreakdown) {
+      return {
+        totalDamage: +totalDamage.toFixed(2),
+        skillPaper: +skillPaper.toFixed(2),
+        skillPaperRaw: +skillPaperRaw.toFixed(2),
+        skillShape: {
+          totalDamage: +skillShape.totalDamage.toFixed(2),
+          immediateDamage: +skillShape.immediateDamage.toFixed(2),
+          dotDamage: +skillShape.dotDamage.toFixed(2)
+        },
+        castBlockedSec: +castBlocked.toFixed(3),
+        followUp: followUp,
+        cooldownForecast: cooldownForecast,
+        contextAdjustment: contextAdjustment,
+        execute: execute,
+        chargePlan: chargePlan
+      };
+    }
+    return totalDamage;
   }
 
   // AI CHANGED: Enemy-aware opener threshold tuning from calibration ratio.
@@ -1472,17 +2009,19 @@
         if (!plannerSkillHasDirectDamageForOpener(s)) {
           continue;
         }
-        const d = plannerOpenerHorizonSkillPlusBasics(s, horizonSec, key, {
+        const score = plannerOpenerHorizonSkillPlusBasics(s, horizonSec, key, {
           liveState: liveState,
+          withBreakdown: true,
           mpAvailable:
             liveState && liveState.player && liveState.player.mp && liveState.player.mp.valid && Number.isFinite(liveState.player.mp.cur)
               ? liveState.player.mp.cur
               : null
         });
+        const d = score && Number.isFinite(score.totalDamage) ? score.totalDamage : 0;
         const candMin = plannerResolveCandidateMinImprovementFraction(s, previewMinFrac, { defaultSource: previewMinFracSource });
         const candThreshold = baseline * (1 + candMin.minFrac);
         const cooldownForecast = plannerComputeCooldownForecastPenalty(s, horizonSec, plannerAdjustedBasicDps(paper && Number.isFinite(paper.dps) ? paper.dps : 0, previewMobFactor));
-        const chargePlan = plannerBuildChargeReleasePlan(s, {
+        const chargePlan = score && score.chargePlan ? score.chargePlan : plannerBuildChargeReleasePlan(s, {
           horizonSec: horizonSec,
           enemyKey: key,
           liveState: liveState,
@@ -1500,6 +2039,12 @@
           thresholdPct: +(candMin.minFrac * 100).toFixed(2),
           thresholdSource: candMin.source,
           passesThreshold: d > candThreshold,
+          contextAdjustment: score && score.contextAdjustment ? score.contextAdjustment.total : 0,
+          contextParts: score && score.contextAdjustment ? score.contextAdjustment.parts : [],
+          contextPressure: score && score.contextAdjustment ? score.contextAdjustment.pressure : null,
+          execute: score && score.execute ? score.execute : null,
+          immediateSkillDamage: score && score.skillShape ? score.skillShape.immediateDamage : null,
+          dotSkillDamage: score && score.skillShape ? score.skillShape.dotDamage : null,
           cooldownSec: cooldownForecast.cooldownSec,
           cooldownExcessSec: cooldownForecast.excessSec,
           cooldownOpportunityPenalty: cooldownForecast.penalty,
@@ -1643,7 +2188,9 @@
       ranked_progress: 0,
       ranked_no_progress: 0,
       ranked_alt_pick: 0,
-      basic_fallback_after_ranked: 0
+      basic_fallback_after_ranked: 0,
+      queued_action_armed: 0,
+      queued_action_fired: 0
     };
     pr.openerRuntime.lastEvent = null;
     pr.openerRuntime.lastAt = null;
@@ -1681,7 +2228,8 @@
     return null;
   }
 
-  function plannerPickForcedOpenerCandidate(slots, exclude, forcedReq, mpCur, reserve) {
+  function plannerPickForcedOpenerCandidate(slots, exclude, forcedReq, mpCur, reserve, userOpts) {
+    const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
     if (!forcedReq || !forcedReq.name) {
       return null;
     }
@@ -1743,6 +2291,20 @@
           forced: true,
           presentOnBar: true,
           reason: "no_direct_damage"
+        }
+      };
+    }
+    if (opts.disallowChargeSkills && typeof plannerGetChargeSkillEffect === "function" && plannerGetChargeSkillEffect(row)) {
+      return {
+        matched: null,
+        detail: {
+          requestedName: forcedReq.name,
+          matchedName: row.name || "",
+          slot: idx,
+          source: forcedReq.source,
+          forced: true,
+          presentOnBar: true,
+          reason: "charge_skill_disallowed"
         }
       };
     }
@@ -1826,6 +2388,122 @@
     };
   }
 
+  // AI CHANGED: Runtime queue v1 — resolve the next buffered non-charge/basic combat action from the planner's follow-up scoring.
+  function plannerBuildCombatQueueAction(userOpts) {
+    const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
+    if (Config.combat && Config.combat.combatQueueEnabled === false) {
+      return null;
+    }
+    const disallowChargeSkills = opts.disallowChargeSkills !== false;
+    const liveState = opts.liveState || readBasicState();
+    const followUpHint = opts.followUpHint && typeof opts.followUpHint === "object" ? opts.followUpHint : null;
+    let candidateMode = null;
+    let candidateSlot = null;
+    let candidateSource = null;
+    if (followUpHint) {
+      if (followUpHint.mode === "follow_up_skill" && Number.isFinite(followUpHint.slot)) {
+        candidateMode = "follow_up_skill";
+        candidateSlot = followUpHint.slot;
+        candidateSource = "follow_up_hint";
+      } else if (followUpHint.mode === "basic_only") {
+        candidateMode = "basic_only";
+        candidateSource = "follow_up_hint";
+      }
+    }
+    if (!candidateMode) {
+      const key = Runtime.enemy.lastFoughtKey || null;
+      const paper = estimatePaperBasicAttackDps();
+      const horizonMs = Number.isFinite(Config.planner && Config.planner.openerHorizonSimMs) ? Config.planner.openerHorizonSimMs : 5000;
+      const horizonCtx = plannerResolveEffectiveOpenerHorizon(Math.max(0.001, horizonMs / 1000), key, paper, liveState);
+      const horizonSec = horizonCtx && horizonCtx.effectiveHorizonSec > 0 ? horizonCtx.effectiveHorizonSec : Math.max(0.001, horizonMs / 1000);
+      const followUp = plannerBestFollowUpActionValue(
+        horizonSec,
+        key,
+        {
+          paper: paper,
+          basicDps: paper && Number.isFinite(paper.dps) ? paper.dps : 0,
+          expectedBasicHit: plannerExpectedBasicHitFromPaper(paper),
+          mobFactor: plannerMobCalibrationFactorForKey(key)
+        },
+        {
+          depth: 1,
+          excludeSlot: Number.isFinite(opts.afterSlot) ? opts.afterSlot : null,
+          mpAvailable: Number.isFinite(opts.mpAvailable)
+            ? opts.mpAvailable
+            : (
+                liveState &&
+                liveState.player &&
+                liveState.player.mp &&
+                liveState.player.mp.valid &&
+                Number.isFinite(liveState.player.mp.cur)
+                  ? liveState.player.mp.cur
+                  : null
+              )
+        }
+      );
+      if (followUp && followUp.mode === "follow_up_skill" && Number.isFinite(followUp.slot)) {
+        candidateMode = "follow_up_skill";
+        candidateSlot = followUp.slot;
+        candidateSource = "planner_best_follow_up";
+      } else {
+        candidateMode = "basic_only";
+        candidateSource = "planner_best_follow_up";
+      }
+    }
+    if (candidateMode === "follow_up_skill" && Number.isFinite(candidateSlot)) {
+      const slots = Runtime.skills && Array.isArray(Runtime.skills.slots) ? Runtime.skills.slots : [];
+      const row = slots[candidateSlot] || null;
+      if (!row || row.kind !== "skill" || !row.isAttack || !row.targetsEnemy || !plannerSkillHasDirectDamageForOpener(row)) {
+        return {
+          mode: "basic",
+          slot: null,
+          name: "Basic Attack",
+          source: candidateSource ? candidateSource + "_fallback_basic" : "fallback_basic"
+        };
+      }
+      if (Config.planner.skipOpenerWhenActionBarShowsCooldown !== false) {
+        if (typeof isActionBarSlotShowingCooldown === "function" && isActionBarSlotShowingCooldown(candidateSlot)) {
+          return {
+            mode: "basic",
+            slot: null,
+            name: "Basic Attack",
+            source: candidateSource ? candidateSource + "_cooldown_basic" : "cooldown_basic"
+          };
+        }
+      }
+      const manaCost = Number.isFinite(row.manaCost) ? row.manaCost : 0;
+      if (manaCost > 0 && Number.isFinite(opts.mpAvailable) && opts.mpAvailable < manaCost) {
+        return {
+          mode: "basic",
+          slot: null,
+          name: "Basic Attack",
+          source: candidateSource ? candidateSource + "_mp_basic" : "mp_basic"
+        };
+      }
+      if (disallowChargeSkills && typeof plannerGetChargeSkillEffect === "function" && plannerGetChargeSkillEffect(row)) {
+        return {
+          mode: "basic",
+          slot: null,
+          name: "Basic Attack",
+          source: candidateSource ? candidateSource + "_charge_downgrade_basic" : "charge_downgrade_basic",
+          downgradedFromSlot: candidateSlot
+        };
+      }
+      return {
+        mode: "skill",
+        slot: candidateSlot,
+        name: row.name || "",
+        source: candidateSource || "planner_best_follow_up"
+      };
+    }
+    return {
+      mode: "basic",
+      slot: null,
+      name: "Basic Attack",
+      source: candidateSource || "planner_basic_follow_up"
+    };
+  }
+
   // AI CHANGED: Phase C4 slice 8+12+15 — pick opener with optional horizonSim (paper damage window); else first feasible heuristic order.
   function plannerPickSkillOpeningPick(userOpts) {
     plannerApplyClassProfile();
@@ -1871,10 +2549,14 @@
     const reserve = Number.isFinite(Config.planner.skillMpReserve) ? Config.planner.skillMpReserve : 0;
     const st = readBasicState();
     const mpCur = st.player.mp && st.player.mp.valid ? st.player.mp.cur : null;
+    const disallowChargeSkills =
+      opts.disallowChargeSkills === true &&
+      !(opts.forceSkillName && typeof opts.forceSkillName === "string" && opts.forceSkillName.trim());
     const breakdown = {
       mp: 0,
       cooldown: 0,
       exclude: 0,
+      chargeGuard: 0,
       noDirectDamage: 0,
       notSkill: 0,
       notAttack: 0,
@@ -1909,6 +2591,10 @@
         breakdown.noDirectDamage += 1;
         continue;
       }
+      if (disallowChargeSkills && typeof plannerGetChargeSkillEffect === "function" && plannerGetChargeSkillEffect(s)) {
+        breakdown.chargeGuard += 1;
+        continue;
+      }
       const mc = Number.isFinite(s.manaCost) ? s.manaCost : 0;
       if (mc > 0) {
         if (mpCur === null) {
@@ -1936,6 +2622,12 @@
       }
       candidates.push({ idx: idx, record: s });
     }
+    if (disallowChargeSkills && breakdown.chargeGuard > 0) {
+      Logger.log("PLANNER", "Post-retarget no-charge guard filtered charge opener candidates", {
+        filteredChargeSkills: breakdown.chargeGuard,
+        excludedSlots: exclude.size
+      });
+    }
 
     if (candidates.length === 0) {
       pr.lastOpeningPickReason = "all_candidates_filtered";
@@ -1943,7 +2635,8 @@
         breakdown: breakdown,
         mpCur: mpCur,
         skillMpReserve: reserve,
-        excludedCount: exclude.size
+        excludedCount: exclude.size,
+        postRetargetNoChargeGuard: disallowChargeSkills
       };
       plannerMaybeLogOpeningPickFailure("all_candidates_filtered", pr.lastOpeningPickDetail);
       return null;
@@ -1951,18 +2644,58 @@
 
     const forcedReq = plannerBuildForcedOpenerRequest(opts);
     if (forcedReq) {
-      const forcedPick = plannerPickForcedOpenerCandidate(slots, exclude, forcedReq, mpCur, reserve);
+      const forcedPick = plannerPickForcedOpenerCandidate(slots, exclude, forcedReq, mpCur, reserve, {
+        disallowChargeSkills: disallowChargeSkills
+      });
       if (forcedPick && forcedPick.matched) {
+        const forcedPaper = estimatePaperBasicAttackDps();
+        const forcedMobFactor = plannerMobCalibrationFactorForKey(key);
+        const forcedExpectedBasicHit = plannerExpectedBasicHitFromPaper(forcedPaper);
+        const forcedChargePlan = plannerBuildChargeReleasePlan(forcedPick.matched.record, {
+          horizonSec: Number.isFinite(Config.planner && Config.planner.openerHorizonSimMs) ? (Config.planner.openerHorizonSimMs / 1000) : 5,
+          enemyKey: key,
+          liveState: st,
+          paper: forcedPaper,
+          basicDps: forcedPaper && Number.isFinite(forcedPaper.dps) ? forcedPaper.dps : null,
+          expectedBasicHit: forcedExpectedBasicHit,
+          mobFactor: forcedMobFactor,
+          mpAvailable: mpCur
+        });
+        const forcedQueuedAction = plannerBuildCombatQueueAction({
+          afterSlot: forcedPick.matched.idx,
+          liveState: st,
+          followUpHint: forcedChargePlan && Number.isFinite(forcedChargePlan.followUpActionValue)
+            ? {
+                value: forcedChargePlan.followUpActionValue,
+                mode: forcedChargePlan.followUpActionMode || "basic_only",
+                slot: Number.isFinite(forcedChargePlan.followUpActionSlot) ? forcedChargePlan.followUpActionSlot : null
+              }
+            : null,
+          mpAvailable: Number.isFinite(mpCur)
+            ? Math.max(0, mpCur - (Number.isFinite(forcedPick.matched.record.manaCost) ? forcedPick.matched.record.manaCost : 0))
+            : null,
+          disallowChargeSkills: true
+        });
         pr.lastOpeningPickReason = "forced_for_test";
-        pr.lastOpeningPickDetail = forcedPick.detail;
-        return { slot: forcedPick.matched.idx, record: forcedPick.matched.record };
+        pr.lastOpeningPickDetail = Object.assign({}, forcedPick.detail, {
+          chargeReleasePlan: forcedChargePlan,
+          queuedAction: forcedQueuedAction,
+          postRetargetNoChargeGuard: disallowChargeSkills
+        });
+        return {
+          slot: forcedPick.matched.idx,
+          record: forcedPick.matched.record,
+          chargeReleasePlan: forcedChargePlan,
+          queuedAction: forcedQueuedAction
+        };
       }
       if (forcedPick && forcedPick.detail) {
         pr.lastOpeningPickDetail = {
           forcedOpenerSkipped: forcedPick.detail,
           breakdown: breakdown,
           mpCur: mpCur,
-          skillMpReserve: reserve
+        skillMpReserve: reserve,
+        postRetargetNoChargeGuard: disallowChargeSkills
         };
       }
     }
@@ -2084,13 +2817,15 @@
       }
       for (let c = 0; c < horizonCandidates.length; c += 1) {
         const cand = horizonCandidates[c];
-        const d = plannerOpenerHorizonSkillPlusBasics(cand.record, horizonSec, key, {
+        const score = plannerOpenerHorizonSkillPlusBasics(cand.record, horizonSec, key, {
           liveState: st,
           paper: paper,
           mobFactor: horizonMobFactor,
           expectedBasicHit: expectedBasicHit,
+          withBreakdown: true,
           mpAvailable: mpCur
         });
+        const d = score && Number.isFinite(score.totalDamage) ? score.totalDamage : 0;
         const candMin = plannerResolveCandidateMinImprovementFraction(cand.record, minFrac, { defaultSource: minFracSource });
         const candThreshold = baselineTotal * (1 + candMin.minFrac);
         const cooldownForecast = plannerComputeCooldownForecastPenalty(cand.record, horizonSec, plannerAdjustedBasicDps(paper && Number.isFinite(paper.dps) ? paper.dps : 0, horizonMobFactor));
@@ -2102,9 +2837,17 @@
           threshold: +candThreshold.toFixed(2),
           thresholdPct: +(candMin.minFrac * 100).toFixed(2),
           thresholdSource: candMin.source,
+          contextAdjustment: score && score.contextAdjustment ? score.contextAdjustment.total : 0,
+          contextParts: score && score.contextAdjustment ? score.contextAdjustment.parts : [],
+          contextPressure: score && score.contextAdjustment ? score.contextAdjustment.pressure : null,
+          execute: score && score.execute ? score.execute : null,
+          followUp: score && score.followUp ? score.followUp : { value: 0, mode: "basic_only", slot: null },
+          immediateSkillDamage: score && score.skillShape ? score.skillShape.immediateDamage : null,
+          dotSkillDamage: score && score.skillShape ? score.skillShape.dotDamage : null,
           cooldownSec: cooldownForecast.cooldownSec,
           cooldownExcessSec: cooldownForecast.excessSec,
           cooldownOpportunityPenalty: cooldownForecast.penalty,
+          chargeReleasePlan: score && score.chargePlan ? score.chargePlan : null,
           passesThreshold: passesThreshold
         });
         if (passesThreshold && d > bestPassingDmg) {
@@ -2124,6 +2867,10 @@
       const bestPassingPair = bestPassingIdx !== null
         ? candidates.find(function (cand) { return cand && cand.idx === bestPassingIdx; }) || null
         : null;
+      const executeChoice = plannerChooseExecuteCandidate(scored);
+      const executePair = executeChoice && typeof executeChoice.slot === "number"
+        ? (candidates.find(function (cand) { return cand && cand.idx === executeChoice.slot; }) || null)
+        : null;
       pr.lastOpenerHorizonSim = {
         horizonMs: horizonCtx.effectiveHorizonMs,
         requestedHorizonMs: horizonCtx.requestedHorizonMs,
@@ -2137,23 +2884,33 @@
         bestPassingSlot: bestPassingIdx,
         bestPassingThresholdPct: bestPassingMin ? +(bestPassingMin.minFrac * 100).toFixed(2) : null,
         bestPassingThresholdSource: bestPassingMin ? bestPassingMin.source : null,
-        decisionMode: bestPassingIdx !== null ? "candidate_passed_own_threshold" : "basic_fallback_no_candidate_passed",
+        decisionMode: executeChoice
+          ? "explicit_execute_earliest_lethal"
+          : (bestPassingIdx !== null ? "candidate_passed_own_threshold" : "basic_fallback_no_candidate_passed"),
         ttkContext: horizonCtx,
         runtimeAggression: runtimeAggression,
+        executeChoice: executeChoice
+          ? {
+              slot: executeChoice.slot,
+              name: executeChoice.name,
+              actionSec: executeChoice.execute && Number.isFinite(executeChoice.execute.actionSec) ? executeChoice.execute.actionSec : null,
+              killMargin: executeChoice.execute && Number.isFinite(executeChoice.execute.killMargin) ? executeChoice.execute.killMargin : null,
+              targetHpCur: executeChoice.execute && Number.isFinite(executeChoice.execute.targetHpCur) ? executeChoice.execute.targetHpCur : null,
+              targetHpPct: executeChoice.execute && Number.isFinite(executeChoice.execute.targetHpPct) ? executeChoice.execute.targetHpPct : null,
+              lowTargetHpCap: executeChoice.execute && Number.isFinite(executeChoice.execute.lowTargetHpCap) ? executeChoice.execute.lowTargetHpCap : null
+            }
+          : null,
         scored: scored,
         rankMode: rank.rankMode || null,
         conceptionGate: conceptionGate
       };
+      pr.lastOpenerHorizonSim.postRetargetNoChargeGuard = disallowChargeSkills;
       if (Config.planner.openerHorizonLog) {
         Logger.log("PLANNER", "openerHorizonSim", pr.lastOpenerHorizonSim);
       }
-      if (bestPassingIdx !== null && bestPassingPair) {
+      if (executeChoice && executePair) {
         pr.lastOpeningPickReason = "picked";
-        const bestVsBaselinePct =
-          baselineTotal > 0 ? +(((bestPassingDmg / baselineTotal) - 1) * 100).toFixed(2) : null;
-        const thresholdPct = +(bestPassingMin.minFrac * 100).toFixed(2);
-        const pickedCooldownForecast = plannerComputeCooldownForecastPenalty(bestPassingPair.record, horizonSec, plannerAdjustedBasicDps(paper && Number.isFinite(paper.dps) ? paper.dps : 0, horizonMobFactor));
-        const pickedChargePlan = plannerBuildChargeReleasePlan(bestPassingPair.record, {
+        const executeChargePlan = executeChoice.chargeReleasePlan || plannerBuildChargeReleasePlan(executePair.record, {
           horizonSec: horizonSec,
           enemyKey: key,
           liveState: st,
@@ -2162,6 +2919,78 @@
           expectedBasicHit: expectedBasicHit,
           mobFactor: horizonMobFactor,
           mpAvailable: mpCur
+        });
+        const executeCooldownForecast = plannerComputeCooldownForecastPenalty(executePair.record, horizonSec, plannerAdjustedBasicDps(paper && Number.isFinite(paper.dps) ? paper.dps : 0, horizonMobFactor));
+        const executeQueuedAction = plannerBuildCombatQueueAction({
+          afterSlot: executePair.idx,
+          liveState: st,
+          followUpHint: executeChoice.followUp || null,
+          mpAvailable: Number.isFinite(mpCur)
+            ? Math.max(0, mpCur - (Number.isFinite(executePair.record.manaCost) ? executePair.record.manaCost : 0))
+            : null,
+          disallowChargeSkills: true
+        });
+        pr.lastOpeningPickDetail = {
+          slot: executePair.idx,
+          name: executePair.record.name || "",
+          chargeReleasePlan: executeChargePlan,
+          horizonSim: pr.lastOpenerHorizonSim,
+          bestSkillVsBaselinePct: baselineTotal > 0 ? +(((executeChoice.damage / baselineTotal) - 1) * 100).toFixed(2) : null,
+          thresholdPct: executeChoice.thresholdPct,
+          thresholdSource: executeChoice.thresholdSource,
+          minImprovementFraction: executeChoice.thresholdPct != null ? +(executeChoice.thresholdPct / 100).toFixed(4) : null,
+          contextAdjustment: {
+            total: executeChoice.contextAdjustment,
+            parts: executeChoice.contextParts,
+            pressure: executeChoice.contextPressure,
+            immediateSkillDamage: executeChoice.immediateSkillDamage,
+            dotSkillDamage: executeChoice.dotSkillDamage
+          },
+          executePolicy: executeChoice.execute,
+          runtimeAggression: runtimeAggression,
+          cooldownForecast: executeCooldownForecast,
+          queuedAction: executeQueuedAction,
+          postRetargetNoChargeGuard: disallowChargeSkills,
+          filteredOut: {
+            cooldown: breakdown.cooldown,
+            mpGate: breakdown.mp,
+            noDirectDamage: breakdown.noDirectDamage,
+            excluded: breakdown.exclude,
+            chargeGuard: breakdown.chargeGuard
+          }
+        };
+        return {
+          slot: executePair.idx,
+          record: executePair.record,
+          chargeReleasePlan: executeChargePlan,
+          queuedAction: executeQueuedAction
+        };
+      }
+      if (bestPassingIdx !== null && bestPassingPair) {
+        pr.lastOpeningPickReason = "picked";
+        const bestVsBaselinePct =
+          baselineTotal > 0 ? +(((bestPassingDmg / baselineTotal) - 1) * 100).toFixed(2) : null;
+        const thresholdPct = +(bestPassingMin.minFrac * 100).toFixed(2);
+        const pickedRow = scored.find(function (r) { return r && r.slot === bestPassingPair.idx; }) || null;
+        const pickedCooldownForecast = plannerComputeCooldownForecastPenalty(bestPassingPair.record, horizonSec, plannerAdjustedBasicDps(paper && Number.isFinite(paper.dps) ? paper.dps : 0, horizonMobFactor));
+        const pickedChargePlan = pickedRow && pickedRow.chargeReleasePlan ? pickedRow.chargeReleasePlan : plannerBuildChargeReleasePlan(bestPassingPair.record, {
+          horizonSec: horizonSec,
+          enemyKey: key,
+          liveState: st,
+          paper: paper,
+          basicDps: paper && Number.isFinite(paper.dps) ? paper.dps : null,
+          expectedBasicHit: expectedBasicHit,
+          mobFactor: horizonMobFactor,
+          mpAvailable: mpCur
+        });
+        const pickedQueuedAction = plannerBuildCombatQueueAction({
+          afterSlot: bestPassingPair.idx,
+          liveState: st,
+          followUpHint: pickedRow ? pickedRow.followUp : null,
+          mpAvailable: Number.isFinite(mpCur)
+            ? Math.max(0, mpCur - (Number.isFinite(bestPassingPair.record.manaCost) ? bestPassingPair.record.manaCost : 0))
+            : null,
+          disallowChargeSkills: true
         });
         pr.lastOpeningPickDetail = {
           slot: bestPassingPair.idx,
@@ -2172,16 +3001,34 @@
           thresholdPct: thresholdPct,
           thresholdSource: bestPassingMin.source,
           minImprovementFraction: bestPassingMin.minFrac,
+          contextAdjustment: pickedRow
+            ? {
+                total: pickedRow.contextAdjustment,
+                parts: pickedRow.contextParts,
+                pressure: pickedRow.contextPressure,
+                immediateSkillDamage: pickedRow.immediateSkillDamage,
+                dotSkillDamage: pickedRow.dotSkillDamage
+              }
+            : null,
+          executePolicy: pickedRow ? pickedRow.execute : null,
           runtimeAggression: runtimeAggression,
           cooldownForecast: pickedCooldownForecast,
+          queuedAction: pickedQueuedAction,
+          postRetargetNoChargeGuard: disallowChargeSkills,
           filteredOut: {
             cooldown: breakdown.cooldown,
             mpGate: breakdown.mp,
             noDirectDamage: breakdown.noDirectDamage,
-            excluded: breakdown.exclude
+            excluded: breakdown.exclude,
+            chargeGuard: breakdown.chargeGuard
           }
         };
-        return { slot: bestPassingPair.idx, record: bestPassingPair.record };
+        return {
+          slot: bestPassingPair.idx,
+          record: bestPassingPair.record,
+          chargeReleasePlan: pickedChargePlan,
+          queuedAction: pickedQueuedAction
+        };
       }
       const threshold = baselineTotal * (1 + bestMin.minFrac);
       if (bestIdx !== null && bestDmg > threshold) {
@@ -2199,8 +3046,9 @@
         const bestVsBaselinePct =
           baselineTotal > 0 ? +(((bestDmg / baselineTotal) - 1) * 100).toFixed(2) : null;
         const thresholdPct = +(bestMin.minFrac * 100).toFixed(2);
+        const pickedRow = scored.find(function (r) { return r && r.slot === pickedPair.idx; }) || null;
         const pickedCooldownForecast = plannerComputeCooldownForecastPenalty(pickedPair.record, horizonSec, plannerAdjustedBasicDps(paper && Number.isFinite(paper.dps) ? paper.dps : 0, horizonMobFactor));
-        const pickedChargePlan = plannerBuildChargeReleasePlan(pickedPair.record, {
+        const pickedChargePlan = pickedRow && pickedRow.chargeReleasePlan ? pickedRow.chargeReleasePlan : plannerBuildChargeReleasePlan(pickedPair.record, {
           horizonSec: horizonSec,
           enemyKey: key,
           liveState: st,
@@ -2209,6 +3057,15 @@
           expectedBasicHit: expectedBasicHit,
           mobFactor: horizonMobFactor,
           mpAvailable: mpCur
+        });
+        const pickedQueuedAction = plannerBuildCombatQueueAction({
+          afterSlot: pickedPair.idx,
+          liveState: st,
+          followUpHint: pickedRow ? pickedRow.followUp : null,
+          mpAvailable: Number.isFinite(mpCur)
+            ? Math.max(0, mpCur - (Number.isFinite(pickedPair.record.manaCost) ? pickedPair.record.manaCost : 0))
+            : null,
+          disallowChargeSkills: true
         });
         pr.lastOpeningPickDetail = {
           slot: pickedPair.idx,
@@ -2219,16 +3076,34 @@
           thresholdPct: thresholdPct,
           thresholdSource: bestMin.source,
           minImprovementFraction: bestMin.minFrac,
+          contextAdjustment: pickedRow
+            ? {
+                total: pickedRow.contextAdjustment,
+                parts: pickedRow.contextParts,
+                pressure: pickedRow.contextPressure,
+                immediateSkillDamage: pickedRow.immediateSkillDamage,
+                dotSkillDamage: pickedRow.dotSkillDamage
+              }
+            : null,
+          executePolicy: pickedRow ? pickedRow.execute : null,
           runtimeAggression: runtimeAggression,
           cooldownForecast: pickedCooldownForecast,
+          queuedAction: pickedQueuedAction,
+          postRetargetNoChargeGuard: disallowChargeSkills,
           filteredOut: {
             cooldown: breakdown.cooldown,
             mpGate: breakdown.mp,
             noDirectDamage: breakdown.noDirectDamage,
-            excluded: breakdown.exclude
+            excluded: breakdown.exclude,
+            chargeGuard: breakdown.chargeGuard
           }
         };
-        return { slot: pickedPair.idx, record: pickedPair.record };
+        return {
+          slot: pickedPair.idx,
+          record: pickedPair.record,
+          chargeReleasePlan: pickedChargePlan,
+          queuedAction: pickedQueuedAction
+        };
       }
       pr.lastOpeningPickReason = "horizon_prefers_basic";
       const bestRow = scored.find(function (r) { return r && r.slot === bestIdx; }) || null;
@@ -2255,6 +3130,14 @@
               slot: bestRow.slot,
               name: bestRow.name,
               damage: bestRow.damage,
+              contextAdjustment: {
+                total: bestRow.contextAdjustment,
+                parts: bestRow.contextParts,
+                pressure: bestRow.contextPressure,
+                immediateSkillDamage: bestRow.immediateSkillDamage,
+                dotSkillDamage: bestRow.dotSkillDamage
+              },
+              executePolicy: bestRow.execute,
               chargeReleasePlan: bestChargePlan,
               cooldownForecast: bestCooldownForecast
             }
@@ -2265,26 +3148,58 @@
         thresholdPct: thresholdPct,
         thresholdSource: bestMin.source,
         minImprovementFraction: bestMin.minFrac,
+        postRetargetNoChargeGuard: disallowChargeSkills,
+        contextAdjustment: bestRow
+          ? {
+              total: bestRow.contextAdjustment,
+              parts: bestRow.contextParts,
+              pressure: bestRow.contextPressure,
+              immediateSkillDamage: bestRow.immediateSkillDamage,
+              dotSkillDamage: bestRow.dotSkillDamage
+            }
+          : null,
+        executePolicy: bestRow ? bestRow.execute : null,
         runtimeAggression: runtimeAggression,
         filteredOut: {
           cooldown: breakdown.cooldown,
           mpGate: breakdown.mp,
           noDirectDamage: breakdown.noDirectDamage,
-          excluded: breakdown.exclude
+          excluded: breakdown.exclude,
+          chargeGuard: breakdown.chargeGuard
         }
       };
       return null;
     }
 
     const first = candidates[0];
+    const firstChargePlan = plannerBuildChargeReleasePlan(first.record, {
+      enemyKey: key,
+      liveState: st,
+      mpAvailable: mpCur
+    });
     pr.lastOpeningPickReason = "picked";
     pr.lastOpeningPickDetail = {
       slot: first.idx,
       name: first.record.name || "",
+      chargeReleasePlan: firstChargePlan,
+      queuedAction: plannerBuildCombatQueueAction({
+        afterSlot: first.idx,
+        liveState: st,
+        mpAvailable: Number.isFinite(mpCur)
+          ? Math.max(0, mpCur - (Number.isFinite(first.record.manaCost) ? first.record.manaCost : 0))
+          : null,
+        disallowChargeSkills: true
+      }),
       heuristicFallback: true,
-      note: useHorizon ? "horizonSim skipped (no paper DPS)" : "useOpenerHorizonSim off"
+      note: useHorizon ? "horizonSim skipped (no paper DPS)" : "useOpenerHorizonSim off",
+      postRetargetNoChargeGuard: disallowChargeSkills
     };
-    return { slot: first.idx, record: first.record };
+    return {
+      slot: first.idx,
+      record: first.record,
+      chargeReleasePlan: firstChargePlan,
+      queuedAction: pr.lastOpeningPickDetail.queuedAction || null
+    };
   }
 
   // AI CHANGED: Phase C4 slice 8 — pick action-bar index for opening attack, or null to use basic-only path.

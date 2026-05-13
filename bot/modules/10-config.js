@@ -480,7 +480,12 @@
       // Ignore |delta| larger than this fraction of previous max HP when attributing hp_drop (target swap / full heal).
       suspiciousHpJumpRatio: 0.55,
       // localStorage key for the last session summary (not full raw samples — keep small).
-      storageKey: "ligmarbot.damageObserve.v1"
+      storageKey: "ligmarbot.damageObserve.v1",
+      // AI CHANGED: Floating combat text that marks a miss — case-insensitive substring match on leaf text (extend per locale).
+      missTextSubstrings: ["miss", "промах"],
+      missScanMaxLeafLength: 28,
+      // AI CHANGED: When true (default), observeCombatDamage also scans for miss leaves unless opts.includeMissTexts === false.
+      includeMissTextsDefault: true
     },
     // AI CHANGED: Phase C0 -- skill scanner timings + storage key. Scanner opens each action-bar
     // slot with a long-press, parses the description popup, then dismisses via close button.

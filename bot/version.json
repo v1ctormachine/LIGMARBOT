@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.160",
-    "description":  "AUTO chat: smart newbie pair vs bank (50%, 40s gap)",
-    "builtAt":  "2026-05-13T10:29:46.0910520+03:00",
+    "version":  "0.3.161",
+    "description":  "damage observe: floating Miss scan + miss_text events + TEST",
+    "builtAt":  "2026-05-13T11:11:06.6303035+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.161",
+                        "description":  "damage observe: floating Miss scan + miss_text events + TEST",
+                        "date":  "2026-05-13T11:11:06.6303035+03:00"
+                    },
                     {
                         "version":  "0.3.160",
                         "description":  "AUTO chat: smart newbie pair vs bank (50%, 40s gap)",
@@ -247,11 +252,6 @@
                         "version":  "0.3.115",
                         "description":  "planner: natural Sniper Shot tuning",
                         "date":  "2026-05-11T20:02:25.4029862+03:00"
-                    },
-                    {
-                        "version":  "0.3.114",
-                        "description":  "Sniper Shot uses 75 percent release in normal combat policy",
-                        "date":  "2026-05-11T19:33:47.2529125+03:00"
                     }
                 ]
 }

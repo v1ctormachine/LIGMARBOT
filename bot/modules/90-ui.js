@@ -517,6 +517,7 @@
       auto_resume_after_refresh: "Auto-resume refresh",
       watchdog_surface: "Watchdog surface",
       chat_spammer_auto: "Chat spammer auto",
+      damage_observer_miss_scan: "Miss text scan",
       combat_sustain_policy: "Combat sustain",
       auto_farm_resume_policy: "Farm resume policy",
       auto_farm_reliability: "Combat reliability",
@@ -1261,6 +1262,42 @@
         );
       } catch (err) {
         addCheck("chat_spammer_auto", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      try {
+        const missPatternsOk =
+          !!(Config.damageObserver &&
+            Array.isArray(Config.damageObserver.missTextSubstrings) &&
+            Config.damageObserver.missTextSubstrings.some(function (s) {
+              return typeof s === "string" && s.trim().length > 0;
+            }));
+        let missScanCallable = false;
+        let missProbeCount = 0;
+        if (typeof scanFloatingMissNodes === "function") {
+          missScanCallable = true;
+          try {
+            const arr = scanFloatingMissNodes();
+            missProbeCount = Array.isArray(arr) ? arr.length : 0;
+          } catch (scanErr) {
+            missProbeCount = -1;
+            Logger.warn("TEST", "scanFloatingMissNodes threw", scanErr);
+          }
+        }
+        addCheck(
+          "damage_observer_miss_scan",
+          !!(missPatternsOk && missScanCallable && missProbeCount >= 0),
+          {
+            patterns: Config.damageObserver ? Config.damageObserver.missTextSubstrings : null,
+            leafMax:
+              Config.damageObserver && Number.isFinite(Config.damageObserver.missScanMaxLeafLength)
+                ? Config.damageObserver.missScanMaxLeafLength
+                : null,
+            visibleMissLeavesAtTest: missProbeCount
+          },
+          false
+        );
+      } catch (err) {
+        addCheck("damage_observer_miss_scan", false, { error: String(err && err.message ? err.message : err) }, false);
       }
 
       try {
