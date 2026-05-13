@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.176",
-    "description":  "Soak: STOP+COPY last 30 log lines, Logger ring buffer, TEST Logger ring check",
-    "builtAt":  "2026-05-13T13:49:01.7652840+03:00",
+    "version":  "0.3.177",
+    "description":  "Combat: charge release late wait + queue tick + per-opener queue arm",
+    "builtAt":  "2026-05-13T14:01:18.5465236+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.177",
+                        "description":  "Combat: charge release late wait + queue tick + per-opener queue arm",
+                        "date":  "2026-05-13T14:01:18.5465236+03:00"
+                    },
                     {
                         "version":  "0.3.176",
                         "description":  "Soak: STOP+COPY last 30 log lines, Logger ring buffer, TEST Logger ring check",
@@ -247,11 +252,6 @@
                         "version":  "0.3.131",
                         "description":  "skills: harden master name normalization",
                         "date":  "2026-05-11T22:53:09.3239070+03:00"
-                    },
-                    {
-                        "version":  "0.3.130",
-                        "description":  "skills: unmatched master DB diagnostics",
-                        "date":  "2026-05-11T22:47:42.2531329+03:00"
                     }
                 ]
 }

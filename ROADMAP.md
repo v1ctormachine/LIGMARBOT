@@ -17,6 +17,7 @@ Emergency **hotfix** (crash / wrong click): ship immediately, even if tiny.
 
 ## Done recently
 
+- **Charge cancel late-wait + queue tick fix (v0.3.177)** — **`chargeSkillReleaseLateProgressTimeoutMs`** second progress wait before alternate openers; per-opener queue arm for alternates; **`queueAdvanceTick`** when queue **active** (not gated on first opener non-charge).
 - **STOP + COPY LOGS + Logger ring (v0.3.176)** — **`15-logger.js`** buffers last **200** formatted lines; panel **STOP + COPY LOGS** stops auto-farm (if ON) and copies last **30** to clipboard (**`---LIGMARBOT_ISSUE_LOG_CLIP_…`**); **`ligmarBot.copyIssueReportLogs()`**; TEST soft **`Logger ring`**.
 - **Field validation snapshot in TEST export (v0.3.175)** — **`gameSnapshotEnd.fieldValidation`** bundles reliability / health / recovery / sustain / combat queue / chat spammer / last session / planner opener counters + **`ligmarBot.getFieldValidationSnapshot()`**; TEST adds soft **`Field validation`** check.
 - **Remove floating miss observer + DB miss merge (v0.3.174)** — no **`miss_text`** events, no **`scanFloatingMissNodes`**, no **`snapFloatingMissOnce`**, no **`includeMissTexts`** / **`missDiagnostics`**; **`mergeLastDamageObserveIntoEnemyDb`** requires **`hp_drop`** only; TEST drops **`Miss text scan`**; persisted damage summary **version 5**.

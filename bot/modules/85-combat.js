@@ -2577,21 +2577,33 @@
     if (open.skillSlot != null && settleRanked > 0) {
       await sleep(settleRanked);
     }
-    const isChargeOpening =
-      !!(
-        open &&
-        open.skillRecord &&
+    // AI CHANGED: Queue only for non-charge openers; alternate openers need their own gate (first pick can be charge while follow-up is not).
+    function combatQueueAllowedForOpenerPick(openerPick) {
+      if (!openerPick) {
+        return false;
+      }
+      if (opts && opts.allowCombatQueue === false) {
+        return false;
+      }
+      if (!Config.combat || Config.combat.combatQueueEnabled === false) {
+        return false;
+      }
+      if (openerPick.skillSlot == null) {
+        return true;
+      }
+      const sr = openerPick.skillRecord;
+      const isChargePick = !!(
+        sr &&
         typeof plannerGetChargeSkillEffect === "function" &&
-        plannerGetChargeSkillEffect(open.skillRecord)
+        plannerGetChargeSkillEffect(sr)
       );
-    const queueAllowed =
-      !(opts && opts.allowCombatQueue === false) &&
-      Config.combat &&
-      Config.combat.combatQueueEnabled !== false &&
-      !isChargeOpening;
+      return !isChargePick;
+    }
+    const queueAllowedOpen = combatQueueAllowedForOpenerPick(open);
     let queuedActionFired = false;
     const queueAdvanceTick = function () {
-      if (!queueAllowed || !getCombatQueueRuntime().active) {
+      // AI CHANGED: If queue was armed on an alternate non-charge opener, ticks must still run — do not gate on first opener's charge-only queueAllowed.
+      if (!getCombatQueueRuntime().active) {
         return;
       }
       const queueFire = fireCombatActionQueue({
@@ -2602,7 +2614,7 @@
         queuedActionFired = true;
       }
     };
-    if (queueAllowed && open && open.queuedAction) {
+    if (queueAllowedOpen && open && open.queuedAction) {
       const queuedState = armCombatActionQueue(open.queuedAction, {
         anchorMode: open.skillSlot != null ? "skill" : "basic",
         anchorSlot: open.skillSlot,
@@ -2650,6 +2662,39 @@
       if (Runtime.autoFarm.stopRequested) {
         Logger.log("LOOP", "attackUntilProgress: stop requested after charge-skill handling");
         return false;
+      }
+      // AI CHANGED: cancel_release often lands damage just after the aggressive 250ms window; without this we skipped straight to alternate openers (chaotic clicks). Optional second wait before ranked_alt_pick.
+      const chargePlanForLate = open && open.chargeReleasePlan ? open.chargeReleasePlan : null;
+      const lateStrat = chargePlanForLate && chargePlanForLate.strategy ? chargePlanForLate.strategy : "";
+      if (lateStrat === "cancel_release" || lateStrat === "full_charge") {
+        const lateRaw = Config.combat.chargeSkillReleaseLateProgressTimeoutMs;
+        const lateMs =
+          Number.isFinite(lateRaw) && lateRaw > 0 ? Math.min(lateRaw, fullTimeoutMs) : Math.min(3600, fullTimeoutMs);
+        Logger.log("LOOP", "Charge opener: no progress in fast verify window; extended wait before alternates", {
+          slot: open.skillSlot,
+          strategy: lateStrat,
+          extendedTimeoutMs: lateMs
+        });
+        const progressedLate = await waitForCondition(
+          "attack progress after charge release (extended)",
+          buildAttackProgressOrQueueAdvancePredicate(beforeState, { onQueueAdvance: queueAdvanceTick }),
+          { timeoutMs: lateMs, pollMs: pollMs }
+        );
+        if (progressedLate) {
+          plannerRecordOpenerRuntimeEvent("ranked_progress", {
+            slot: open.skillSlot,
+            stage: lateStrat === "full_charge" ? "after_full_charge_extended" : "after_charge_release_extended"
+          });
+          if (queuedActionFired) {
+            const queueSettleMs = Number.isFinite(Config.combat && Config.combat.combatQueuePostProgressSettleMs)
+              ? Math.max(0, Config.combat.combatQueuePostProgressSettleMs)
+              : 0;
+            if (queueSettleMs > 0) {
+              await sleep(queueSettleMs);
+            }
+          }
+          return true;
+        }
       }
     }
 
@@ -2867,7 +2912,8 @@
         attempt: alt + 1
       });
       plannerRecordOpenerRuntimeEvent("ranked_alt_pick", { slot: open2.skillSlot, attempt: alt + 1 });
-      if (queueAllowed && open2 && open2.queuedAction) {
+      const queueAllowedAlt = combatQueueAllowedForOpenerPick(open2);
+      if (queueAllowedAlt && open2 && open2.queuedAction) {
         armCombatActionQueue(open2.queuedAction, {
           anchorMode: "skill",
           anchorSlot: open2.skillSlot,
@@ -2917,7 +2963,11 @@
         Logger.warn("LOOP", "Basic attack click failed after skill opener");
         return false;
       }
-      if (queueAllowed && typeof plannerBuildCombatQueueAction === "function") {
+      const queueAllowedBasic =
+        !(opts && opts.allowCombatQueue === false) &&
+        Config.combat &&
+        Config.combat.combatQueueEnabled !== false;
+      if (queueAllowedBasic && typeof plannerBuildCombatQueueAction === "function") {
         const basicFallbackQueuedAction = plannerBuildCombatQueueAction({
           afterSlot: null,
           liveState: readBasicState(),

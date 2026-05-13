@@ -49,6 +49,8 @@
       chargeSkillReleaseMinHoldMs: 150,
       // AI CHANGED: Hotfix — keep charge release verify aggressive so the bot does not sit idle for ~2.2s after a whiffed/late release.
       chargeSkillReleaseProgressTimeoutMs: 250,
+      // AI CHANGED: After cancel_release misses the fast window above, wait longer before alternate opener — tiny dynamic releases + latency often apply HP slightly after 250ms (fixes chaotic double-tap).
+      chargeSkillReleaseLateProgressTimeoutMs: 3600,
       // AI CHANGED: Full-charge skills may auto-fire on the last frame; give the client a short pad before we judge progress/fallback.
       chargeSkillFullReleasePaddingMs: 180,
       // AI CHANGED: Hotfix — full-charge auto-fire also gets the same aggressive 250ms progress window before safe fallback continues.
