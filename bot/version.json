@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.164",
-    "description":  "TEST: self-test JSON export block + getLastTestExport for support handoff",
-    "builtAt":  "2026-05-13T11:42:31.5561134+03:00",
+    "version":  "0.3.165",
+    "description":  "TEST: open export in new tab + auto clipboard copy",
+    "builtAt":  "2026-05-13T11:48:16.0858673+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.165",
+                        "description":  "TEST: open export in new tab + auto clipboard copy",
+                        "date":  "2026-05-13T11:48:16.0858673+03:00"
+                    },
                     {
                         "version":  "0.3.164",
                         "description":  "TEST: self-test JSON export block + getLastTestExport for support handoff",
@@ -247,11 +252,6 @@
                         "version":  "0.3.119",
                         "description":  "planner: queue-aware opener scoring",
                         "date":  "2026-05-11T21:11:43.2918510+03:00"
-                    },
-                    {
-                        "version":  "0.3.118",
-                        "description":  "planner: context-aware dynamic charge",
-                        "date":  "2026-05-11T20:46:57.6429969+03:00"
                     }
                 ]
 }
