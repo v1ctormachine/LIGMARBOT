@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.174",
-    "description":  "Remove DOM miss scan, miss_text, snapFloatingMissOnce; merge DB on hp_drop only; summary v5",
-    "builtAt":  "2026-05-13T13:27:01.4319703+03:00",
+    "version":  "0.3.175",
+    "description":  "Field validation: gameSnapshotEnd.fieldValidation + getFieldValidationSnapshot + TEST check",
+    "builtAt":  "2026-05-13T13:39:27.2610495+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.175",
+                        "description":  "Field validation: gameSnapshotEnd.fieldValidation + getFieldValidationSnapshot + TEST check",
+                        "date":  "2026-05-13T13:39:27.2610495+03:00"
+                    },
                     {
                         "version":  "0.3.174",
                         "description":  "Remove DOM miss scan, miss_text, snapFloatingMissOnce; merge DB on hp_drop only; summary v5",
@@ -247,11 +252,6 @@
                         "version":  "0.3.129",
                         "description":  "planner: cooldown-aware opener forecast",
                         "date":  "2026-05-11T22:41:25.6894008+03:00"
-                    },
-                    {
-                        "version":  "0.3.128",
-                        "description":  "test: golden comparator payload",
-                        "date":  "2026-05-11T22:33:07.0259339+03:00"
                     }
                 ]
 }

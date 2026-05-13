@@ -521,6 +521,7 @@
       auto_farm_resume_policy: "Farm resume policy",
       auto_farm_reliability: "Combat reliability",
       auto_farm_session_summary: "Auto-farm session",
+      field_validation_snapshot: "Field validation",
       planner_ranked_openers: "Ranked opener",
       calibration_observe: "Calibration"
     };
@@ -722,6 +723,56 @@
     }
   }
 
+  // AI CHANGED: ROADMAP #2 — compact runtime slice for soak triage (TEST export `gameSnapshotEnd.fieldValidation`, console `ligmarBot.getFieldValidationSnapshot()`).
+  function buildFieldValidationSnapshotForTestExport() {
+    const af = Runtime && Runtime.autoFarm ? Runtime.autoFarm : null;
+    const out = {
+      farmRunning: !!(af && af.running),
+      cycleDelayMs:
+        Config && Config.farmLoop && Number.isFinite(Config.farmLoop.cycleDelayMs)
+          ? Config.farmLoop.cycleDelayMs
+          : null,
+      maxConsecutiveFailures:
+        Config && Config.farmLoop && Number.isFinite(Config.farmLoop.maxConsecutiveFailures)
+          ? Config.farmLoop.maxConsecutiveFailures
+          : null
+    };
+    if (af) {
+      out.reliability = af.reliability || null;
+      out.health = af.health || null;
+      out.recovery = af.recovery || null;
+      out.combatSustain = af.combatSustain || null;
+      if (af.combatQueue) {
+        out.combatQueue = {
+          active: af.combatQueue.active,
+          mode: af.combatQueue.mode,
+          slot: af.combatQueue.slot,
+          name: af.combatQueue.name,
+          postRetargetGuarded: af.combatQueue.postRetargetGuarded,
+          advanceCount: af.combatQueue.advanceCount,
+          clearReason: af.combatQueue.clearReason,
+          lastMatchedCastText: af.combatQueue.lastMatchedCastText
+        };
+      }
+      if (af.chatSpammer) {
+        out.chatSpammer = {
+          sends: af.chatSpammer.sends,
+          failures: af.chatSpammer.failures,
+          lastResult: af.chatSpammer.lastResult,
+          nextSendAt: af.chatSpammer.nextSendAt,
+          lastSendAt: af.chatSpammer.lastSendAt
+        };
+      }
+      out.lastSessionSummary = af.lastSessionSummary || null;
+    }
+    const pr = Runtime && Runtime.planner ? Runtime.planner : null;
+    if (pr && pr.openerRuntime && pr.openerRuntime.events) {
+      out.plannerOpenerEventTotals = Object.assign({}, pr.openerRuntime.events);
+    }
+    out.lastFoughtEnemyKey = Runtime && Runtime.enemy ? Runtime.enemy.lastFoughtKey || null : null;
+    return out;
+  }
+
   // AI CHANGED: End-of-bundle game/planner snapshot for offline analysis (best-effort).
   function buildGameSnapshotForTestExport() {
     const snap = {};
@@ -745,6 +796,11 @@
       }
     } catch (e3) {
       snap.plannerDiagnosticsError = String(e3 && e3.message ? e3.message : e3);
+    }
+    try {
+      snap.fieldValidation = buildFieldValidationSnapshotForTestExport();
+    } catch (e4) {
+      snap.fieldValidationError = String(e4 && e4.message ? e4.message : e4);
     }
     return snap;
   }
@@ -2651,6 +2707,20 @@
         addCheck("auto_farm_session_summary", true, { skipped: true, reason: "no_completed_session_yet" }, false);
       } else {
         addCheck("auto_farm_session_summary", true, afSession, false);
+      }
+
+      // AI CHANGED: ROADMAP #2 — ensure field-validation slice builds (mirrors `gameSnapshotEnd.fieldValidation` in export).
+      try {
+        const fv = buildFieldValidationSnapshotForTestExport();
+        const keys = fv && typeof fv === "object" ? Object.keys(fv) : [];
+        addCheck("field_validation_snapshot", keys.length > 0, { keys: keys, farmRunning: !!(fv && fv.farmRunning) }, false);
+      } catch (fvErr) {
+        addCheck(
+          "field_validation_snapshot",
+          false,
+          { error: String(fvErr && fvErr.message ? fvErr.message : fvErr) },
+          false
+        );
       }
 
       // AI CHANGED: Master skill DB smoke — auto-detect class from profile icon via applySkillMasterToSlots();

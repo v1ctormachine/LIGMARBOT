@@ -191,6 +191,13 @@
           json: Runtime.ui.lastTestExportJson
         };
       },
+      // AI CHANGED: ROADMAP #2 field validation — same slice as TEST export `gameSnapshotEnd.fieldValidation` (call anytime during soak).
+      getFieldValidationSnapshot: function () {
+        if (typeof buildFieldValidationSnapshotForTestExport !== "function") {
+          return { ok: false, reason: "not_available" };
+        }
+        return { ok: true, snapshot: buildFieldValidationSnapshotForTestExport() };
+      },
       // AI CHANGED: Phase C0 -- skill scanner public API. scanSkills() is the only "active" call;
       // the rest are getters / cache helpers for inspection and recovery.
       scanSkills: scanSkills,
