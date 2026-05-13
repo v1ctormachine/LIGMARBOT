@@ -17,6 +17,7 @@ Emergency **hotfix** (crash / wrong click): ship immediately, even if tiny.
 
 ## Done recently
 
+- **TEST calibration scans misses automatically (v0.3.170)** — panel/quick TEST **`quickCalibrationSession`** calls use **`includeMissTexts: true`**; **`quickCalibrationSession`** return adds **`missDiagnostics`** (**`missTextEventCount`**, merged row **`observeMissAgg`** / **`observeMissLast`**) for self-export. No console steps to exercise miss merge.
 - **Enemy DB miss_text merge (v0.3.169)** — **`mergeLastDamageObserveIntoEnemyDb()`** accumulates floating **`miss_text`** events into **`observeMissAgg`** / **`observeMissLast`** per **`makeEnemyDbKey`**; observe **`mergeToEnemyDb`** runs when **`hp_drop`** or **`miss_text`** present; **`observeCombatDamage`** skip error renamed accordingly; TEST calibration retries recognize **`skipped_no_hp_drops_or_miss_text`**.
 - **Skill master unique cross-class fallback (v0.3.168)** — **`applySkillMasterToSlots()`** falls back with **`tryResolveUniqueSkillMasterAcrossClasses()`** when the detected class list has no row but exactly one other class defines that normalized name; **`slot.master.resolvedVia`** is **`unique_cross_class`**; **`crossClassResolved`** + warn on ambiguous duplicates.
 - **TEST export: clone before prune (v0.3.167)** — **`cloneJsonSafeForTestExport()`** (JSON round-trip) runs before pruning so **`getPlannerOpeningPickDiagnostics()`** shared references are duplicated and keys like **`lastOpenerHorizonSim`** / **`runtimeAggression`** export as real objects instead of **`"[circular]"`**.

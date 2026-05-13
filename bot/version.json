@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.169",
-    "description":  "Enemy DB: merge miss_text counts per key + observe merge on misses",
-    "builtAt":  "2026-05-13T12:21:03.4043659+03:00",
+    "version":  "0.3.170",
+    "description":  "TEST: calibration observes miss floats + missDiagnostics export",
+    "builtAt":  "2026-05-13T12:25:59.3001156+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.170",
+                        "description":  "TEST: calibration observes miss floats + missDiagnostics export",
+                        "date":  "2026-05-13T12:25:59.3001156+03:00"
+                    },
                     {
                         "version":  "0.3.169",
                         "description":  "Enemy DB: merge miss_text counts per key + observe merge on misses",
@@ -247,11 +252,6 @@
                         "version":  "0.3.124",
                         "description":  "planner: one-way-safe enemy adaptation",
                         "date":  "2026-05-11T21:58:36.3877635+03:00"
-                    },
-                    {
-                        "version":  "0.3.123",
-                        "description":  "planner: enemy-calibrated basic baseline",
-                        "date":  "2026-05-11T21:40:50.6474562+03:00"
                     }
                 ]
 }

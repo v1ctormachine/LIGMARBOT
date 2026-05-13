@@ -2746,8 +2746,8 @@
           let calibrationRetryError = null;
           calibration = await quickCalibrationSession(
             isReleaseProfile || isPanelProfile
-              ? { observe: { totalMs: 15000 } }
-              : {}
+              ? { observe: { totalMs: 15000, includeMissTexts: true } }
+              : { observe: { includeMissTexts: true } }
           );
           const mergeSkippedNoDamageOrMiss =
             calibration &&
@@ -2767,7 +2767,9 @@
               await sleep(450, { bypassStop: true });
               clickBasicAttack();
               await sleep(1400, { bypassStop: true });
-              calibration = await quickCalibrationSession({ observe: { totalMs: 18000 } });
+              calibration = await quickCalibrationSession({
+                observe: { totalMs: 18000, includeMissTexts: true }
+              });
             } catch (retryErr) {
               calibrationRetryError = String(retryErr && retryErr.message ? retryErr.message : retryErr);
               Logger.warn("TEST", "release calibration retry failed", retryErr);
@@ -2789,7 +2791,9 @@
                 await sleep(520, { bypassStop: true });
               }
               await sleep(900, { bypassStop: true });
-              calibration = await quickCalibrationSession({ observe: { totalMs: 28000 } });
+              calibration = await quickCalibrationSession({
+                observe: { totalMs: 28000, includeMissTexts: true }
+              });
             } catch (retry2Err) {
               calibrationRetryError = String(retry2Err && retry2Err.message ? retry2Err.message : retry2Err);
               Logger.warn("TEST", "release calibration retry-2 failed", retry2Err);
