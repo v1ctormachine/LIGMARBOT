@@ -11,6 +11,21 @@
           resolve(false);
           return;
         }
+        if (Runtime.autoFarm.running && typeof evaluateAutoFarmHealth === "function" && typeof shouldAbortWaitForSessionRisk === "function") {
+          const healthSummary = evaluateAutoFarmHealth(readBasicState(), {
+            reason: label
+          });
+          if (shouldAbortWaitForSessionRisk(healthSummary)) {
+            Logger.warn("VERIFY", `${label} aborted (session risk)`, {
+              elapsedMs: Date.now() - start,
+              severity: healthSummary.severity,
+              reason: healthSummary.primaryReason,
+              recommendedAction: healthSummary.recommendedAction
+            });
+            resolve(false);
+            return;
+          }
+        }
         let passed = false;
         try {
           passed = !!predicate();
@@ -19,6 +34,9 @@
           passed = false;
         }
         if (passed) {
+          if (typeof noteAutoFarmActionVerified === "function") {
+            noteAutoFarmActionVerified(label, null, { whenMs: Date.now() });
+          }
           Logger.log("VERIFY", `${label} confirmed`, { elapsedMs: Date.now() - start });
           resolve(true);
           return;
@@ -129,10 +147,16 @@
   }
 
   // AI CHANGED: Kept helper for optional diagnostics; core loop no longer hard-blocks on this.
+  // AI CHANGED: Retarget fix — do not continue combat until target HP is real (> 0), not just a placeholder/appearing bar.
   async function waitForTargetAcquired() {
     return waitForCondition("target acquired", () => {
       const now = readBasicState();
-      return now.combat.targetHp && now.combat.targetHp.valid;
+      return !!(
+        now.combat.targetHp &&
+        now.combat.targetHp.valid &&
+        Number.isFinite(now.combat.targetHp.cur) &&
+        now.combat.targetHp.cur > 0
+      );
     });
   }
 
@@ -144,10 +168,77 @@
     }
     const verified = await waitForCondition("find-enemy effect", () => {
       const now = readBasicState();
-      // AI CHANGED: Verify only by target HP; enemy count may not change before first attack.
-      return !!(now.combat.targetHp && now.combat.targetHp.valid);
+      // AI CHANGED: Retarget fix — enemy-count may not change before first attack, so verify by a real target HP value (> 0), not just a valid shell bar.
+      return !!(
+        now.combat.targetHp &&
+        now.combat.targetHp.valid &&
+        Number.isFinite(now.combat.targetHp.cur) &&
+        now.combat.targetHp.cur > 0
+      );
     });
     return { ok: verified, clicked: true, verified: verified };
+  }
+
+  // AI CHANGED: Fast retarget via attackers popup after one kill in a multi-mob pull; falls back elsewhere if popup path is unavailable.
+  async function clickAttackersRetargetVerified() {
+    if (Config.combat && Config.combat.useAttackersPanelRetargetAfterKill === false) {
+      return { ok: false, clicked: false, verified: false, reason: "feature_off" };
+    }
+    let cards = typeof getVisibleAttackersPopupCards === "function" ? getVisibleAttackersPopupCards() : [];
+    let openedPopup = cards.length > 0;
+    let clickedButton = false;
+    if (cards.length <= 0) {
+      clickedButton = clickAttackersButton();
+      if (!clickedButton) {
+        return { ok: false, clicked: false, verified: false, reason: "button_click_failed" };
+      }
+      openedPopup = await waitForCondition("attackers popup open", () => {
+        const rows = typeof getVisibleAttackersPopupCards === "function" ? getVisibleAttackersPopupCards() : [];
+        return rows.length > 0;
+      }, { timeoutMs: 1200, pollMs: 80 });
+      if (!openedPopup) {
+        return { ok: false, clicked: true, verified: false, reason: "popup_not_open" };
+      }
+      const settleMs = Number.isFinite(Config.combat && Config.combat.attackersRetargetSettleMs)
+        ? Math.max(0, Config.combat.attackersRetargetSettleMs)
+        : 0;
+      if (settleMs > 0) {
+        await sleep(settleMs, { bypassStop: true });
+      }
+      cards = typeof getVisibleAttackersPopupCards === "function" ? getVisibleAttackersPopupCards() : [];
+    }
+    if (cards.length <= 0) {
+      return { ok: false, clicked: clickedButton, verified: false, reason: "no_visible_cards" };
+    }
+    const firstCard = cards[0];
+    const nameNode = firstCard.querySelector(Config.selectors.attackersPopupCardName);
+    const targetName = nameNode ? (nameNode.textContent || "").trim() : "";
+    const clickedCard = clickAttackersPopupCard(firstCard, targetName ? `attackers-card-${targetName}` : "attackers-card");
+    if (!clickedCard) {
+      return {
+        ok: false,
+        clicked: true,
+        verified: false,
+        reason: "card_click_failed",
+        targetName: targetName || null,
+        candidateCount: cards.length
+      };
+    }
+    const settleAfterClickMs = Number.isFinite(Config.combat && Config.combat.attackersRetargetSettleMs)
+      ? Math.max(0, Config.combat.attackersRetargetSettleMs)
+      : 0;
+    if (settleAfterClickMs > 0) {
+      await sleep(settleAfterClickMs, { bypassStop: true });
+    }
+    const verified = await waitForTargetAcquired();
+    return {
+      ok: verified,
+      clicked: true,
+      verified: verified,
+      via: "attackers_popup",
+      targetName: targetName || null,
+      candidateCount: cards.length
+    };
   }
 
   // AI CHANGED: Added click+verify helper for loot/activate flow.
@@ -204,16 +295,32 @@
 
   // AI CHANGED: Added center-map verification wrapper for reliable map recentering.
   async function clickCenterMapVerified() {
-    const clicked = clickCenterMap();
-    if (!clicked) {
-      return { ok: false, clicked: false, verified: false, reason: "click_failed" };
+    const attempts = Number.isFinite(Config.recovery && Config.recovery.centerMapRetryCount)
+      ? Math.max(1, Config.recovery.centerMapRetryCount)
+      : 2;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      const clicked = clickCenterMap();
+      if (!clicked) {
+        if (attempt >= attempts - 1) {
+          return { ok: false, clicked: false, verified: false, reason: "click_failed", attempts: attempt + 1 };
+        }
+        await sleep(180, { bypassStop: true });
+        continue;
+      }
+      const verified = await waitForCondition("center-map effect", () => {
+        const button = document.querySelector(Config.selectors.centerMapButton);
+        // Center action has no obvious state field, so confirmation is "control remains available and visible after click".
+        return !!button && isElementVisible(button);
+      }, { timeoutMs: 1200, pollMs: 120 });
+      if (verified) {
+        return { ok: true, clicked: true, verified: true, attempts: attempt + 1 };
+      }
+      if (attempt < attempts - 1 && typeof closeTransientUiForRecovery === "function") {
+        await closeTransientUiForRecovery();
+      }
+      await sleep(180, { bypassStop: true });
     }
-    const verified = await waitForCondition("center-map effect", () => {
-      const button = document.querySelector(Config.selectors.centerMapButton);
-      // Center action has no obvious state field, so confirmation is "control remains available and visible after click".
-      return !!button && isElementVisible(button);
-    }, { timeoutMs: 1200, pollMs: 120 });
-    return { ok: verified, clicked: true, verified: verified };
+    return { ok: false, clicked: true, verified: false, reason: "verify_failed", attempts: attempts };
   }
 
   // AI CHANGED: Added map-open helper that retries toggle and confirms center control is available.
@@ -226,21 +333,69 @@
       Logger.log("MAP", "Map already open");
       return { ok: true, action: "already_open" };
     }
+    const attempts = Number.isFinite(Config.recovery && Config.recovery.mapOpenRetryCount)
+      ? Math.max(1, Config.recovery.mapOpenRetryCount)
+      : 3;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      const toggled = clickMapToggle();
+      if (!toggled) {
+        if (attempt >= attempts - 1) {
+          return { ok: false, action: "toggle_failed", attempts: attempt + 1 };
+        }
+        if (typeof closeTransientUiForRecovery === "function") {
+          await closeTransientUiForRecovery();
+        }
+        await sleep(220, { bypassStop: true });
+        continue;
+      }
+      const opened = await waitForCondition("map open", () => {
+        const centerButton = document.querySelector(Config.selectors.centerMapButton);
+        return !!centerButton && isElementVisible(centerButton);
+      }, { timeoutMs: 1800, pollMs: 120 });
+      if (opened) {
+        Logger.log("MAP", "Map opened");
+        return { ok: true, action: "opened", attempts: attempt + 1 };
+      }
+      Logger.warn("MAP", "Map open verification failed", {
+        attempt: attempt + 1,
+        maxAttempts: attempts
+      });
+      if (typeof closeTransientUiForRecovery === "function") {
+        await closeTransientUiForRecovery();
+      }
+      await sleep(220, { bypassStop: true });
+    }
+    return { ok: false, action: "open_verify_failed", attempts: attempts };
+  }
 
-    const toggled = clickMapToggle();
-    if (!toggled) {
+  // AI CHANGED: Post find-enemy — dismiss map overlay for battle view; skip when map UI not open or feature off.
+  async function closeMapIfOpenAfterFindEnemy() {
+    if (Config.combat && Config.combat.closeMapAfterFindEnemy === false) {
+      return { ok: true, skipped: true, reason: "feature_off" };
+    }
+    const centerButton = document.querySelector(Config.selectors.centerMapButton);
+    if (!centerButton || !isElementVisible(centerButton)) {
+      Logger.log("MAP", "closeMapIfOpenAfterFindEnemy: map not open (center control hidden)");
+      return { ok: true, action: "already_closed" };
+    }
+    if (!clickMapToggle()) {
+      Logger.warn("MAP", "closeMapIfOpenAfterFindEnemy: map toggle click failed");
       return { ok: false, action: "toggle_failed" };
     }
-
-    const opened = await waitForCondition("map open", () => {
-      const centerButton = document.querySelector(Config.selectors.centerMapButton);
-      return !!centerButton && isElementVisible(centerButton);
+    const closed = await waitForCondition("map closed after find-enemy", () => {
+      const btn = document.querySelector(Config.selectors.centerMapButton);
+      return !btn || !isElementVisible(btn);
     }, { timeoutMs: 1800, pollMs: 120 });
-
-    if (!opened) {
-      Logger.warn("MAP", "Map open verification failed");
-      return { ok: false, action: "open_verify_failed" };
+    const settleMs = Number.isFinite(Config.combat && Config.combat.closeMapAfterFindEnemySettleMs)
+      ? Math.max(0, Math.round(Config.combat.closeMapAfterFindEnemySettleMs))
+      : 0;
+    if (closed && settleMs > 0) {
+      await sleep(settleMs, { bypassStop: true });
     }
-    Logger.log("MAP", "Map opened");
-    return { ok: true, action: "opened" };
+    if (!closed) {
+      Logger.warn("MAP", "closeMapIfOpenAfterFindEnemy: center control still visible after toggle");
+    } else {
+      Logger.log("MAP", "Map closed after find-enemy");
+    }
+    return { ok: closed, action: closed ? "closed" : "close_verify_failed" };
   }

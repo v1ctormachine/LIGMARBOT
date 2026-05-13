@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.170",
-    "description":  "TEST: calibration observes miss floats + missDiagnostics export",
-    "builtAt":  "2026-05-13T12:25:59.3001156+03:00",
+    "version":  "0.3.171",
+    "description":  "Combat: close map after verified find-enemy (configurable)",
+    "builtAt":  "2026-05-13T12:49:38.7742491+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.171",
+                        "description":  "Combat: close map after verified find-enemy (configurable)",
+                        "date":  "2026-05-13T12:49:38.7742491+03:00"
+                    },
                     {
                         "version":  "0.3.170",
                         "description":  "TEST: calibration observes miss floats + missDiagnostics export",
@@ -247,11 +252,6 @@
                         "version":  "0.3.125",
                         "description":  "test: cooldown-aware natural sniper probe",
                         "date":  "2026-05-11T22:10:04.0939446+03:00"
-                    },
-                    {
-                        "version":  "0.3.124",
-                        "description":  "planner: one-way-safe enemy adaptation",
-                        "date":  "2026-05-11T21:58:36.3877635+03:00"
                     }
                 ]
 }

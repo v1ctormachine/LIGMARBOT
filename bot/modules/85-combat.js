@@ -3081,6 +3081,9 @@
         continue;
       }
 
+      // AI CHANGED: Map was opened for prep/explore — close overlay after successful find-enemy for battle view.
+      await closeMapIfOpenAfterFindEnemy();
+
       // AI CHANGED: Do not hard-require target HP acquisition; enemyCount-based combat is more reliable.
       const acquired = await waitForTargetAcquired();
       if (!acquired) {
@@ -3266,6 +3269,10 @@
             }
             Logger.warn("LOOP", "Re-find-enemy after burst failed", refindOk);
             break;
+          }
+          // AI CHANGED: Re-find via find-enemy only — attackers-popup path does not open map for find.
+          if (refindOk.via !== "attackers_popup") {
+            await closeMapIfOpenAfterFindEnemy();
           }
           if (!refindOk || refindOk.via !== "attackers_popup") {
             const reAcquired = await waitForTargetAcquired();

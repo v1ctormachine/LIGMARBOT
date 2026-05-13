@@ -114,7 +114,10 @@
       combatPotionSettleMs: 120,
       attackProgressPollMs: 140,
       // AI CHANGED: Phase C4 slice 9 — after each successful find-enemy, keep attacking until clear/stuck (bounded).
-      maxCombatAttackBurstsPerFind: 24
+      maxCombatAttackBurstsPerFind: 24,
+      // AI CHANGED: After verified find-enemy (target HP > 0), close map overlay — loot follow-up still calls ensureMapOpen().
+      closeMapAfterFindEnemy: true,
+      closeMapAfterFindEnemySettleMs: 120
     },
     chat: {
       // AI CHANGED: AUTO ON mode — periodically send one random local promocode line when the loop is at a safe boundary.
