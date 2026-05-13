@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.204",
-    "description":  "quick TEST: disable charge-cancel UI taps for bundle scope",
-    "builtAt":  "2026-05-13T21:50:53.0036652+03:00",
+    "version":  "0.3.205",
+    "description":  "charge cancel: require cast bar skill name + cancel hint before tap",
+    "builtAt":  "2026-05-13T22:22:21.2309606+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.205",
+                        "description":  "charge cancel: require cast bar skill name + cancel hint before tap",
+                        "date":  "2026-05-13T22:22:21.2309606+03:00"
+                    },
                     {
                         "version":  "0.3.204",
                         "description":  "quick TEST: disable charge-cancel UI taps for bundle scope",
@@ -247,11 +252,6 @@
                         "version":  "0.3.156",
                         "description":  "night resilience watchdog and auto refresh resume",
                         "date":  "2026-05-13T00:24:58.7091300+03:00"
-                    },
-                    {
-                        "version":  "0.3.155",
-                        "description":  "AUTO local chat spammer in AUTO ON",
-                        "date":  "2026-05-12T23:56:47.0668534+03:00"
                     }
                 ]
 }

@@ -2553,19 +2553,29 @@
         ? Math.min(cancelReleaseTimeoutRaw, fullTimeoutMs)
         : Math.min(2200, fullTimeoutMs);
     if (chargePlan.strategy === "cancel_release") {
-      if (isChargingSkillCancelHintVisible()) {
+      // AI CHANGED: Log after successful cancel click; distinguish hint-missing vs cast-bar gate / map-gap failure.
+      const expectedN = open.skillRecord && open.skillRecord.name ? String(open.skillRecord.name) : "";
+      const released = clickChargingSkillCancelUi({ expectedSkillName: expectedN });
+      if (released) {
         Logger.log("LOOP", "Charge skill release via cancel UI", {
           slot: open.skillSlot,
           releaseMs: chargePlan.releaseMs,
           releaseFraction: chargePlan.releaseFraction
         });
-        clickChargingSkillCancelUi();
         if (settleRanked > 0) {
           await sleep(settleRanked);
         }
         if (Runtime.autoFarm.stopRequested) {
           return { handled: true, progressed: false };
         }
+      } else if (isChargingSkillCancelHintVisible()) {
+        Logger.warn("LOOP", "Charge release: cancel UI not fired (cast bar name gate, empty expected name, or click failed)", {
+          slot: open.skillSlot,
+          releaseMs: chargePlan.releaseMs,
+          releaseFraction: chargePlan.releaseFraction,
+          expectedSkillName: expectedN,
+          castBarLabels: typeof readVisibleCombatCastBarTexts === "function" ? readVisibleCombatCastBarTexts() : []
+        });
       } else {
         Logger.warn("LOOP", "Charge release hint missing at planned release time", {
           slot: open.skillSlot,
@@ -2930,7 +2940,10 @@
       Logger.log("LOOP", "Charge cancel hint visible after opener wait; map-gap / cancel UI (not bar slot)", {
         slot: open.skillSlot
       });
-      clickChargingSkillCancelUi();
+      // AI CHANGED: Cast-bar name gate when enabled — only cancel if bar shows this charge skill (reduces false stuck cancels).
+      clickChargingSkillCancelUi({
+        expectedSkillName: open.skillRecord && open.skillRecord.name ? String(open.skillRecord.name) : ""
+      });
       if (settleRanked > 0) {
         await sleep(settleRanked);
       }

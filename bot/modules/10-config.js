@@ -74,6 +74,8 @@
       rankedOpenerClickCancelUiIfChargeStuck: true,
       // AI CHANGED: Prefer click in the gap between map toggle and map canvas (reliable charge cancel); false = DOM cancel only.
       chargingCancelPreferMapGapClick: true,
+      // AI CHANGED: When true, charge-cancel UI clicks only run if cancel hint is visible AND cast/progress bar text matches the expected skill name (reduces false cancels after retarget / stuck waits). Set false to revert to hint-only behavior.
+      chargeCancelRequireCastBarNameMatch: true,
       chargingCancelHintSubstrings: ["press to cancel"],
       chargingCancelHintScanRoot: "app-game",
       // AI CHANGED: Legacy-named retarget guard — after a successful re-target in a surviving pull, skip charge skills until the first verified progress on that new target.

@@ -3125,10 +3125,27 @@
         // AI CHANGED: On-demand only (debugging a charge-cancel patch): run the old smoke probe/click when explicitly requested.
         try {
           const hintVis = isChargingSkillCancelHintVisible();
+          const expectedName =
+            typeof forcedRankedSkillName === "string" && forcedRankedSkillName.trim()
+              ? forcedRankedSkillName.trim()
+              : "";
+          const barLabels = typeof readVisibleCombatCastBarTexts === "function" ? readVisibleCombatCastBarTexts() : [];
           if (hintVis) {
-            const clickedOk = clickChargingSkillCancelUi();
-            Logger.log("TEST", "charge-cancel click (on-demand)", { ok: clickedOk });
-            chargeCancelTest = { attempted: true, ok: clickedOk };
+            // AI CHANGED: Pass forced opener name so chargeCancelRequireCastBarNameMatch gate applies in TEST like in combat.
+            const clickedOk = clickChargingSkillCancelUi(
+              expectedName ? { expectedSkillName: expectedName } : {}
+            );
+            Logger.log("TEST", "charge-cancel click (on-demand)", {
+              ok: clickedOk,
+              expectedSkillName: expectedName || null,
+              castBarLabels: barLabels
+            });
+            chargeCancelTest = {
+              attempted: true,
+              ok: clickedOk,
+              expectedSkillName: expectedName || null,
+              castBarLabels: barLabels
+            };
           } else {
             Logger.log("TEST", "charge-cancel on-demand skipped (hint not visible)");
             chargeCancelTest = { attempted: false, ok: null, reason: "no_hint" };
@@ -3183,6 +3200,7 @@
           outOfCombatHealWaitHpPct: Number.isFinite(Config.combat.outOfCombatHealWaitHpPct) ? Config.combat.outOfCombatHealWaitHpPct : null,
           outOfCombatHealPollMs: Number.isFinite(Config.combat.outOfCombatHealPollMs) ? Config.combat.outOfCombatHealPollMs : null,
           postRetargetNoChargeGuard: Config.combat.disallowChargeSkillFirstBurstAfterRetarget !== false,
+          chargeCancelRequireCastBarNameMatch: Config.combat.chargeCancelRequireCastBarNameMatch !== false,
           combatQueueEnabled: Config.combat.combatQueueEnabled !== false,
           combatQueuePostProgressSettleMs: Number.isFinite(Config.combat.combatQueuePostProgressSettleMs) ? Config.combat.combatQueuePostProgressSettleMs : null,
           hpPotionUseBelowPct: Number.isFinite(Config.combat.hpPotionUseBelowPct) ? Config.combat.hpPotionUseBelowPct : null,

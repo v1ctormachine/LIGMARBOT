@@ -105,6 +105,8 @@
       readBasicState: readBasicState,
       // AI CHANGED: slice 24b — debug charge cancel UI (not bar slot).
       isChargingSkillCancelHintVisible: isChargingSkillCancelHintVisible,
+      // AI CHANGED: Debug charge-cancel — cast bar must show expected skill when chargeCancelRequireCastBarNameMatch is on.
+      isCastBarShowingExpectedSkillNameForChargeCancel: isCastBarShowingExpectedSkillNameForChargeCancel,
       getChargingSkillCancelClickTarget: getChargingSkillCancelClickTarget,
       clickChargingSkillCancelUi: clickChargingSkillCancelUi,
       // AI CHANGED: Debug map-gap charge-cancel coordinates (slice 24b gap click).

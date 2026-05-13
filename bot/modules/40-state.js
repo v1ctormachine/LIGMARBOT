@@ -193,6 +193,42 @@
     return !!findChargingSkillCancelHintElement();
   }
 
+  // AI CHANGED: Align charge-cancel cast bar matching with queue / planner name normalization (86-planner loads before runtime calls).
+  function normalizeChargeCancelSkillMatchKey(rawName) {
+    if (typeof plannerNormalizeSkillNameForMatch === "function") {
+      return plannerNormalizeSkillNameForMatch(String(rawName || ""));
+    }
+    if (typeof normalizeSkillName === "function") {
+      return normalizeSkillName(String(rawName || "")).toLowerCase();
+    }
+    return String(rawName || "").replace(/\s+/g, " ").trim().toLowerCase();
+  }
+
+  // AI CHANGED: True when any visible cast/progress label matches expected skill (substring tolerant for level suffixes).
+  function isCastBarShowingExpectedSkillNameForChargeCancel(expectedRawName) {
+    const expectedKey = normalizeChargeCancelSkillMatchKey(expectedRawName);
+    if (!expectedKey) {
+      return false;
+    }
+    const labels = readVisibleCombatCastBarTexts();
+    for (let i = 0; i < labels.length; i += 1) {
+      const labelKey = normalizeChargeCancelSkillMatchKey(labels[i]);
+      if (!labelKey) {
+        continue;
+      }
+      if (labelKey === expectedKey) {
+        return true;
+      }
+      // AI CHANGED: Substring only when the shorter key is long enough — avoids e.g. "shot" matching "Sniper Shot".
+      const shortKey = labelKey.length <= expectedKey.length ? labelKey : expectedKey;
+      const longKey = labelKey.length <= expectedKey.length ? expectedKey : labelKey;
+      if (shortKey.length >= 5 && longKey.indexOf(shortKey) !== -1) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   // AI CHANGED: slice 24b — element to click for charge cancel (explicit selectors first, else ancestor button / role=button, else hint node).
   // AI CHANGED: Midpoint in the gap between map-open button and map canvas (viewport coords) — game treats as empty UI; cancels charge.
   function getChargeCancelMapGapClientPoint() {
@@ -292,11 +328,38 @@
   }
 
   // AI CHANGED: slice 24b — cancel charge: prefer map-toggle/canvas gap click; else DOM cancel control (not bar slot).
-  function clickChargingSkillCancelUi() {
+  // AI CHANGED: Optional opts.expectedSkillName — when `chargeCancelRequireCastBarNameMatch` is true, require cancel hint + cast bar shows that skill before any cancel click.
+  function clickChargingSkillCancelUi(userOpts) {
     // AI CHANGED: quick TEST profile — no charge-cancel UI clicks during bundle (soak/combat inside TEST).
     if (Runtime.testBundle && Runtime.testBundle.disableChargeCancelUi === true) {
       Logger.log("STATE", "charge cancel UI skipped (TEST quick profile)");
       return false;
+    }
+    const opts =
+      userOpts && typeof userOpts === "object"
+        ? userOpts
+        : typeof userOpts === "string" && String(userOpts).trim()
+          ? { expectedSkillName: String(userOpts).trim() }
+          : {};
+    const expectedSkillName =
+      typeof opts.expectedSkillName === "string" ? opts.expectedSkillName.trim() : "";
+    const requireBarNameMatch = Config.combat && Config.combat.chargeCancelRequireCastBarNameMatch !== false;
+    if (requireBarNameMatch) {
+      if (!isChargingSkillCancelHintVisible()) {
+        Logger.warn("COMBAT", "charge cancel skipped: cancel hint not visible (cast-bar name gate)");
+        return false;
+      }
+      if (!expectedSkillName) {
+        Logger.warn("COMBAT", "charge cancel skipped: cast-bar name match enabled but expectedSkillName empty");
+        return false;
+      }
+      if (!isCastBarShowingExpectedSkillNameForChargeCancel(expectedSkillName)) {
+        Logger.warn("COMBAT", "charge cancel skipped: cast/progress bar does not match expected skill", {
+          expectedSkillName: expectedSkillName,
+          castBarLabels: readVisibleCombatCastBarTexts()
+        });
+        return false;
+      }
     }
     if (Config.combat.chargingCancelPreferMapGapClick !== false) {
       if (clickChargeCancelViaMapToggleCanvasGap()) {
