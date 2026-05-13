@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.161",
-    "description":  "damage observe: floating Miss scan + miss_text events + TEST",
-    "builtAt":  "2026-05-13T11:11:06.6303035+03:00",
+    "version":  "0.3.162",
+    "description":  "TEST: panel default profile, one button full auto (soak/calibration/resume); release via console",
+    "builtAt":  "2026-05-13T11:21:08.9952380+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.162",
+                        "description":  "TEST: panel default profile, one button full auto (soak/calibration/resume); release via console",
+                        "date":  "2026-05-13T11:21:08.9952380+03:00"
+                    },
                     {
                         "version":  "0.3.161",
                         "description":  "damage observe: floating Miss scan + miss_text events + TEST",
@@ -247,11 +252,6 @@
                         "version":  "0.3.116",
                         "description":  "planner: natural Sniper Shot shortlist fix",
                         "date":  "2026-05-11T20:10:12.5922226+03:00"
-                    },
-                    {
-                        "version":  "0.3.115",
-                        "description":  "planner: natural Sniper Shot tuning",
-                        "date":  "2026-05-11T20:02:25.4029862+03:00"
                     }
                 ]
 }

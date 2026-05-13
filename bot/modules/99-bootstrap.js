@@ -177,7 +177,7 @@
       // AI CHANGED: slice 36 — persist / reload both storage keys; console shows `{ ok, … }` not `undefined`.
       saveAllUiPrefs: saveAllUiPrefs,
       loadAllUiPrefs: loadAllUiPrefs,
-      // AI CHANGED: Panel TEST (version) and console — same entry point.
+      // AI CHANGED: Panel TEST and console — same entry point; default profile is **panel** unless opts override `testProfile`.
       runUiTestBundle: runUiTestBundle,
       // AI CHANGED: Phase C0 -- skill scanner public API. scanSkills() is the only "active" call;
       // the rest are getters / cache helpers for inspection and recovery.
