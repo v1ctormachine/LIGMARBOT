@@ -967,6 +967,7 @@
       holdRiskPenalty: hrDiag.penalty,
       multiMobHoldPenalty: hrDiag.multiMobHoldPenalty,
       lowHpHoldPenalty: hrDiag.lowHpHoldPenalty,
+      incomingHoldPenalty: Number.isFinite(hrDiag.incomingHoldPenalty) ? hrDiag.incomingHoldPenalty : 0,
       enemyCountLive: hrDiag.enemyCountLive,
       playerHpPct: hrDiag.playerHpPct,
       targetHpCur: Number.isFinite(targetHpCur) ? +targetHpCur.toFixed(2) : null,
@@ -1317,9 +1318,14 @@
         }
       }
     }
+    // AI CHANGED: Pull-size labels for diagnostics / exports (solo = one live enemy bar, duo = two, pack = three+).
+    const pullTier =
+      enemyCountLive <= 0 ? "none" : enemyCountLive === 1 ? "solo" : enemyCountLive === 2 ? "duo" : "pack";
     return {
       enemyCountLive: enemyCountLive,
       extraEnemies: extraEnemies,
+      pullEnemyCount: enemyCountLive,
+      pullTier: pullTier,
       playerHpPct: playerHpPct,
       lowHpThresholdPct: lowHpThresholdPct,
       lowHpPressure: +lowHpPressure.toFixed(4),
@@ -1329,12 +1335,13 @@
     };
   }
 
-  // AI CHANGED: Horizon single authority — channel-hold risk (multi-mob + low player HP) lives here only; charge candidate scoring and opener context share the same numbers/parts.
+  // AI CHANGED: Horizon single authority — channel-hold risk (multi-mob + low player HP + optional incoming sustain pressure) lives here only; charge candidate scoring and opener context share the same numbers/parts.
   function plannerComputeHorizonChannelHoldRisk(castBlockedSec, basicDps, liveState, userOpts) {
     const out = {
       penalty: 0,
       multiMobHoldPenalty: 0,
       lowHpHoldPenalty: 0,
+      incomingHoldPenalty: 0,
       enemyCountLive: 0,
       playerHpPct: null,
       parts: []
@@ -1379,7 +1386,27 @@
         : 0;
     const lowHpHoldPenalty = castBlockedSec * basicDps * lowHpPenaltyCoeff * lowHpRatio;
     out.lowHpHoldPenalty = +lowHpHoldPenalty.toFixed(2);
-    const holdRiskPenalty = multiMobHoldPenalty + lowHpHoldPenalty;
+    let incomingHoldPenalty = 0;
+    const precalcPressure = userOpts && userOpts.pressure && typeof userOpts.pressure === "object" ? userOpts.pressure : null;
+    if (
+      enemyCountLive >= 1 &&
+      Config.planner &&
+      Config.planner.chargeSkillHoldIncomingPressureEnabled !== false
+    ) {
+      const incCoeff =
+        Config.planner && Number.isFinite(Config.planner.chargeSkillHoldIncomingPressurePenaltyInBasicDps)
+          ? Math.max(0, Config.planner.chargeSkillHoldIncomingPressurePenaltyInBasicDps)
+          : 0.07;
+      if (incCoeff > 0) {
+        const dp = precalcPressure || plannerComputeOpenerDangerPressure(liveState);
+        const incP = dp && Number.isFinite(dp.incomingPressure) ? Math.max(0, dp.incomingPressure) : 0;
+        if (incP > 0) {
+          incomingHoldPenalty = castBlockedSec * basicDps * incP * incCoeff;
+          out.incomingHoldPenalty = +incomingHoldPenalty.toFixed(2);
+        }
+      }
+    }
+    const holdRiskPenalty = multiMobHoldPenalty + lowHpHoldPenalty + incomingHoldPenalty;
     out.penalty = +holdRiskPenalty.toFixed(2);
     if (multiMobHoldPenalty > 0) {
       out.parts.push({
@@ -1394,6 +1421,13 @@
         type: "hold_low_hp_penalty",
         add: -+lowHpHoldPenalty.toFixed(2),
         lowHpRatio: +lowHpRatio.toFixed(4),
+        castBlockedSec: +castBlockedSec.toFixed(3)
+      });
+    }
+    if (incomingHoldPenalty > 0) {
+      out.parts.push({
+        type: "hold_incoming_pressure_penalty",
+        add: -+incomingHoldPenalty.toFixed(2),
         castBlockedSec: +castBlockedSec.toFixed(3)
       });
     }
@@ -1424,7 +1458,8 @@
         plannerGetChargeSkillEffect(slot) &&
         castBlockedSec > 0
       ) {
-        const hr = plannerComputeHorizonChannelHoldRisk(castBlockedSec, basicDps, liveState, {});
+        const stPressure = plannerComputeOpenerDangerPressure(liveState);
+        const hr = plannerComputeHorizonChannelHoldRisk(castBlockedSec, basicDps, liveState, { pressure: stPressure });
         out.total -= hr.penalty;
         out.channelHoldRisk = hr;
         for (let hi = 0; hi < hr.parts.length; hi += 1) {
@@ -1668,7 +1703,8 @@
       }
     }
     if (isChargeChannelSkill && castBlockedSec > 0) {
-      const hr = plannerComputeHorizonChannelHoldRisk(castBlockedSec, basicDps, liveState, {});
+      // AI CHANGED: Reuse opener danger pressure object so hold-risk does not call `plannerComputeOpenerDangerPressure` twice per candidate.
+      const hr = plannerComputeHorizonChannelHoldRisk(castBlockedSec, basicDps, liveState, { pressure: pressure });
       out.channelHoldRisk = hr;
       if (hr.penalty > 0) {
         out.total -= hr.penalty;

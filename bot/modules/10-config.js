@@ -330,6 +330,10 @@
       chargeSkillHoldLowHpThresholdPct: 0.6,
       // AI CHANGED: Additional hold-risk coefficient at 0 HP deficit, scaled by basic DPS and by how far below threshold the player is.
       chargeSkillHoldLowHpPenaltyInBasicDps: 0.12,
+      // AI CHANGED: Charge holds — fold sustain-derived incoming pressure into hold risk (same incomingPressure units as opener danger; avoids double-counting generic cast penalty which is skipped for charge).
+      chargeSkillHoldIncomingPressureEnabled: true,
+      // AI CHANGED: Basic-DPS units per second of hold per unit incomingPressure (0.07 ≈ mild nudge when bleeding; 0 to disable math while keeping enable flag).
+      chargeSkillHoldIncomingPressurePenaltyInBasicDps: 0.07,
       // AI CHANGED: When true, attack-skill rank order uses conception first (master/scanned role model) instead of parsed effect magnitudes.
       skillRankUseConception: true,
       // AI CHANGED: Conception-first opener gate — allow horizon tie-break only within this score distance from best conception score.

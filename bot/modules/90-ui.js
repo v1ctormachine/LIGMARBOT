@@ -510,6 +510,8 @@
       planner_combat_episode_plan: "Combat episode plan",
       // AI CHANGED: TEST human label for opener danger pressure shape check.
       planner_opener_danger_pressure_shape: "Opener danger pressure",
+      // AI CHANGED: TEST label for channel hold risk shape (incoming sustain on charge holds).
+      planner_horizon_channel_hold_risk_shape: "Channel hold risk",
       planner_charge_release_policy: "Charge release policy",
       planner_dynamic_charge_scoring: "Dynamic charge scoring",
       combat_attackers_retarget_ui: "Attackers retarget UI",
@@ -2760,7 +2762,12 @@
           dp.lowHpPressure >= 0 &&
           typeof dp.enemyCountLive === "number" &&
           Number.isFinite(dp.enemyCountLive) &&
-          dp.enemyCountLive >= 0;
+          dp.enemyCountLive >= 0 &&
+          typeof dp.pullTier === "string" &&
+          ["none", "solo", "duo", "pack"].indexOf(dp.pullTier) >= 0 &&
+          typeof dp.pullEnemyCount === "number" &&
+          Number.isFinite(dp.pullEnemyCount) &&
+          dp.pullEnemyCount >= 0;
         addCheck(
           "planner_opener_danger_pressure_shape",
           dpOk,
@@ -2769,9 +2776,56 @@
                 totalPressure: dp.totalPressure,
                 incomingPressure: dp.incomingPressure,
                 incomingHpLossPerSec: dp.incomingHpLossPerSec,
-                enemyCountLive: dp.enemyCountLive
+                enemyCountLive: dp.enemyCountLive,
+                pullTier: dp.pullTier
               }
             : { error: "danger_pressure_shape_invalid", dpError: dpErr, sample: dp },
+          false
+        );
+      }
+      // AI CHANGED: Horizon channel hold risk — validate `incomingHoldPenalty` + total penalty contract (soft).
+      if (!rankedOn) {
+        addCheck(
+          "planner_horizon_channel_hold_risk_shape",
+          !strictRankedChecks,
+          strictRankedChecks
+            ? { error: "ranked_combat_off", strictRankedChecks: true }
+            : { skipped: true, reason: "ranked_combat_off" },
+          strictRankedChecks
+        );
+      } else if (typeof plannerComputeHorizonChannelHoldRisk !== "function") {
+        addCheck("planner_horizon_channel_hold_risk_shape", false, { error: "missing_plannerComputeHorizonChannelHoldRisk" }, false);
+      } else {
+        const liveStHr = typeof readBasicState === "function" ? readBasicState() : {};
+        let dpHr = null;
+        try {
+          dpHr = plannerComputeOpenerDangerPressure(liveStHr);
+        } catch (eDpHr) {
+          dpHr = null;
+        }
+        let hr0 = null;
+        let hrErr = null;
+        try {
+          hr0 = plannerComputeHorizonChannelHoldRisk(0.4, 25, liveStHr, dpHr && typeof dpHr === "object" ? { pressure: dpHr } : {});
+        } catch (eHr0) {
+          hrErr = String(eHr0 && eHr0.message ? eHr0.message : eHr0);
+        }
+        const hrOk =
+          !hrErr &&
+          hr0 &&
+          typeof hr0 === "object" &&
+          typeof hr0.penalty === "number" &&
+          Number.isFinite(hr0.penalty) &&
+          hr0.penalty >= 0 &&
+          typeof hr0.incomingHoldPenalty === "number" &&
+          Number.isFinite(hr0.incomingHoldPenalty) &&
+          hr0.incomingHoldPenalty >= 0;
+        addCheck(
+          "planner_horizon_channel_hold_risk_shape",
+          hrOk,
+          hrOk
+            ? { penalty: hr0.penalty, incomingHoldPenalty: hr0.incomingHoldPenalty, enemyCountLive: hr0.enemyCountLive }
+            : { error: "horizon_hold_risk_shape_invalid", hrError: hrErr, sample: hr0 },
           false
         );
       }
