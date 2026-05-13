@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.195",
-    "description":  "enemy DB: buff label signature + per-signature hp_drop buckets; TEST + fieldValidation",
-    "builtAt":  "2026-05-13T19:18:07.3816980+03:00",
+    "version":  "0.3.196",
+    "description":  "TEST: opener context check waives detail when horizon prefers basic",
+    "builtAt":  "2026-05-13T19:30:19.3660885+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.196",
+                        "description":  "TEST: opener context check waives detail when horizon prefers basic",
+                        "date":  "2026-05-13T19:30:19.3660885+03:00"
+                    },
                     {
                         "version":  "0.3.195",
                         "description":  "enemy DB: buff label signature + per-signature hp_drop buckets; TEST + fieldValidation",
@@ -247,11 +252,6 @@
                         "version":  "0.3.147",
                         "description":  "combat: require target HP \u003e 0 after find enemy before attacking",
                         "date":  "2026-05-12T20:51:56.8672696+03:00"
-                    },
-                    {
-                        "version":  "0.3.146",
-                        "description":  "combat: idle explore heal to 75% HP with potions when enemyCount=0",
-                        "date":  "2026-05-12T20:08:39.3706981+03:00"
                     }
                 ]
 }

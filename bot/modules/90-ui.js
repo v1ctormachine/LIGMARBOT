@@ -2701,12 +2701,19 @@
           Number.isFinite(detailCtx.total) &&
           Array.isArray(detailCtx.parts)
         );
-        addCheck("planner_opener_context_scoring", previewHasContext && (detailHasContext || forcedOnlyDetail), {
+        // AI CHANGED: horizon basic win omits skill-shaped lastDetail.contextAdjustment; preview still exercises context scoring.
+        const lastReasonCtx = diag && diag.lastReason ? diag.lastReason : null;
+        const detailContextWaivedForBasicHorizon = lastReasonCtx === "horizon_prefers_basic";
+        addCheck(
+          "planner_opener_context_scoring",
+          previewHasContext && (detailHasContext || forcedOnlyDetail || detailContextWaivedForBasicHorizon),
+          {
           previewCandidateCount: previewRows.length,
           previewHasContext: previewHasContext,
           detailHasContext: detailHasContext,
           forcedOnlyDetail: forcedOnlyDetail,
-          lastReason: diag && diag.lastReason ? diag.lastReason : null,
+          detailContextWaivedForBasicHorizon: detailContextWaivedForBasicHorizon,
+          lastReason: lastReasonCtx,
           detailContextAdjustment: detailCtx,
           previewSample: previewRows.slice(0, 3).map(function (row) {
             return {
