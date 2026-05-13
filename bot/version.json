@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.192",
-    "description":  "horizon: typed paper mob blend physical vs magic; instant arrow-tier regex; TEST Horizon typed paper mob calibration",
-    "builtAt":  "2026-05-13T18:22:48.6304947+03:00",
+    "version":  "0.3.193",
+    "description":  "retarget: no cancel; queue first skill on game basic cast; post-retarget burst allowCombatQueue",
+    "builtAt":  "2026-05-13T18:56:26.2566231+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.193",
+                        "description":  "retarget: no cancel; queue first skill on game basic cast; post-retarget burst allowCombatQueue",
+                        "date":  "2026-05-13T18:56:26.2566231+03:00"
+                    },
                     {
                         "version":  "0.3.192",
                         "description":  "horizon: typed paper mob blend physical vs magic; instant arrow-tier regex; TEST Horizon typed paper mob calibration",
@@ -247,11 +252,6 @@
                         "version":  "0.3.147",
                         "description":  "combat: restrict heal gate to tile movement only",
                         "date":  "2026-05-12T18:02:13.1048031+03:00"
-                    },
-                    {
-                        "version":  "0.3.146",
-                        "description":  "combat: add out-of-combat hp heal gate",
-                        "date":  "2026-05-12T17:53:01.8883902+03:00"
                     }
                 ]
 }

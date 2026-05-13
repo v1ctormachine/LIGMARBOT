@@ -2350,39 +2350,68 @@
     };
   }
 
-  // AI CHANGED: After mid-pull re-target (attackers popup or find-enemy), tap cancel UI once so the game's default incoming swing does not race our opener / queue. Target must already be acquired (HP bar valid).
-  async function performPostAttackersRetargetCancel() {
-    const now = readBasicState();
-    const targetReady = !!(
-      now &&
-      now.combat &&
-      now.combat.targetHp &&
-      now.combat.targetHp.valid &&
-      Number.isFinite(now.combat.targetHp.cur) &&
-      now.combat.targetHp.cur > 0
-    );
-    if (!targetReady) {
-      return { ok: false, reason: "target_lost_before_post_attackers_cancel" };
+  // AI CHANGED: After mid-pull retarget the game winds a default basic — do not click opener or cancel; arm queue on Attack cast (see applyPostRetargetQueueOpenerPick).
+
+  // AI CHANGED: Post-retarget burst — skip opener bar click; queue planner non-charge opener skill while game basic casts; charge opener falls back to normal tap path.
+  async function applyPostRetargetQueueOpenerPick(pickWrap, opts, excludeSlots) {
+    const wrap = pickWrap && typeof pickWrap === "object" ? pickWrap : { useRankedPath: false, opening: null };
+    if (wrap.useRankedPath && wrap.opening && wrap.opening.slot != null && wrap.opening.record) {
+      const sr = wrap.opening.record;
+      const isCharge =
+        sr && typeof plannerGetChargeSkillEffect === "function" && plannerGetChargeSkillEffect(sr);
+      if (isCharge) {
+        Logger.log("LOOP", "Post-retarget: charge opener from planner — using standard opener click path", {
+          slot: wrap.opening.slot
+        });
+        return applyPlannerOpeningPick(wrap, opts, excludeSlots);
+      }
+      const qa = {
+        mode: "skill",
+        slot: wrap.opening.slot,
+        name: sr.name || "",
+        source: "post_retarget_queue_after_game_basic"
+      };
+      Logger.log("COMBAT", "Post-retarget: no cancel, no opener click; queue skill on game basic cast bar", {
+        queuedSlot: qa.slot,
+        queuedName: qa.name
+      });
+      return {
+        ok: true,
+        skillSlot: null,
+        skillRecord: null,
+        chargeReleasePlan: null,
+        queuedAction: qa
+      };
     }
-    const clickedCancel = clickChargingSkillCancelUi();
-    const settleMs = Number.isFinite(Config.combat && Config.combat.postRankedSkillClickSettleMs)
-      ? Math.max(0, Config.combat.postRankedSkillClickSettleMs)
-      : 0;
-    if (clickedCancel && settleMs > 0) {
-      await sleep(settleMs);
+    if (wrap.useRankedPath && !wrap.opening) {
+      const bq =
+        !(opts && opts.allowCombatQueue === false) &&
+        Config.combat &&
+        Config.combat.combatQueueEnabled !== false &&
+        typeof plannerBuildCombatQueueAction === "function"
+          ? plannerBuildCombatQueueAction({
+              afterSlot: null,
+              liveState: readBasicState(),
+              disallowChargeSkills: !!(opts && opts.disallowChargeSkills)
+            })
+          : null;
+      if (bq && bq.mode) {
+        Logger.log("COMBAT", "Post-retarget: no ranked opener — arm queue follow-up only (game basic first)", {
+          mode: bq.mode,
+          slot: bq.slot
+        });
+        return {
+          ok: true,
+          skillSlot: null,
+          skillRecord: null,
+          chargeReleasePlan: null,
+          queuedAction: bq
+        };
+      }
+      Logger.log("COMBAT", "Post-retarget: no opener and no queue action — wait for game basic progress only", {});
+      return { ok: true, skillSlot: null, skillRecord: null, chargeReleasePlan: null, queuedAction: null };
     }
-    return {
-      ok: true,
-      clickedCancel: clickedCancel,
-      targetHpCur:
-        now &&
-        now.combat &&
-        now.combat.targetHp &&
-        now.combat.targetHp.valid &&
-        Number.isFinite(now.combat.targetHp.cur)
-          ? now.combat.targetHp.cur
-          : null
-    };
+    return applyPlannerOpeningPick(wrap, opts, excludeSlots);
   }
 
   // AI CHANGED: Combat episode v1 — split ranked pick vs click so `attackUntilProgress` can snapshot the plan without double-calling the planner.
@@ -2626,26 +2655,49 @@
     const pickWrap = resolvePlannerOpeningPick(opts, []);
 
     let planPickForEpisode = null;
-    if (pickWrap.useRankedPath && pickWrap.opening) {
-      planPickForEpisode = pickWrap.opening;
-    } else {
-      const bq =
-        !(opts && opts.allowCombatQueue === false) &&
-        Config.combat &&
-        Config.combat.combatQueueEnabled !== false &&
-        typeof plannerBuildCombatQueueAction === "function"
-          ? plannerBuildCombatQueueAction({
-              afterSlot: null,
-              liveState: beforeState,
-              disallowChargeSkills: true
-            })
-          : null;
-      planPickForEpisode = {
-        slot: null,
-        record: null,
-        chargeReleasePlan: null,
-        queuedAction: bq
-      };
+    // AI CHANGED: Episode telemetry — post-retarget queue-only path shows game basic then first queued skill, not a phantom opener_skill click.
+    if (opts && opts.firstBurstAfterRetarget) {
+      if (pickWrap.useRankedPath && pickWrap.opening && pickWrap.opening.slot != null && pickWrap.opening.record) {
+        const srEp = pickWrap.opening.record;
+        const isChargeEp =
+          srEp && typeof plannerGetChargeSkillEffect === "function" && plannerGetChargeSkillEffect(srEp);
+        if (!isChargeEp) {
+          planPickForEpisode = {
+            slot: null,
+            record: null,
+            chargeReleasePlan: null,
+            queuedAction: {
+              mode: "skill",
+              slot: pickWrap.opening.slot,
+              name: srEp.name || "",
+              source: "post_retarget_after_implicit_basic"
+            }
+          };
+        }
+      }
+    }
+    if (!planPickForEpisode) {
+      if (pickWrap.useRankedPath && pickWrap.opening) {
+        planPickForEpisode = pickWrap.opening;
+      } else {
+        const bq =
+          !(opts && opts.allowCombatQueue === false) &&
+          Config.combat &&
+          Config.combat.combatQueueEnabled !== false &&
+          typeof plannerBuildCombatQueueAction === "function"
+            ? plannerBuildCombatQueueAction({
+                afterSlot: null,
+                liveState: beforeState,
+                disallowChargeSkills: !!(opts && opts.disallowChargeSkills)
+              })
+            : null;
+        planPickForEpisode = {
+          slot: null,
+          record: null,
+          chargeReleasePlan: null,
+          queuedAction: bq
+        };
+      }
     }
 
     if (typeof plannerBuildCombatEpisodePlan === "function") {
@@ -2664,7 +2716,10 @@
       clearCombatEpisode("planner_build_missing");
     }
 
-    const open = await applyPlannerOpeningPick(pickWrap, opts, []);
+    const open =
+      opts && opts.firstBurstAfterRetarget
+        ? await applyPostRetargetQueueOpenerPick(pickWrap, opts, [])
+        : await applyPlannerOpeningPick(pickWrap, opts, []);
     if (!open.ok) {
       Logger.warn("LOOP", "Attack loop aborted: no attack click succeeded");
       return false;
@@ -2723,7 +2778,7 @@
         openerSlot: open.skillSlot,
         openerName: open.skillRecord && open.skillRecord.name ? open.skillRecord.name : (open.skillSlot == null ? "Basic Attack" : null),
         liveState: readBasicState(),
-        postRetargetGuarded: !!(opts && opts.firstBurstAfterRetarget)
+        postRetargetGuarded: false
       });
       if (queuedState) {
         Logger.log("COMBAT", "Queued combat action armed", {
@@ -3038,7 +3093,7 @@
           openerSlot: open.skillSlot,
           openerName: open.skillRecord && open.skillRecord.name ? open.skillRecord.name : (open.skillSlot == null ? "Basic Attack" : null),
           liveState: readBasicState(),
-          postRetargetGuarded: !!(opts && opts.firstBurstAfterRetarget)
+          postRetargetGuarded: false
         });
       }
       if (settleRanked > 0) {
@@ -3098,7 +3153,7 @@
             openerSlot: open.skillSlot,
             openerName: open.skillRecord && open.skillRecord.name ? open.skillRecord.name : (open.skillSlot == null ? "Basic Attack" : null),
             liveState: readBasicState(),
-            postRetargetGuarded: !!(opts && opts.firstBurstAfterRetarget)
+            postRetargetGuarded: false
           });
         }
       }
@@ -3324,7 +3379,7 @@
           useRankedSkillOpener: useRankedBurst,
           firstBurstAfterRetarget: firstBurstAfterRetarget,
           disallowChargeSkills: disallowChargeSkills,
-          allowCombatQueue: !firstBurstAfterRetarget
+          allowCombatQueue: true
         });
         firstBurstAfterRetarget = false;
         if (attackProgressed && chargeGuardUntilRetargetProgress) {
@@ -3447,18 +3502,7 @@
               Logger.warn("LOOP", "Target HP not detected after re-find; continuing by enemy-count logic");
             }
           }
-          // AI CHANGED: Cancel default auto-swing after any successful re-find (not only attackers_popup) so find-enemy retarget matches popup behavior before firstBurstAfterRetarget / queue.
-          const postRetargetCancel = await performPostAttackersRetargetCancel();
-          if (!postRetargetCancel.ok) {
-            Logger.warn("LOOP", "Post-retarget cancel pre-step failed", postRetargetCancel);
-            break;
-          }
-          if (!postRetargetCancel.clickedCancel) {
-            Logger.warn("LOOP", "Post-retarget cancel: no cancel UI clicked — default auto-attack may still be winding", {
-              via: refindOk && refindOk.via ? refindOk.via : null
-            });
-          }
-          Logger.log("LOOP", "Post-retarget cancel pre-step complete", postRetargetCancel);
+          // AI CHANGED: No post-retarget cancel — game winds default basic; first burst arms queue on Attack cast (applyPostRetargetQueueOpenerPick).
           current = readBasicState();
           if (typeof current.combat.enemyCount === "number" && current.combat.enemyCount <= 0) {
             Logger.log("LOOP", "Enemies cleared during re-find after kill");

@@ -1504,9 +1504,9 @@
         const attackersButton = document.querySelector(Config.selectors.attackersButton);
         addCheck("combat_attackers_retarget_ui", !!(attackersButton && isElementVisible(attackersButton)), {
           enabled: !(Config.combat && Config.combat.useAttackersPanelRetargetAfterKill === false),
-          // AI CHANGED: Attackers-popup retarget path now reuses the first HP>0 confirmation and sends cancel immediately from that confirmed state.
-          postRetargetCancelBeforeAttacks: true,
-          postRetargetCancelConfirmMode: "reuse_first_hp_confirm",
+          // AI CHANGED: No post-retarget cancel — game winds default basic; bot arms cast-bar queue on Attack.
+          postRetargetCancelBeforeAttacks: false,
+          postRetargetQueueAfterGameBasic: true,
           attackersButtonFound: !!attackersButton,
           attackersButtonVisible: !!(attackersButton && isElementVisible(attackersButton)),
           popupListSelector: Config.selectors.attackersPopupList,
@@ -1556,7 +1556,7 @@
             : null;
         addCheck("combat_queue_policy", Config.combat.combatQueueEnabled !== false, {
           enabled: Config.combat.combatQueueEnabled !== false,
-          // AI CHANGED: Queue v2 trigger — advance the chain when the previous queued action name is visible in the cast/progress bar.
+          // AI CHANGED: Queue v2 — cast-bar name match; first post-retarget burst may arm queue on game basic without opener click.
           trigger: "progress_bar_name_match",
           visibleCastBarTexts: typeof readVisibleCombatCastBarTexts === "function" ? readVisibleCombatCastBarTexts() : [],
           postProgressSettleMs: Number.isFinite(Config.combat.combatQueuePostProgressSettleMs) ? Config.combat.combatQueuePostProgressSettleMs : null,
