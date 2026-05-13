@@ -943,14 +943,21 @@
       skillShape,
       basicDps,
       expectedBasicHit,
-      liveState
+      liveState,
+      opts.enemyKey && String(opts.enemyKey).trim() ? { enemyKey: String(opts.enemyKey).trim() } : null
     );
     const execute = plannerComputeExecuteCandidate(skillShape, chargePlan.releaseSec, expectedBasicHit, liveState);
     const totalDamage = releaseDamage + followUpAction.value - cooldownForecast.penalty + contextAdjustment.total;
     const hrDiag =
       contextAdjustment && contextAdjustment.channelHoldRisk
         ? contextAdjustment.channelHoldRisk
-        : plannerComputeHorizonChannelHoldRisk(chargePlan.releaseSec, basicDps, liveState, {});
+        : plannerComputeHorizonChannelHoldRisk(chargePlan.releaseSec, basicDps, liveState, {
+            pressure: plannerComputeOpenerDangerPressure(
+              liveState,
+              opts.enemyKey && String(opts.enemyKey).trim() ? { enemyKey: String(opts.enemyKey).trim() } : null
+            ),
+            enemyKey: opts.enemyKey && String(opts.enemyKey).trim() ? String(opts.enemyKey).trim() : null
+          });
     return {
       horizonFit: horizonSec >= chargePlan.releaseSec,
       blockedSec: Math.min(horizonSec, chargePlan.releaseSec),
@@ -1266,8 +1273,61 @@
     return plannerSummarizeSkillPaperDamageShape(slot, horizonSec, mobFactor, expectedBasicHit, prebuiltChargePlan).totalDamage;
   }
 
-  // AI CHANGED: Live-fight danger model for generic opener scoring — reused so diagnostics can explain why long casts or control skills gained/lost value.
-  function plannerComputeOpenerDangerPressure(liveState) {
+  // AI CHANGED: Enemy DB calibration → opener pressure — when observed mean hp_drop vs current paper ratio stays below 1 with enough samples, fights last longer than paper; add small bounded pressure (same units as extraEnemies in `totalPressure`).
+  function plannerComputeCalibrationPressureAddon(enemyKey) {
+    const out = {
+      addon: 0,
+      ratio: null,
+      hpDropSamples: null,
+      skippedReason: null
+    };
+    if (Config.planner && Config.planner.openerContextCalibrationPressureEnabled === false) {
+      out.skippedReason = "disabled";
+      return out;
+    }
+    if (!enemyKey || typeof enemyKey !== "string" || !enemyKey.trim()) {
+      out.skippedReason = "no_enemy_key";
+      return out;
+    }
+    const row = getEnemyCalibrationRow(enemyKey.trim());
+    if (!row || !Number.isFinite(row.ratioObservedVsCurrentPaper) || row.ratioObservedVsCurrentPaper <= 0) {
+      out.skippedReason = "no_ratio";
+      return out;
+    }
+    out.ratio = row.ratioObservedVsCurrentPaper;
+    const n = row.hpDropSamples;
+    out.hpDropSamples = n;
+    const minN =
+      Config.planner && Number.isFinite(Config.planner.openerContextCalibrationPressureMinHpDropSamples)
+        ? Math.max(1, Math.floor(Config.planner.openerContextCalibrationPressureMinHpDropSamples))
+        : 5;
+    if (!Number.isFinite(n) || n < minN) {
+      out.skippedReason = "low_samples";
+      return out;
+    }
+    const ratio = row.ratioObservedVsCurrentPaper;
+    if (ratio >= 0.995) {
+      out.skippedReason = "ratio_not_below_paper";
+      return out;
+    }
+    const deficit = 1 - ratio;
+    const scale =
+      Config.planner && Number.isFinite(Config.planner.openerContextCalibrationPressureScale)
+        ? Math.max(0, Config.planner.openerContextCalibrationPressureScale)
+        : 0.35;
+    const cap =
+      Config.planner && Number.isFinite(Config.planner.openerContextCalibrationPressureCap)
+        ? Math.max(0, Config.planner.openerContextCalibrationPressureCap)
+        : 0.45;
+    out.addon = +Math.min(cap, deficit * scale).toFixed(4);
+    return out;
+  }
+
+  // AI CHANGED: Live-fight danger model for generic opener scoring — reused so diagnostics can explain why long casts or control skills gained/lost value. Optional `dangerOpts.enemyKey` folds DB calibration when the mob is harder than paper.
+  function plannerComputeOpenerDangerPressure(liveState, dangerOpts) {
+    const dOpt = dangerOpts && typeof dangerOpts === "object" ? dangerOpts : null;
+    const enemyKeyForCal =
+      dOpt && typeof dOpt.enemyKey === "string" && dOpt.enemyKey.trim() ? dOpt.enemyKey.trim() : null;
     const enemyCountLive =
       liveState && liveState.combat && typeof liveState.combat.enemyCount === "number"
         ? Math.max(0, liveState.combat.enemyCount)
@@ -1318,6 +1378,8 @@
         }
       }
     }
+    const calWrap = plannerComputeCalibrationPressureAddon(enemyKeyForCal);
+    const calibrationPressure = calWrap && Number.isFinite(calWrap.addon) ? calWrap.addon : 0;
     // AI CHANGED: Pull-size labels for diagnostics / exports (solo = one live enemy bar, duo = two, pack = three+).
     const pullTier =
       enemyCountLive <= 0 ? "none" : enemyCountLive === 1 ? "solo" : enemyCountLive === 2 ? "duo" : "pack";
@@ -1331,7 +1393,11 @@
       lowHpPressure: +lowHpPressure.toFixed(4),
       incomingHpLossPerSec: incomingHpLossPerSec,
       incomingPressure: +incomingPressure.toFixed(4),
-      totalPressure: +(extraEnemies + lowHpPressure + incomingPressure).toFixed(4)
+      calibrationPressure: +calibrationPressure.toFixed(4),
+      calibrationRatio: calWrap && calWrap.ratio !== null && Number.isFinite(calWrap.ratio) ? +calWrap.ratio.toFixed(4) : null,
+      calibrationHpDropSamples: calWrap && calWrap.hpDropSamples !== null ? calWrap.hpDropSamples : null,
+      calibrationPressureSkipped: calWrap && calWrap.skippedReason ? calWrap.skippedReason : null,
+      totalPressure: +(extraEnemies + lowHpPressure + incomingPressure + calibrationPressure).toFixed(4)
     };
   }
 
@@ -1398,10 +1464,16 @@
           ? Math.max(0, Config.planner.chargeSkillHoldIncomingPressurePenaltyInBasicDps)
           : 0.07;
       if (incCoeff > 0) {
-        const dp = precalcPressure || plannerComputeOpenerDangerPressure(liveState);
+        const dpDangerOpt =
+          userOpts && typeof userOpts === "object" && typeof userOpts.enemyKey === "string" && userOpts.enemyKey.trim()
+            ? { enemyKey: userOpts.enemyKey.trim() }
+            : null;
+        const dp = precalcPressure || plannerComputeOpenerDangerPressure(liveState, dpDangerOpt);
         const incP = dp && Number.isFinite(dp.incomingPressure) ? Math.max(0, dp.incomingPressure) : 0;
-        if (incP > 0) {
-          incomingHoldPenalty = castBlockedSec * basicDps * incP * incCoeff;
+        const calP = dp && Number.isFinite(dp.calibrationPressure) ? Math.max(0, dp.calibrationPressure) : 0;
+        const incomingLike = incP + calP;
+        if (incomingLike > 0) {
+          incomingHoldPenalty = castBlockedSec * basicDps * incomingLike * incCoeff;
           out.incomingHoldPenalty = +incomingHoldPenalty.toFixed(2);
         }
       }
@@ -1439,9 +1511,13 @@
 
   // AI CHANGED: Enemy-state-aware opener score nudges openers based on live danger, calm safe-setup windows, finisher urgency, and multi-target opportunity.
   function plannerComputeOpenerContextAdjustment(slot, castBlockedSec, skillShape, basicDps, expectedBasicHit, liveState, contextOpts) {
+    const ctxOpts = contextOpts && typeof contextOpts === "object" ? contextOpts : {};
+    const enemyKeyForCtx =
+      typeof ctxOpts.enemyKey === "string" && ctxOpts.enemyKey.trim() ? ctxOpts.enemyKey.trim() : null;
+    const dangerOpt = enemyKeyForCtx ? { enemyKey: enemyKeyForCtx } : null;
     const out = {
       total: 0,
-      pressure: plannerComputeOpenerDangerPressure(liveState),
+      pressure: plannerComputeOpenerDangerPressure(liveState, dangerOpt),
       liveTargetHp: null,
       liveTargetHpPct: null,
       basicTtkSec: null,
@@ -1458,8 +1534,11 @@
         plannerGetChargeSkillEffect(slot) &&
         castBlockedSec > 0
       ) {
-        const stPressure = plannerComputeOpenerDangerPressure(liveState);
-        const hr = plannerComputeHorizonChannelHoldRisk(castBlockedSec, basicDps, liveState, { pressure: stPressure });
+        const stPressure = plannerComputeOpenerDangerPressure(liveState, dangerOpt);
+        const hr = plannerComputeHorizonChannelHoldRisk(castBlockedSec, basicDps, liveState, {
+          pressure: stPressure,
+          enemyKey: enemyKeyForCtx || null
+        });
         out.total -= hr.penalty;
         out.channelHoldRisk = hr;
         for (let hi = 0; hi < hr.parts.length; hi += 1) {
@@ -1704,7 +1783,10 @@
     }
     if (isChargeChannelSkill && castBlockedSec > 0) {
       // AI CHANGED: Reuse opener danger pressure object so hold-risk does not call `plannerComputeOpenerDangerPressure` twice per candidate.
-      const hr = plannerComputeHorizonChannelHoldRisk(castBlockedSec, basicDps, liveState, { pressure: pressure });
+      const hr = plannerComputeHorizonChannelHoldRisk(castBlockedSec, basicDps, liveState, {
+        pressure: pressure,
+        enemyKey: enemyKeyForCtx || null
+      });
       out.channelHoldRisk = hr;
       if (hr.penalty > 0) {
         out.total -= hr.penalty;
@@ -1798,7 +1880,10 @@
           },
           contextAdjustment: chargePlan.contextAdjustment || {
             total: 0,
-            pressure: plannerComputeOpenerDangerPressure(opts.liveState || null),
+            pressure: plannerComputeOpenerDangerPressure(
+              opts.liveState || null,
+              opts.enemyKey && String(opts.enemyKey).trim() ? { enemyKey: String(opts.enemyKey).trim() } : null
+            ),
             liveTargetHp: null,
             basicTtkSec: null,
             immediateDamage: Number.isFinite(chargePlan.releaseDamageRaw) ? +chargePlan.releaseDamageRaw.toFixed(2) : 0,
@@ -1852,7 +1937,8 @@
       skillShape,
       basicDps,
       expectedBasicHit,
-      opts.liveState || null
+      opts.liveState || null,
+      enemyKey && String(enemyKey).trim() ? { enemyKey: String(enemyKey).trim() } : null
     );
     const execute = plannerComputeExecuteCandidate(skillShape, castBlocked, expectedBasicHit, opts.liveState || null);
     const totalDamage = skillPaper + followUp.value - cooldownForecast.penalty + contextAdjustment.total;

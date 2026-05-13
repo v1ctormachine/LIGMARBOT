@@ -272,6 +272,14 @@
       openerContextIncomingHpLossScale: 8,
       // AI CHANGED: Hard cap on the incoming-HP-loss contribution to `totalPressure` (same units as extraEnemies + lowHpPressure).
       openerContextIncomingHpLossPressureCap: 2.5,
+      // AI CHANGED: When observed basic hits are softer than paper (ratio < 1), add bounded pressure so long casts / charge holds tilt safer until calibration catches up.
+      openerContextCalibrationPressureEnabled: true,
+      // AI CHANGED: Minimum merged `hp_drop` samples on the enemy DB row before ratio-driven pressure applies.
+      openerContextCalibrationPressureMinHpDropSamples: 5,
+      // AI CHANGED: Pressure units per unit of (1 - ratio) when ratio is below paper (e.g. ratio 0.8 → deficit 0.2 × scale).
+      openerContextCalibrationPressureScale: 0.35,
+      // AI CHANGED: Max contribution of calibration to `totalPressure` (same additive units as incomingPressure cap philosophy).
+      openerContextCalibrationPressureCap: 0.45,
       // AI CHANGED: Under pressure, long casts lose this many basic-DPS units per second of blocked time.
       openerContextCastPressurePenaltyInBasicDps: 0.12,
       // AI CHANGED: Control skills gain this many basic-DPS units under pressure (stun gets full weight, slow gets partial).

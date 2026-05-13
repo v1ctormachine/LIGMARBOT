@@ -783,7 +783,11 @@
         if (typeof updateCombatSustainObservations === "function") {
           updateCombatSustainObservations(liveStFv);
         }
-        out.openerDangerPressureSample = plannerComputeOpenerDangerPressure(liveStFv);
+        const fvKey =
+          Runtime && Runtime.enemy && typeof Runtime.enemy.lastFoughtKey === "string" && Runtime.enemy.lastFoughtKey.trim()
+            ? Runtime.enemy.lastFoughtKey.trim()
+            : null;
+        out.openerDangerPressureSample = plannerComputeOpenerDangerPressure(liveStFv, fvKey ? { enemyKey: fvKey } : null);
       }
     } catch (eDpFv) {
       out.openerDangerPressureSampleError = String(eDpFv && eDpFv.message ? eDpFv.message : eDpFv);
@@ -2730,10 +2734,14 @@
         } catch (susErr) {
           /* best-effort */
         }
+        const dpKey =
+          Runtime && Runtime.enemy && typeof Runtime.enemy.lastFoughtKey === "string" && Runtime.enemy.lastFoughtKey.trim()
+            ? Runtime.enemy.lastFoughtKey.trim()
+            : null;
         let dp = null;
         let dpErr = null;
         try {
-          dp = plannerComputeOpenerDangerPressure(liveStDp);
+          dp = plannerComputeOpenerDangerPressure(liveStDp, dpKey ? { enemyKey: dpKey } : null);
         } catch (eDp) {
           dpErr = String(eDp && eDp.message ? eDp.message : eDp);
         }
@@ -2743,6 +2751,12 @@
           Number.isFinite(Config.planner.openerContextIncomingHpLossPressureCap)
             ? Math.max(0, Config.planner.openerContextIncomingHpLossPressureCap)
             : 2.5;
+        const calCap =
+          Config &&
+          Config.planner &&
+          Number.isFinite(Config.planner.openerContextCalibrationPressureCap)
+            ? Math.max(0, Config.planner.openerContextCalibrationPressureCap)
+            : 0.45;
         const dpOk =
           !dpErr &&
           dp &&
@@ -2757,6 +2771,10 @@
           Number.isFinite(dp.incomingPressure) &&
           dp.incomingPressure >= 0 &&
           dp.incomingPressure <= cap + 1e-3 &&
+          typeof dp.calibrationPressure === "number" &&
+          Number.isFinite(dp.calibrationPressure) &&
+          dp.calibrationPressure >= 0 &&
+          dp.calibrationPressure <= calCap + 1e-3 &&
           typeof dp.lowHpPressure === "number" &&
           Number.isFinite(dp.lowHpPressure) &&
           dp.lowHpPressure >= 0 &&
@@ -2767,7 +2785,10 @@
           ["none", "solo", "duo", "pack"].indexOf(dp.pullTier) >= 0 &&
           typeof dp.pullEnemyCount === "number" &&
           Number.isFinite(dp.pullEnemyCount) &&
-          dp.pullEnemyCount >= 0;
+          dp.pullEnemyCount >= 0 &&
+          (dp.calibrationRatio === null || (typeof dp.calibrationRatio === "number" && Number.isFinite(dp.calibrationRatio))) &&
+          (dp.calibrationHpDropSamples === null ||
+            (typeof dp.calibrationHpDropSamples === "number" && Number.isFinite(dp.calibrationHpDropSamples) && dp.calibrationHpDropSamples >= 0));
         addCheck(
           "planner_opener_danger_pressure_shape",
           dpOk,
@@ -2776,6 +2797,7 @@
                 totalPressure: dp.totalPressure,
                 incomingPressure: dp.incomingPressure,
                 incomingHpLossPerSec: dp.incomingHpLossPerSec,
+                calibrationPressure: dp.calibrationPressure,
                 enemyCountLive: dp.enemyCountLive,
                 pullTier: dp.pullTier
               }
@@ -2797,16 +2819,23 @@
         addCheck("planner_horizon_channel_hold_risk_shape", false, { error: "missing_plannerComputeHorizonChannelHoldRisk" }, false);
       } else {
         const liveStHr = typeof readBasicState === "function" ? readBasicState() : {};
+        const dpHrKey =
+          Runtime && Runtime.enemy && typeof Runtime.enemy.lastFoughtKey === "string" && Runtime.enemy.lastFoughtKey.trim()
+            ? Runtime.enemy.lastFoughtKey.trim()
+            : null;
         let dpHr = null;
         try {
-          dpHr = plannerComputeOpenerDangerPressure(liveStHr);
+          dpHr = plannerComputeOpenerDangerPressure(liveStHr, dpHrKey ? { enemyKey: dpHrKey } : null);
         } catch (eDpHr) {
           dpHr = null;
         }
         let hr0 = null;
         let hrErr = null;
         try {
-          hr0 = plannerComputeHorizonChannelHoldRisk(0.4, 25, liveStHr, dpHr && typeof dpHr === "object" ? { pressure: dpHr } : {});
+          hr0 = plannerComputeHorizonChannelHoldRisk(0.4, 25, liveStHr, {
+            pressure: dpHr && typeof dpHr === "object" ? dpHr : null,
+            enemyKey: dpHrKey || null
+          });
         } catch (eHr0) {
           hrErr = String(eHr0 && eHr0.message ? eHr0.message : eHr0);
         }
