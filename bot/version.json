@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.180",
-    "description":  "TEST: Natural Sniper pass when fresh window picks other opener",
-    "builtAt":  "2026-05-13T15:45:44.2481895+03:00",
+    "version":  "0.3.181",
+    "description":  "Combat: post-retarget cancel after find-enemy retarget too",
+    "builtAt":  "2026-05-13T15:55:19.9721273+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.181",
+                        "description":  "Combat: post-retarget cancel after find-enemy retarget too",
+                        "date":  "2026-05-13T15:55:19.9721273+03:00"
+                    },
                     {
                         "version":  "0.3.180",
                         "description":  "TEST: Natural Sniper pass when fresh window picks other opener",
@@ -247,11 +252,6 @@
                         "version":  "0.3.135",
                         "description":  "skills: separator-free master lookup",
                         "date":  "2026-05-11T23:06:02.4163063+03:00"
-                    },
-                    {
-                        "version":  "0.3.134",
-                        "description":  "test: soften partial ranked soak timeout",
-                        "date":  "2026-05-11T22:58:30.4041713+03:00"
                     }
                 ]
 }

@@ -2339,7 +2339,7 @@
     };
   }
 
-  // AI CHANGED: After attackers-popup re-target, the first HP>0 verify already happened inside clickAttackersRetargetVerified(); cancel immediately from that confirmed state.
+  // AI CHANGED: After mid-pull re-target (attackers popup or find-enemy), tap cancel UI once so the game's default incoming swing does not race our opener / queue. Target must already be acquired (HP bar valid).
   async function performPostAttackersRetargetCancel() {
     const now = readBasicState();
     const targetReady = !!(
@@ -3365,14 +3365,18 @@
               Logger.warn("LOOP", "Target HP not detected after re-find; continuing by enemy-count logic");
             }
           }
-          if (refindOk && refindOk.via === "attackers_popup") {
-            const postRetargetCancel = await performPostAttackersRetargetCancel();
-            if (!postRetargetCancel.ok) {
-              Logger.warn("LOOP", "Post-attackers-retarget cancel pre-step failed", postRetargetCancel);
-              break;
-            }
-            Logger.log("LOOP", "Post-attackers-retarget cancel pre-step complete", postRetargetCancel);
+          // AI CHANGED: Cancel default auto-swing after any successful re-find (not only attackers_popup) so find-enemy retarget matches popup behavior before firstBurstAfterRetarget / queue.
+          const postRetargetCancel = await performPostAttackersRetargetCancel();
+          if (!postRetargetCancel.ok) {
+            Logger.warn("LOOP", "Post-retarget cancel pre-step failed", postRetargetCancel);
+            break;
           }
+          if (!postRetargetCancel.clickedCancel) {
+            Logger.warn("LOOP", "Post-retarget cancel: no cancel UI clicked — default auto-attack may still be winding", {
+              via: refindOk && refindOk.via ? refindOk.via : null
+            });
+          }
+          Logger.log("LOOP", "Post-retarget cancel pre-step complete", postRetargetCancel);
           current = readBasicState();
           if (typeof current.combat.enemyCount === "number" && current.combat.enemyCount <= 0) {
             Logger.log("LOOP", "Enemies cleared during re-find after kill");
