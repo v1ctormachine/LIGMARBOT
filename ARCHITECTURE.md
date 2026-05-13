@@ -329,7 +329,7 @@ The script **only reads the red target HP bar** every poll tick. It **does not**
 
 **Auto-farm + planner (optional hooks)**
 
-1. **Planner** — no panel toggles; boot loads **`ligmarbot.plannerUi.v1`** if present (legacy saves from older builds). Otherwise use defaults in **`10-config.js`** or set live: **`ligmarBot.Config.planner.*`**. **Persist after console edits:** **`ligmarBot.savePlannerUiPrefs()`** (returns **`{ ok, planner, storageKey }`**), or **`ligmarBot.saveAllUiPrefs()`** with opener ms; **`loadAllUiPrefs()`** reapplies both and refreshes panel numbers.
+1. **Planner** — no panel toggles; boot loads **`ligmarbot.plannerUi.v1`** if present (legacy saves from older builds). Fields include ranked flags plus **`openerFollowUpSkillDepth`** (**0–4**, default from **`10-config.js`** when absent). Otherwise use defaults in **`10-config.js`** or set live: **`ligmarBot.Config.planner.*`**. **Persist after console edits:** **`ligmarBot.savePlannerUiPrefs()`** (returns **`{ ok, planner, storageKey }`**), or **`ligmarBot.saveAllUiPrefs()`** with opener ms; **`loadAllUiPrefs()`** reapplies both and refreshes panel numbers.
 2. From console:  
    `ligmarBot.Config.planner.recordEnemyDbBeforeAttack = true` — **`recordTargetToEnemyDb()`** after target acquire, before basic attacks.  
    `ligmarBot.Config.planner.logPlannerAfterSecureTile = true` — after combat clears, **`[PLANNER]`** log with **`lastFoughtKey`** and **`hasHpDropCalibration`**.  

@@ -238,7 +238,12 @@
       recordEnemyDbBeforeAttack: !!Config.planner.recordEnemyDbBeforeAttack,
       logPlannerAfterSecureTile: !!Config.planner.logPlannerAfterSecureTile,
       useRankedAttackSkillsInCombat: !!Config.planner.useRankedAttackSkillsInCombat,
-      useRankedSkillOnlyFirstBurstAfterFind: !!Config.planner.useRankedSkillOnlyFirstBurstAfterFind
+      useRankedSkillOnlyFirstBurstAfterFind: !!Config.planner.useRankedSkillOnlyFirstBurstAfterFind,
+      // AI CHANGED: Queue+horizon lookahead depth (0–4); survives refresh via ligmarbot.plannerUi.v1.
+      openerFollowUpSkillDepth:
+        Number.isFinite(Config.planner.openerFollowUpSkillDepth) && Config.planner.openerFollowUpSkillDepth >= 0
+          ? Math.max(0, Math.min(4, Math.floor(Config.planner.openerFollowUpSkillDepth)))
+          : 2
     };
   }
 
@@ -260,6 +265,9 @@
       }
       if (typeof p.useRankedSkillOnlyFirstBurstAfterFind === "boolean") {
         Config.planner.useRankedSkillOnlyFirstBurstAfterFind = p.useRankedSkillOnlyFirstBurstAfterFind;
+      }
+      if (Number.isFinite(p.openerFollowUpSkillDepth) && p.openerFollowUpSkillDepth >= 0 && p.openerFollowUpSkillDepth <= 4) {
+        Config.planner.openerFollowUpSkillDepth = Math.max(0, Math.min(4, Math.floor(p.openerFollowUpSkillDepth)));
       }
       return { ok: true, fromStorage: true, planner: plannerPrefsSnapshot() };
     } catch (err) {
@@ -1607,6 +1615,10 @@
           visibleCastBarTexts: typeof readVisibleCombatCastBarTexts === "function" ? readVisibleCombatCastBarTexts() : [],
           postProgressSettleMs: Number.isFinite(Config.combat.combatQueuePostProgressSettleMs) ? Config.combat.combatQueuePostProgressSettleMs : null,
           // AI CHANGED: Queue v3 — planner lookahead depth for `plannerBuildCombatQueueAction` (same knob as opener follow-up horizon).
+          configOpenerFollowUpSkillDepth:
+            Number.isFinite(Config.planner && Config.planner.openerFollowUpSkillDepth)
+              ? Math.max(0, Math.min(4, Math.floor(Config.planner.openerFollowUpSkillDepth)))
+              : null,
           queueScoreDepth:
             Config.planner && Config.planner.openerFollowUpSkillQueueEnabled === false
               ? 0

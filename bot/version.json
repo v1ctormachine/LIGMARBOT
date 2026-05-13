@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.197",
-    "description":  "default openerFollowUpSkillDepth 2 for queue+horizon lookahead",
-    "builtAt":  "2026-05-13T19:42:59.2939481+03:00",
+    "version":  "0.3.198",
+    "description":  "plannerUi prefs persist openerFollowUpSkillDepth",
+    "builtAt":  "2026-05-13T19:49:39.8807686+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.198",
+                        "description":  "plannerUi prefs persist openerFollowUpSkillDepth",
+                        "date":  "2026-05-13T19:49:39.8807686+03:00"
+                    },
                     {
                         "version":  "0.3.197",
                         "description":  "default openerFollowUpSkillDepth 2 for queue+horizon lookahead",
@@ -247,11 +252,6 @@
                         "version":  "0.3.149",
                         "description":  "combat queue and retarget stability",
                         "date":  "2026-05-12T21:37:12.0598076+03:00"
-                    },
-                    {
-                        "version":  "0.3.148",
-                        "description":  "combat: attackers popup fast retarget after one kill in multi-mob pull",
-                        "date":  "2026-05-12T21:05:23.9666860+03:00"
                     }
                 ]
 }
