@@ -325,7 +325,7 @@
       openerContextFreshTargetDotPenaltyInBasicDps: 0.18,
       // AI CHANGED: Rotation-aware opener scoring — after the opener, allow one queued follow-up skill instead of assuming basics-only.
       openerFollowUpSkillQueueEnabled: true,
-      // AI CHANGED: Queue depth 1 = opener plus one follow-up skill. Keep small for speed/stability.
+      // AI CHANGED: Horizon + runtime queue scoring — lookahead steps after opener/current action (0 = basics-only tail). In-game queue is still one pending click; higher depth picks a better “next” from multi-step paper value.
       openerFollowUpSkillDepth: 1,
       // AI CHANGED: Mild cooldown-aware forecast — penalize very long-cooldown openers a little when their cooldown extends far beyond the simulated horizon.
       openerCooldownForecastEnabled: true,

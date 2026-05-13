@@ -2729,6 +2729,21 @@
     };
   }
 
+  // AI CHANGED: Same lookahead depth as opener follow-up scoring — runtime queue still sends one bar click per step; depth only changes which skill wins “next queue”.
+  function plannerResolveCombatQueueScoreDepth(userOpts) {
+    const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
+    if (Number.isFinite(opts.queueScoreDepth) && opts.queueScoreDepth >= 0) {
+      return Math.floor(opts.queueScoreDepth);
+    }
+    if (Config.planner && Config.planner.openerFollowUpSkillQueueEnabled === false) {
+      return 0;
+    }
+    const d = Number.isFinite(Config.planner && Config.planner.openerFollowUpSkillDepth)
+      ? Math.floor(Config.planner.openerFollowUpSkillDepth)
+      : 1;
+    return Math.max(0, d);
+  }
+
   // AI CHANGED: Runtime queue v1 — resolve the next buffered non-charge/basic combat action from the planner's follow-up scoring.
   function plannerBuildCombatQueueAction(userOpts) {
     const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
@@ -2767,7 +2782,7 @@
           mobFactor: plannerMobCalibrationFactorForKey(key)
         },
         {
-          depth: 1,
+          depth: plannerResolveCombatQueueScoreDepth(opts),
           excludeSlot: Number.isFinite(opts.afterSlot) ? opts.afterSlot : null,
           mpAvailable: Number.isFinite(opts.mpAvailable)
             ? opts.mpAvailable

@@ -1560,6 +1560,15 @@
           trigger: "progress_bar_name_match",
           visibleCastBarTexts: typeof readVisibleCombatCastBarTexts === "function" ? readVisibleCombatCastBarTexts() : [],
           postProgressSettleMs: Number.isFinite(Config.combat.combatQueuePostProgressSettleMs) ? Config.combat.combatQueuePostProgressSettleMs : null,
+          // AI CHANGED: Queue v3 — planner lookahead depth for `plannerBuildCombatQueueAction` (same knob as opener follow-up horizon).
+          queueScoreDepth:
+            Config.planner && Config.planner.openerFollowUpSkillQueueEnabled === false
+              ? 0
+              : (
+                  Number.isFinite(Config.planner && Config.planner.openerFollowUpSkillDepth)
+                    ? Math.max(0, Math.floor(Config.planner.openerFollowUpSkillDepth))
+                    : 1
+                ),
           queuedActionArmed: queueEvents && Number.isFinite(queueEvents.queued_action_armed) ? queueEvents.queued_action_armed : 0,
           queuedActionFired: queueEvents && Number.isFinite(queueEvents.queued_action_fired) ? queueEvents.queued_action_fired : 0,
           runtimeQueue: queueRt ? Object.assign({}, queueRt) : null
