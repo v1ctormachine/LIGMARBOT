@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.172",
-    "description":  "Canvas miss/dodge: hook fillText+strokeText for combat labels; optional dodge substrings; TEST Canvas miss hook",
-    "builtAt":  "2026-05-13T13:02:56.6117153+03:00",
+    "version":  "0.3.173",
+    "description":  "Remove canvas2d miss hook; keep DOM miss_text observe + DB merge",
+    "builtAt":  "2026-05-13T13:10:09.0584055+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.173",
+                        "description":  "Remove canvas2d miss hook; keep DOM miss_text observe + DB merge",
+                        "date":  "2026-05-13T13:10:09.0584055+03:00"
+                    },
                     {
                         "version":  "0.3.172",
                         "description":  "Canvas miss/dodge: hook fillText+strokeText for combat labels; optional dodge substrings; TEST Canvas miss hook",
@@ -247,11 +252,6 @@
                         "version":  "0.3.127",
                         "description":  "test: opportunity-aware natural sniper probe",
                         "date":  "2026-05-11T22:24:01.5464002+03:00"
-                    },
-                    {
-                        "version":  "0.3.126",
-                        "description":  "test: live natural sniper probe",
-                        "date":  "2026-05-11T22:16:39.6192171+03:00"
                     }
                 ]
 }

@@ -523,8 +523,7 @@
       auto_farm_reliability: "Combat reliability",
       auto_farm_session_summary: "Auto-farm session",
       planner_ranked_openers: "Ranked opener",
-      calibration_observe: "Calibration",
-      damage_canvas2d_hook: "Canvas miss hook"
+      calibration_observe: "Calibration"
     };
   }
 
@@ -2833,44 +2832,6 @@
           calibrationError = String(err && err.message ? err.message : err);
           Logger.warn("TEST", "quickCalibrationSession failed", err);
           addCheck("calibration_observe", false, { error: calibrationError }, strictCalibration);
-        }
-        // AI CHANGED: Canvas2d combat-text hook should install when TEST calibration requests miss scan (soft — rare environments may lack fillText).
-        try {
-          if (!runCalibration) {
-            addCheck("damage_canvas2d_hook", true, { skipped: true, reason: "calibration_skipped" }, false);
-          } else if (calibrationError) {
-            addCheck(
-              "damage_canvas2d_hook",
-              true,
-              { skipped: true, reason: "calibration_failed", error: calibrationError },
-              false
-            );
-          } else {
-            const md = calibration && calibration.missDiagnostics ? calibration.missDiagnostics : null;
-            const wantHook = md && md.hookCanvas2dCombatText === true;
-            if (!wantHook) {
-              addCheck("damage_canvas2d_hook", true, { skipped: true, reason: "miss_scan_or_hook_off" }, false);
-            } else {
-              const installed = !!(md && md.canvas2dCombatTextHookInstalled);
-              addCheck(
-                "damage_canvas2d_hook",
-                installed,
-                {
-                  canvas2dCombatTextHookInstalled: installed,
-                  missTextEventCount: md && Number.isFinite(md.missTextEventCount) ? md.missTextEventCount : null,
-                  dodgeTextEventCount: md && Number.isFinite(md.dodgeTextEventCount) ? md.dodgeTextEventCount : null
-                },
-                false
-              );
-            }
-          }
-        } catch (hookChkErr) {
-          addCheck(
-            "damage_canvas2d_hook",
-            false,
-            { error: String(hookChkErr && hookChkErr.message ? hookChkErr.message : hookChkErr) },
-            false
-          );
         }
         Logger.log("TEST", "bundle done");
       }

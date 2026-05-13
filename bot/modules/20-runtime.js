@@ -162,9 +162,7 @@
     damage: {
       lastSession: null,
       observedAt: null,
-      lastError: null,
-      // AI CHANGED: True after CanvasRenderingContext2D fillText/strokeText hook installed (83-damage-observe.js).
-      canvas2dCombatTextHookInstalled: false
+      lastError: null
     },
     // AI CHANGED: Phase C3 -- enemy profile snapshots + accumulated DB (see 84-enemy.js).
     enemy: {
