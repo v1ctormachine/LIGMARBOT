@@ -522,6 +522,7 @@
       auto_farm_reliability: "Combat reliability",
       auto_farm_session_summary: "Auto-farm session",
       field_validation_snapshot: "Field validation",
+      logger_recent_ring: "Logger ring",
       planner_ranked_openers: "Ranked opener",
       calibration_observe: "Calibration"
     };
@@ -973,6 +974,38 @@
     } catch (e) {
       return false;
     }
+  }
+
+  // AI CHANGED: Soak triage — graceful auto-farm stop + copy last N Logger ring lines (panel STOP+COPY LOGS, no manual console steps).
+  function copyIssueReportLogsForSupport(userOpts) {
+    const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
+    const lineCount = Number.isFinite(opts.lines) && opts.lines > 0 ? Math.min(200, Math.floor(opts.lines)) : 30;
+    const stopFarm = opts.stopFarm !== false;
+    let stopRes = { ok: true, message: "skip_stop" };
+    if (stopFarm && typeof stopAutoFarmLoop === "function") {
+      stopRes = stopAutoFarmLoop();
+    }
+    Logger.log("UI", "ISSUE_REPORT_CLIP", {
+      version: BotVersion.version,
+      linesRequested: lineCount,
+      farmStop: stopRes,
+      via: opts.via || "api"
+    });
+    const inner =
+      typeof Logger.getRecentLogLinesText === "function" ? Logger.getRecentLogLinesText(lineCount) : "";
+    const clip =
+      "---LIGMARBOT_ISSUE_LOG_CLIP_START---\n" +
+      "version: " + String(BotVersion.version) + "\n" +
+      "description: " + String(BotVersion.description || "") + "\n" +
+      "farmStop: " + JSON.stringify(stopRes) + "\n" +
+      "logLines: " + String(lineCount) + " (newest at bottom)\n" +
+      "---\n" +
+      inner +
+      "\n---LIGMARBOT_ISSUE_LOG_CLIP_END---";
+    return Promise.resolve(tryCopyTestExportToClipboard(clip)).then(function (copiedOk) {
+      Logger.log("UI", "ISSUE_REPORT_CLIPBOARD", { ok: !!copiedOk, chars: clip.length, lines: lineCount });
+      return { ok: true, copied: !!copiedOk, chars: clip.length, lines: lineCount, farmStop: stopRes };
+    });
   }
 
   // AI CHANGED: Highlight DevTools copy region + Logger lines filterable by [TEST].
@@ -2723,6 +2756,19 @@
         );
       }
 
+      // AI CHANGED: Logger ring buffer exists and captured this TEST run (supports STOP+COPY LOGS soak workflow).
+      try {
+        const tail = typeof Logger.getRecentLogLines === "function" ? Logger.getRecentLogLines(5) : [];
+        addCheck("logger_recent_ring", tail.length > 0, { bufferedTailSample: tail.length, ringCap: 200 }, false);
+      } catch (ringErr) {
+        addCheck(
+          "logger_recent_ring",
+          false,
+          { error: String(ringErr && ringErr.message ? ringErr.message : ringErr) },
+          false
+        );
+      }
+
       // AI CHANGED: Master skill DB smoke — auto-detect class from profile icon via applySkillMasterToSlots();
       // fail the check when there are scanned skills but zero master matches.
       try {
@@ -3101,7 +3147,7 @@
             const line =
               (res && res.testReportLine) ? res.testReportLine : (res && res.ok ? "Test result: OK (no report line)" : "Test result: failed");
             testResultLine.textContent =
-              line + " — New tab = full JSON (paste to AI). Clipboard auto-copy tried; if blocked, use Copy in tab.";
+              line + " — Export tab + JSON clipboard tried.";
             testResultLine.style.color = res && res.ok ? "#7dffb3" : "#ff6b6b";
             testResultLine.style.fontSize = "9px";
           }
@@ -3130,13 +3176,52 @@
 
     // AI CHANGED: last TEST pass/fail line — filled when runUiTestBundle resolves (no manual console steps).
     const testResultLine = document.createElement("div");
-    testResultLine.textContent = "Test result: — (TEST opens export tab + tries clipboard)";
+    testResultLine.textContent = "Test result: — (full suite via TEST)";
     testResultLine.style.fontSize = "10px";
     testResultLine.style.lineHeight = "1.35";
     testResultLine.style.marginBottom = "8px";
     testResultLine.style.opacity = "0.85";
     testResultLine.style.wordBreak = "break-word";
     panel.appendChild(testResultLine);
+
+    // AI CHANGED: Soak — one click stops auto-farm and copies last 30 Logger lines (paste to AI); no manual DevTools selection.
+    const issueStopCopyButton = makeButton("STOP + COPY LOGS", "#c94b7d", "#e06699", function () {
+      Promise.resolve(copyIssueReportLogsForSupport({ lines: 30, via: "panel" }))
+        .then(function (res) {
+          if (Runtime.ui.issueReportLine) {
+            const copied = res && res.copied;
+            Runtime.ui.issueReportLine.textContent = copied
+              ? "Issue clip: copied last 30 bot log lines (farm stop requested if it was ON)."
+              : "Issue clip: clipboard failed — click again or use ligmarBot.copyIssueReportLogs() after a user gesture.";
+            Runtime.ui.issueReportLine.style.color = copied ? "#9ecbff" : "#ff6b6b";
+            Runtime.ui.issueReportLine.style.fontSize = "9px";
+          }
+        })
+        .catch(function (err) {
+          Logger.warn("UI", "ISSUE_REPORT_CLIP rejected", err);
+          if (Runtime.ui.issueReportLine) {
+            Runtime.ui.issueReportLine.textContent =
+              "Issue clip: error — " + String(err && err.message ? err.message : err);
+            Runtime.ui.issueReportLine.style.color = "#ff6b6b";
+          }
+        })
+        .finally(function () {
+          setTimeout(updateControlPanelStatus, 50);
+        });
+    });
+    issueStopCopyButton.style.flex = "none";
+    issueStopCopyButton.style.width = "100%";
+    issueStopCopyButton.style.marginBottom = "4px";
+    panel.appendChild(issueStopCopyButton);
+
+    const issueReportLine = document.createElement("div");
+    issueReportLine.textContent = "Issue clip: — (use during soak if something looks wrong)";
+    issueReportLine.style.fontSize = "9px";
+    issueReportLine.style.lineHeight = "1.35";
+    issueReportLine.style.marginBottom = "8px";
+    issueReportLine.style.opacity = "0.8";
+    issueReportLine.style.wordBreak = "break-word";
+    panel.appendChild(issueReportLine);
 
     // ---- Phase block (the "what is the bot doing right now" area) ------
     const phaseWrap = document.createElement("div");
@@ -3201,6 +3286,8 @@
     Runtime.ui.phaseSinceNode = phaseSinceNode;
     Runtime.ui.testButton = testButton;
     Runtime.ui.testResultLine = testResultLine;
+    Runtime.ui.issueStopCopyButton = issueStopCopyButton;
+    Runtime.ui.issueReportLine = issueReportLine;
     Runtime.ui.combatGraceInput = null;
     Runtime.ui.combatEarlyCancelInput = null;
 

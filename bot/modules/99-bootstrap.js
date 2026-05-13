@@ -198,6 +198,9 @@
         }
         return { ok: true, snapshot: buildFieldValidationSnapshotForTestExport() };
       },
+      // AI CHANGED: Soak issue clip — same as panel STOP+COPY LOGS (`lines`, `stopFarm`, `via`); returns Promise<{ ok, copied, … }>.
+      copyIssueReportLogs:
+        typeof copyIssueReportLogsForSupport === "function" ? copyIssueReportLogsForSupport : null,
       // AI CHANGED: Phase C0 -- skill scanner public API. scanSkills() is the only "active" call;
       // the rest are getters / cache helpers for inspection and recovery.
       scanSkills: scanSkills,

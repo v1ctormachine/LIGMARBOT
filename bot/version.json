@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.175",
-    "description":  "Field validation: gameSnapshotEnd.fieldValidation + getFieldValidationSnapshot + TEST check",
-    "builtAt":  "2026-05-13T13:39:27.2610495+03:00",
+    "version":  "0.3.176",
+    "description":  "Soak: STOP+COPY last 30 log lines, Logger ring buffer, TEST Logger ring check",
+    "builtAt":  "2026-05-13T13:49:01.7652840+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.176",
+                        "description":  "Soak: STOP+COPY last 30 log lines, Logger ring buffer, TEST Logger ring check",
+                        "date":  "2026-05-13T13:49:01.7652840+03:00"
+                    },
                     {
                         "version":  "0.3.175",
                         "description":  "Field validation: gameSnapshotEnd.fieldValidation + getFieldValidationSnapshot + TEST check",
@@ -247,11 +252,6 @@
                         "version":  "0.3.130",
                         "description":  "skills: unmatched master DB diagnostics",
                         "date":  "2026-05-11T22:47:42.2531329+03:00"
-                    },
-                    {
-                        "version":  "0.3.129",
-                        "description":  "planner: cooldown-aware opener forecast",
-                        "date":  "2026-05-11T22:41:25.6894008+03:00"
                     }
                 ]
 }
