@@ -882,40 +882,6 @@
         : releaseDamageRaw;
     const wastedOverkillDamage = Math.max(0, releaseDamageRaw - releaseDamage);
     const followUpBasicDamage = Math.max(0, horizonSec - chargePlan.releaseSec) * basicDps;
-    const enemyCountLive =
-      liveState &&
-      liveState.combat &&
-      typeof liveState.combat.enemyCount === "number"
-        ? liveState.combat.enemyCount
-        : 0;
-    const extraEnemies = enemyCountLive > 1 ? enemyCountLive - 1 : 0;
-    const extraEnemyPenaltyCoeff =
-      Config.planner && Number.isFinite(Config.planner.chargeSkillHoldExtraEnemyPenaltyInBasicDps)
-        ? Math.max(0, Config.planner.chargeSkillHoldExtraEnemyPenaltyInBasicDps)
-        : 0.08;
-    const multiMobHoldPenalty = chargePlan.releaseSec * basicDps * extraEnemyPenaltyCoeff * extraEnemies;
-    const playerHpPct =
-      liveState &&
-      liveState.player &&
-      liveState.player.hp &&
-      liveState.player.hp.valid &&
-      Number.isFinite(liveState.player.hp.pct)
-        ? liveState.player.hp.pct
-        : null;
-    const lowHpThreshold =
-      Config.planner && Number.isFinite(Config.planner.chargeSkillHoldLowHpThresholdPct)
-        ? Math.min(1, Math.max(0, Config.planner.chargeSkillHoldLowHpThresholdPct))
-        : 0.6;
-    const lowHpPenaltyCoeff =
-      Config.planner && Number.isFinite(Config.planner.chargeSkillHoldLowHpPenaltyInBasicDps)
-        ? Math.max(0, Config.planner.chargeSkillHoldLowHpPenaltyInBasicDps)
-        : 0.12;
-    const lowHpRatio =
-      Number.isFinite(playerHpPct) && lowHpThreshold > 0 && playerHpPct < lowHpThreshold
-        ? (lowHpThreshold - playerHpPct) / lowHpThreshold
-        : 0;
-    const lowHpHoldPenalty = chargePlan.releaseSec * basicDps * lowHpPenaltyCoeff * lowHpRatio;
-    const holdRiskPenalty = multiMobHoldPenalty + lowHpHoldPenalty;
     const followUpAction = plannerBestFollowUpActionValue(
       Math.max(0, horizonSec - chargePlan.releaseSec),
       opts.enemyKey || null,
@@ -946,7 +912,11 @@
       liveState
     );
     const execute = plannerComputeExecuteCandidate(skillShape, chargePlan.releaseSec, expectedBasicHit, liveState);
-    const totalDamage = releaseDamage + followUpAction.value - holdRiskPenalty - cooldownForecast.penalty + contextAdjustment.total;
+    const totalDamage = releaseDamage + followUpAction.value - cooldownForecast.penalty + contextAdjustment.total;
+    const hrDiag =
+      contextAdjustment && contextAdjustment.channelHoldRisk
+        ? contextAdjustment.channelHoldRisk
+        : plannerComputeHorizonChannelHoldRisk(chargePlan.releaseSec, basicDps, liveState, {});
     return {
       horizonFit: horizonSec >= chargePlan.releaseSec,
       blockedSec: Math.min(horizonSec, chargePlan.releaseSec),
@@ -960,11 +930,11 @@
       cooldownSec: cooldownForecast.cooldownSec,
       cooldownExcessSec: cooldownForecast.excessSec,
       cooldownOpportunityPenalty: cooldownForecast.penalty,
-      holdRiskPenalty: +holdRiskPenalty.toFixed(2),
-      multiMobHoldPenalty: +multiMobHoldPenalty.toFixed(2),
-      lowHpHoldPenalty: +lowHpHoldPenalty.toFixed(2),
-      enemyCountLive: enemyCountLive,
-      playerHpPct: Number.isFinite(playerHpPct) ? +playerHpPct.toFixed(4) : null,
+      holdRiskPenalty: hrDiag.penalty,
+      multiMobHoldPenalty: hrDiag.multiMobHoldPenalty,
+      lowHpHoldPenalty: hrDiag.lowHpHoldPenalty,
+      enemyCountLive: hrDiag.enemyCountLive,
+      playerHpPct: hrDiag.playerHpPct,
       targetHpCur: Number.isFinite(targetHpCur) ? +targetHpCur.toFixed(2) : null,
       skillShape: skillShape,
       contextAdjustment: contextAdjustment,
@@ -1296,8 +1266,82 @@
     };
   }
 
+  // AI CHANGED: Horizon single authority — channel-hold risk (multi-mob + low player HP) lives here only; charge candidate scoring and opener context share the same numbers/parts.
+  function plannerComputeHorizonChannelHoldRisk(castBlockedSec, basicDps, liveState, userOpts) {
+    const out = {
+      penalty: 0,
+      multiMobHoldPenalty: 0,
+      lowHpHoldPenalty: 0,
+      enemyCountLive: 0,
+      playerHpPct: null,
+      parts: []
+    };
+    if (!(castBlockedSec > 0) || !(basicDps > 0)) {
+      return out;
+    }
+    const enemyCountLive =
+      liveState &&
+      liveState.combat &&
+      typeof liveState.combat.enemyCount === "number"
+        ? liveState.combat.enemyCount
+        : 0;
+    out.enemyCountLive = enemyCountLive;
+    const extraEnemies = enemyCountLive > 1 ? enemyCountLive - 1 : 0;
+    const extraEnemyPenaltyCoeff =
+      Config.planner && Number.isFinite(Config.planner.chargeSkillHoldExtraEnemyPenaltyInBasicDps)
+        ? Math.max(0, Config.planner.chargeSkillHoldExtraEnemyPenaltyInBasicDps)
+        : 0.08;
+    const multiMobHoldPenalty = castBlockedSec * basicDps * extraEnemyPenaltyCoeff * extraEnemies;
+    out.multiMobHoldPenalty = +multiMobHoldPenalty.toFixed(2);
+    const playerHpPct =
+      liveState &&
+      liveState.player &&
+      liveState.player.hp &&
+      liveState.player.hp.valid &&
+      Number.isFinite(liveState.player.hp.pct)
+        ? liveState.player.hp.pct
+        : null;
+    out.playerHpPct = Number.isFinite(playerHpPct) ? +playerHpPct.toFixed(4) : null;
+    const lowHpThreshold =
+      Config.planner && Number.isFinite(Config.planner.chargeSkillHoldLowHpThresholdPct)
+        ? Math.min(1, Math.max(0, Config.planner.chargeSkillHoldLowHpThresholdPct))
+        : 0.6;
+    const lowHpPenaltyCoeff =
+      Config.planner && Number.isFinite(Config.planner.chargeSkillHoldLowHpPenaltyInBasicDps)
+        ? Math.max(0, Config.planner.chargeSkillHoldLowHpPenaltyInBasicDps)
+        : 0.12;
+    const lowHpRatio =
+      Number.isFinite(playerHpPct) && lowHpThreshold > 0 && playerHpPct < lowHpThreshold
+        ? (lowHpThreshold - playerHpPct) / lowHpThreshold
+        : 0;
+    const lowHpHoldPenalty = castBlockedSec * basicDps * lowHpPenaltyCoeff * lowHpRatio;
+    out.lowHpHoldPenalty = +lowHpHoldPenalty.toFixed(2);
+    const holdRiskPenalty = multiMobHoldPenalty + lowHpHoldPenalty;
+    out.penalty = +holdRiskPenalty.toFixed(2);
+    if (multiMobHoldPenalty > 0) {
+      out.parts.push({
+        type: "hold_multimob_penalty",
+        add: -+multiMobHoldPenalty.toFixed(2),
+        extraEnemies: extraEnemies,
+        castBlockedSec: +castBlockedSec.toFixed(3)
+      });
+    }
+    if (lowHpHoldPenalty > 0) {
+      out.parts.push({
+        type: "hold_low_hp_penalty",
+        add: -+lowHpHoldPenalty.toFixed(2),
+        lowHpRatio: +lowHpRatio.toFixed(4),
+        castBlockedSec: +castBlockedSec.toFixed(3)
+      });
+    }
+    if (userOpts && userOpts.note) {
+      out.note = userOpts.note;
+    }
+    return out;
+  }
+
   // AI CHANGED: Enemy-state-aware opener score nudges openers based on live danger, calm safe-setup windows, finisher urgency, and multi-target opportunity.
-  function plannerComputeOpenerContextAdjustment(slot, castBlockedSec, skillShape, basicDps, expectedBasicHit, liveState) {
+  function plannerComputeOpenerContextAdjustment(slot, castBlockedSec, skillShape, basicDps, expectedBasicHit, liveState, contextOpts) {
     const out = {
       total: 0,
       pressure: plannerComputeOpenerDangerPressure(liveState),
@@ -1309,6 +1353,22 @@
       parts: []
     };
     if (Config.planner.openerContextAwareScoringEnabled === false || !(basicDps > 0)) {
+      if (
+        Config.planner.openerContextAwareScoringEnabled === false &&
+        basicDps > 0 &&
+        slot &&
+        typeof plannerGetChargeSkillEffect === "function" &&
+        plannerGetChargeSkillEffect(slot) &&
+        castBlockedSec > 0
+      ) {
+        const hr = plannerComputeHorizonChannelHoldRisk(castBlockedSec, basicDps, liveState, {});
+        out.total -= hr.penalty;
+        out.channelHoldRisk = hr;
+        for (let hi = 0; hi < hr.parts.length; hi += 1) {
+          out.parts.push(hr.parts[hi]);
+        }
+        out.total = +out.total.toFixed(2);
+      }
       return out;
     }
     const conception = plannerResolveSlotConception(slot);
@@ -1342,7 +1402,9 @@
     const castPressureCoeff = Number.isFinite(Config.planner.openerContextCastPressurePenaltyInBasicDps)
       ? Math.max(0, Config.planner.openerContextCastPressurePenaltyInBasicDps)
       : 0.12;
-    if (pressure.totalPressure > 0 && castBlockedSec > 0.35 && castPressureCoeff > 0) {
+    const isChargeChannelSkill =
+      !!(slot && typeof plannerGetChargeSkillEffect === "function" && plannerGetChargeSkillEffect(slot));
+    if (!isChargeChannelSkill && pressure.totalPressure > 0 && castBlockedSec > 0.35 && castPressureCoeff > 0) {
       const penalty = castBlockedSec * basicDps * pressure.totalPressure * castPressureCoeff;
       if (penalty > 0) {
         out.total -= penalty;
@@ -1539,6 +1601,16 @@
             add: -+penalty.toFixed(2),
             urgency: +urgency.toFixed(3)
           });
+        }
+      }
+    }
+    if (isChargeChannelSkill && castBlockedSec > 0) {
+      const hr = plannerComputeHorizonChannelHoldRisk(castBlockedSec, basicDps, liveState, {});
+      out.channelHoldRisk = hr;
+      if (hr.penalty > 0) {
+        out.total -= hr.penalty;
+        for (let hi = 0; hi < hr.parts.length; hi += 1) {
+          out.parts.push(hr.parts[hi]);
         }
       }
     }
@@ -2826,7 +2898,14 @@
         const d = score && Number.isFinite(score.totalDamage) ? score.totalDamage : 0;
         const candMin = plannerResolveCandidateMinImprovementFraction(cand.record, minFrac, { defaultSource: minFracSource });
         const candThreshold = baselineTotal * (1 + candMin.minFrac);
-        const cooldownForecast = plannerComputeCooldownForecastPenalty(cand.record, horizonSec, plannerAdjustedBasicDps(paper && Number.isFinite(paper.dps) ? paper.dps : 0, horizonMobFactor));
+        const cooldownForecast =
+          score && score.cooldownForecast && typeof score.cooldownForecast === "object"
+            ? score.cooldownForecast
+            : plannerComputeCooldownForecastPenalty(
+                cand.record,
+                horizonSec,
+                plannerAdjustedBasicDps(paper && Number.isFinite(paper.dps) ? paper.dps : 0, horizonMobFactor)
+              );
         const passesThreshold = d > candThreshold;
         scored.push({
           slot: cand.idx,
