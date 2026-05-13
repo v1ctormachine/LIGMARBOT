@@ -1,8 +1,63 @@
 ﻿{
-    "version":  "0.3.146",
-    "description":  "combat: idle explore heal to 75% HP with potions when enemyCount=0",
-    "builtAt":  "2026-05-12T20:08:39.3706981+03:00",
+    "version":  "0.3.157",
+    "description":  "AUTO chat: sync promo line v1ctorY; docs: Enemy DB scope + buff research roadmap",
+    "builtAt":  "2026-05-13T09:36:37.6280617+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.157",
+                        "description":  "AUTO chat: sync promo line v1ctorY; docs: Enemy DB scope + buff research roadmap",
+                        "date":  "2026-05-13T09:36:37.6280617+03:00"
+                    },
+                    {
+                        "version":  "0.3.156",
+                        "description":  "night resilience watchdog and auto refresh resume",
+                        "date":  "2026-05-13T00:24:58.7091300+03:00"
+                    },
+                    {
+                        "version":  "0.3.155",
+                        "description":  "AUTO local chat spammer in AUTO ON",
+                        "date":  "2026-05-12T23:56:47.0668534+03:00"
+                    },
+                    {
+                        "version":  "0.3.154",
+                        "description":  "combat retarget fast-path and safer post-retarget charge guard",
+                        "date":  "2026-05-12T23:08:10.2222590+03:00"
+                    },
+                    {
+                        "version":  "0.3.153",
+                        "description":  "combat retarget fast-path and safer post-retarget charge guard",
+                        "date":  "2026-05-12T23:08:00.5912357+03:00"
+                    },
+                    {
+                        "version":  "0.3.152",
+                        "description":  "progress-bar queue chaining",
+                        "date":  "2026-05-12T22:23:29.4506277+03:00"
+                    },
+                    {
+                        "version":  "0.3.151",
+                        "description":  "queue delay and retarget cancel",
+                        "date":  "2026-05-12T21:56:31.1819830+03:00"
+                    },
+                    {
+                        "version":  "0.3.150",
+                        "description":  "charge verify fast fallback",
+                        "date":  "2026-05-12T21:49:06.2633596+03:00"
+                    },
+                    {
+                        "version":  "0.3.149",
+                        "description":  "combat queue and retarget stability",
+                        "date":  "2026-05-12T21:37:12.0598076+03:00"
+                    },
+                    {
+                        "version":  "0.3.148",
+                        "description":  "combat: attackers popup fast retarget after one kill in multi-mob pull",
+                        "date":  "2026-05-12T21:05:23.9666860+03:00"
+                    },
+                    {
+                        "version":  "0.3.147",
+                        "description":  "combat: require target HP \u003e 0 after find enemy before attacking",
+                        "date":  "2026-05-12T20:51:56.8672696+03:00"
+                    },
                     {
                         "version":  "0.3.146",
                         "description":  "combat: idle explore heal to 75% HP with potions when enemyCount=0",
@@ -197,61 +252,6 @@
                         "version":  "0.3.111",
                         "description":  "TEST waits for Sniper Shot readiness and requires actual forced use",
                         "date":  "2026-05-11T18:59:50.8736870+03:00"
-                    },
-                    {
-                        "version":  "0.3.110",
-                        "description":  "TEST forces Sniper Shot opener to verify charge skill flow",
-                        "date":  "2026-05-11T18:51:03.9694647+03:00"
-                    },
-                    {
-                        "version":  "0.3.109",
-                        "description":  "charge skills use planned hold-and-release mechanics",
-                        "date":  "2026-05-11T18:22:55.4505793+03:00"
-                    },
-                    {
-                        "version":  "0.3.108",
-                        "description":  "After charge cancel: immediate basic + shorter progress wait to avoid idle.",
-                        "date":  "2026-05-11T18:04:28.8530160+03:00"
-                    },
-                    {
-                        "version":  "0.3.107",
-                        "description":  "Default 3 ranked bursts per find; release calibration tier-2 retry for hp drops.",
-                        "date":  "2026-05-11T17:53:04.9005252+03:00"
-                    },
-                    {
-                        "version":  "0.3.106",
-                        "description":  "Deprioritize channel skills in rank when multiple enemies; TEST multimob diagnostic.",
-                        "date":  "2026-05-11T17:39:35.1719436+03:00"
-                    },
-                    {
-                        "version":  "0.3.105",
-                        "description":  "Harden release calibration with one combat-seeded retry after no-hp-drop observe.",
-                        "date":  "2026-05-11T16:25:28.9725150+03:00"
-                    },
-                    {
-                        "version":  "0.3.104",
-                        "description":  "Fix calibration merge after TEST: late damage-observe attribution + release observe 15s.",
-                        "date":  "2026-05-11T16:19:13.3861128+03:00"
-                    },
-                    {
-                        "version":  "0.3.103",
-                        "description":  "Canonical skill DB under bot/data; panel TEST release for long-profile validation.",
-                        "date":  "2026-05-11T16:05:14.3978722+03:00"
-                    },
-                    {
-                        "version":  "0.3.102",
-                        "description":  "Use full ranked runtime telemetry for tuning-hint event sufficiency.",
-                        "date":  "2026-05-11T13:40:38.1274498+03:00"
-                    },
-                    {
-                        "version":  "0.3.101",
-                        "description":  "Require minimum soak telemetry budget for stable ranked tuning diagnostics.",
-                        "date":  "2026-05-11T13:37:36.2341598+03:00"
-                    },
-                    {
-                        "version":  "0.3.100",
-                        "description":  "Support mid-session release TEST flow with auto farm resume policy check.",
-                        "date":  "2026-05-11T13:34:23.6914317+03:00"
                     }
                 ]
 }

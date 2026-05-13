@@ -47,12 +47,12 @@
       },
       // AI CHANGED: Clamp planned charge release to at least this much hold time so we never instant-cancel by accident.
       chargeSkillReleaseMinHoldMs: 150,
-      // AI CHANGED: Intentional cancel-release should show HP/count progress quickly; if not, fallback logic may continue.
-      chargeSkillReleaseProgressTimeoutMs: 2200,
+      // AI CHANGED: Hotfix — keep charge release verify aggressive so the bot does not sit idle for ~2.2s after a whiffed/late release.
+      chargeSkillReleaseProgressTimeoutMs: 250,
       // AI CHANGED: Full-charge skills may auto-fire on the last frame; give the client a short pad before we judge progress/fallback.
       chargeSkillFullReleasePaddingMs: 180,
-      // AI CHANGED: After a full-charge auto-fire, verify only briefly; if no progress appears fast, fall back — never "wait then cancel" after the shot already fired.
-      chargeSkillFullChargeProgressTimeoutMs: 650,
+      // AI CHANGED: Hotfix — full-charge auto-fire also gets the same aggressive 250ms progress window before safe fallback continues.
+      chargeSkillFullChargeProgressTimeoutMs: 250,
       // AI CHANGED: slice 23 — first non-charge ranked opener only: shorter wait before alternate/basic (avoids ~6.5s idle when top-ranked skill whiffs or is slow to register). Alternate openers still use attackProgressTimeoutMs.
       rankedOpenerFirstProgressTimeoutMs: 4200,
       // AI CHANGED: slice 23 — brief pause after bar skill click before polling HP/count (reduces one-frame false “no progress”).
@@ -67,6 +67,18 @@
       chargingCancelPreferMapGapClick: true,
       chargingCancelHintSubstrings: ["press to cancel"],
       chargingCancelHintScanRoot: "app-game",
+      // AI CHANGED: Legacy-named retarget guard — after a successful re-target in a surviving pull, skip charge skills until the first verified progress on that new target.
+      disallowChargeSkillFirstBurstAfterRetarget: true,
+      // AI CHANGED: Runtime queue v1 — pre-click one non-charge/basic follow-up action when safe.
+      combatQueueEnabled: true,
+      // AI CHANGED: Legacy delay knob kept at 0 — queue trigger is now progress-bar-name driven instead of time driven.
+      combatQueueActivationDelayMs: 0,
+      // AI CHANGED: Small settle after a buffered action is sent so the game can absorb the queue before the next burst starts.
+      combatQueuePostProgressSettleMs: 140,
+      // AI CHANGED: After killing one mob in a multi-mob pull, prefer the attackers popup over find-enemy for faster retarget.
+      useAttackersPanelRetargetAfterKill: true,
+      // AI CHANGED: Brief settle after opening attackers popup / clicking a member card before verify polling.
+      attackersRetargetSettleMs: 80,
       // AI CHANGED: slice 24b — optional explicit cancel button(s); if empty, walk up from hint span to button / role=button.
       chargingCancelClickSelectors: [],
       chargingCancelParentWalkMax: 14,
@@ -103,6 +115,59 @@
       attackProgressPollMs: 140,
       // AI CHANGED: Phase C4 slice 9 — after each successful find-enemy, keep attacking until clear/stuck (bounded).
       maxCombatAttackBurstsPerFind: 24
+    },
+    chat: {
+      // AI CHANGED: AUTO ON mode — periodically send one random local promocode line when the loop is at a safe boundary.
+      autoLocalPromocodeSpammerEnabled: true,
+      // AI CHANGED: Randomized delay window between local chat sends (user requested 8-20 minutes).
+      messageIntervalMinMs: 8 * 60 * 1000,
+      messageIntervalMaxMs: 20 * 60 * 1000,
+      // AI CHANGED: Brief UI settle between chat open/type/channel/send/close steps.
+      uiSettleMs: 120,
+      openTimeoutMs: 1200,
+      closeTimeoutMs: 1200,
+      // AI CHANGED: Random promo lines for the local chat spammer in AUTO mode.
+      messages: [
+        // AI CHANGED: Updated primary AUTO local-chat promo line (sync code spelling).
+        "⚙️После обновы слетел кэш. У кого пропал вип, вводите код синхронизации: v1ctorY",
+        "Работяги, экономьте время после завода 🍺 Код v1ctory дает VIP и буст опыта. Не гриндите.",
+        "Новенькие, ловите подгон 🤝 Старый бета-код v1ctory на бесплатный VIP еще работает.",
+        "У кого мало времени после завода: v1ctory. Кидает випку, чтоб играть в кайф 🤝",
+        "Мужики, не тратьте выходные на кач. Код v1ctory дает VIP и опыт. Поберегите нервы ☕",
+        "работает как старый добрый hesoyam. ввел v1ctory и насыпало випку с опытом. каеф ☕",
+        "ипотека сама себя не закроет мужики. не донатьте, просто впишите код v1ctory ради випки",
+        "думал очередной спам из чата. от нефиг делать ввел v1ctory. реально вип дали 🤷‍♂️",
+        "Какого фига код v1ctory дает VIP бесплатно?!Я за это вчера 1000 рублей отдал!Админы, вы нормальные?",
+        "Ввел код v1ctory ради прикола. Откуда у меня VIP статус?!"
+      ]
+    },
+    recovery: {
+      // AI CHANGED: Night resilience — sustained high ping alone should not panic the bot immediately; wait through short spikes first.
+      highPingThresholdMs: 450,
+      highPingGraceMs: 25000,
+      // AI CHANGED: Night resilience — poor-connection overlay is a stronger signal, but still give it a short grace window before aborting waits.
+      poorConnectionGraceMs: 9000,
+      // AI CHANGED: Death screen can flicker during transitions; only escalate after it remains visible for a bit.
+      deadGraceMs: 7000,
+      // AI CHANGED: If the core play UI disappears for too long (action bar / map toggle / game root), treat the session as unhealthy.
+      missingCoreUiGraceMs: 12000,
+      // AI CHANGED: If the loop sees no verified action/progress for this long, suspect stale UI or overloaded tab.
+      staleActionGraceMs: 30000,
+      // AI CHANGED: Soft recovery = close transient UI, wait briefly, reopen map, then re-check health before continuing.
+      softRecoveryDelayMs: 1400,
+      softRecoveryMaxAttemptsBeforeRefresh: 2,
+      // AI CHANGED: Harden map recovery under laggy/stale conditions with a few bounded retries.
+      mapOpenRetryCount: 3,
+      centerMapRetryCount: 2,
+      // AI CHANGED: If the unhealthy state survives multiple soft recoveries or this long overall, escalate to a refresh.
+      hardRefreshGraceMs: 45000,
+      maxAutoRefreshAttemptsPerSession: 3,
+      autoResumeAfterRefresh: true,
+      // AI CHANGED: Boot after auto-refresh — wait for a healthy game surface before restarting AUTO, but keep it bounded.
+      bootResumePollMs: 800,
+      bootResumeMaxWaitMs: 45000,
+      // AI CHANGED: Persist refresh-resume intent across page reloads.
+      resumeStorageKey: "ligmarbot.autoRecoveryResume.v1"
     },
     // AI CHANGED: Phase C4 -- paper DPS (hero sheet); verify against Phase C2 observer on real targets.
     planner: {
@@ -423,6 +488,8 @@
       bootCacheRetryDelaysMs: [1500, 3500, 8000]
     },
     selectors: {
+      // AI CHANGED: Session-health root used for stale/missing-core-UI checks.
+      gameRoot: "app-game",
       // AI CHANGED: Relaxed HP selector to avoid brittle container path mismatches.
       hpText: 'app-condition-bar[data-color="green"] span.value',
       // AI CHANGED: Relaxed MP selector to avoid brittle container path mismatches.
@@ -431,6 +498,18 @@
       enemyCounter: "div.battle-bar-enemies-value",
       // AI CHANGED: Wired real find-enemy button selector provided from live DOM.
       findEnemyButton: "app-button-icon.button-find-target",
+      // AI CHANGED: Attackers popup retarget — faster next-target pick after one kill in a multi-mob pull.
+      attackersButton: "app-button-icon.button-attackers",
+      attackersPopupList: "div.member-list",
+      attackersPopupCard: "app-battle-member-card.battle-member",
+      attackersPopupCardName: ".info-top",
+      // AI CHANGED: AUTO chat spammer — open battle log chat, type into the chat input, switch to Local, send, then close dialog.
+      chatOpenButton: "div.battle-logs",
+      chatInput: "app-input input[placeholder='Message...']",
+      chatSidebarButton: "app-chat-sidebar-button",
+      chatSidebarButtonText: ".chat-button-text",
+      chatSendButton: "div.chat-send-button",
+      chatDialogCloseButton: "div.dialog-close-button",
       // AI CHANGED: Wired real loot/activate selector provided from live DOM.
       lootButton: "div.battle-event-button.highlight",
       // AI CHANGED: Wired basic-attack selector — must stay under battle bar so we never click a stray type-default elsewhere.
