@@ -492,7 +492,8 @@
       hero_stats: "Hero stats",
       planner_opener_horizon_preview: "HorizonSim",
       // AI CHANGED: DoT branch in horizon paper scales with mobFactor (calibration EV).
-      planner_horizon_dot_mob_calibration: "Horizon DoT calibration",
+      // AI CHANGED: Label reflects DoT + instant paper mob blend check (basic_proc/channel still full mobFactor).
+      planner_horizon_dot_mob_calibration: "Horizon paper mob calibration",
       planner_conception_path: "Conception path",
       planner_ranked_runtime: "Ranked runtime",
       planner_opener_context_scoring: "Opener context scoring",
@@ -2499,12 +2500,20 @@
         addCheck("planner_horizon_dot_mob_calibration", false, { error: "missing_plannerSummarizeSkillPaperDamageShape" }, false);
       } else {
         const dotSlot = { effects: [{ type: "dot", perSec: 20, durationSec: 4 }] };
+        const instSlot = { effects: [{ type: "instant", value: 100 }] };
         let sFull = null;
         let sHalf = null;
+        let iFull = null;
+        let iHalf = null;
         let dotErr = null;
+        const wCfg = Config.planner && Config.planner.horizonPaperMobBlendNonBasicWeight;
+        const wBlend = Number.isFinite(wCfg) ? Math.max(0, Math.min(1, wCfg)) : 0.6;
+        const effHalfRatio = 1 + (0.5 - 1) * wBlend;
         try {
           sFull = plannerSummarizeSkillPaperDamageShape(dotSlot, 4, 1, null, null);
           sHalf = plannerSummarizeSkillPaperDamageShape(dotSlot, 4, 0.5, null, null);
+          iFull = plannerSummarizeSkillPaperDamageShape(instSlot, 4, 1, null, null);
+          iHalf = plannerSummarizeSkillPaperDamageShape(instSlot, 4, 0.5, null, null);
         } catch (eDot) {
           dotErr = String(eDot && eDot.message ? eDot.message : eDot);
         }
@@ -2515,13 +2524,58 @@
           Number.isFinite(sFull.dotDamage) &&
           sFull.dotDamage > 0 &&
           Number.isFinite(sHalf.dotDamage) &&
-          Math.abs(sHalf.dotDamage - sFull.dotDamage * 0.5) < 1e-4;
+          Math.abs(sHalf.dotDamage - sFull.dotDamage * effHalfRatio) < 1e-4;
+        const instOk =
+          !dotErr &&
+          iFull &&
+          iHalf &&
+          Number.isFinite(iFull.immediateDamage) &&
+          iFull.immediateDamage > 0 &&
+          Number.isFinite(iHalf.immediateDamage) &&
+          Math.abs(iHalf.immediateDamage - iFull.immediateDamage * effHalfRatio) < 1e-4;
+        const basicSlot = { effects: [{ type: "basic_proc" }] };
+        let bFull = null;
+        let bHalf = null;
+        try {
+          bFull = plannerSummarizeSkillPaperDamageShape(basicSlot, 4, 1, 200, null);
+          bHalf = plannerSummarizeSkillPaperDamageShape(basicSlot, 4, 0.5, 200, null);
+        } catch (eB) {
+          dotErr = dotErr || String(eB && eB.message ? eB.message : eB);
+        }
+        const basicOk =
+          !dotErr &&
+          bFull &&
+          bHalf &&
+          Number.isFinite(bFull.immediateDamage) &&
+          bFull.immediateDamage > 0 &&
+          Math.abs(bHalf.immediateDamage - bFull.immediateDamage * 0.5) < 1e-4;
+        const paperMobOk = dotOk && instOk && basicOk;
         addCheck(
           "planner_horizon_dot_mob_calibration",
-          dotOk,
-          dotOk
-            ? { dotFull: sFull.dotDamage, dotHalf: sHalf.dotDamage }
-            : { error: "dot_mob_factor_mismatch", dotError: dotErr, full: sFull, half: sHalf },
+          paperMobOk,
+          paperMobOk
+            ? {
+                blendWeight: wBlend,
+                effHalfRatio: effHalfRatio,
+                dotFull: sFull.dotDamage,
+                dotHalf: sHalf.dotDamage,
+                instantFull: iFull.immediateDamage,
+                instantHalf: iHalf.immediateDamage,
+                basicProcFull: bFull.immediateDamage,
+                basicProcHalf: bHalf.immediateDamage
+              }
+            : {
+                error: "paper_mob_factor_mismatch",
+                dotError: dotErr,
+                blendWeight: wBlend,
+                effHalfRatio: effHalfRatio,
+                dot: { full: sFull, half: sHalf },
+                instant: { full: iFull, half: iHalf },
+                basicProc: { full: bFull, half: bHalf },
+                dotOk: dotOk,
+                instOk: instOk,
+                basicOk: basicOk
+              },
           false
         );
       }

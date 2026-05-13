@@ -291,6 +291,8 @@
       openerContextCalibrationEaseCap: 0.2,
       // AI CHANGED: Ignore ease when ratio implies more than this much over paper (crit / mixed damage).
       openerContextCalibrationEaseMaxRatio: 1.32,
+      // AI CHANGED: Enemy hp_drop ratio is basic-anchored; opener horizon paper scales instant/dot damage by mobFactor blended toward 1 (w=1 restores full scaling on all effect types like v0.3.190).
+      horizonPaperMobBlendNonBasicWeight: 0.6,
       // AI CHANGED: Under pressure, long casts lose this many basic-DPS units per second of blocked time.
       openerContextCastPressurePenaltyInBasicDps: 0.12,
       // AI CHANGED: Control skills gain this many basic-DPS units under pressure (stun gets full weight, slow gets partial).

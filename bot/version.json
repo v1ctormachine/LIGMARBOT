@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.190",
-    "description":  "horizon: DoT paper scales with mob calibration; TEST Horizon DoT calibration",
-    "builtAt":  "2026-05-13T17:52:38.3933158+03:00",
+    "version":  "0.3.191",
+    "description":  "horizon: blend mobFactor on instant/dot paper; full mf on basic_proc/channel; TEST Horizon paper mob calibration",
+    "builtAt":  "2026-05-13T18:13:40.7827949+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.191",
+                        "description":  "horizon: blend mobFactor on instant/dot paper; full mf on basic_proc/channel; TEST Horizon paper mob calibration",
+                        "date":  "2026-05-13T18:13:40.7827949+03:00"
+                    },
                     {
                         "version":  "0.3.190",
                         "description":  "horizon: DoT paper scales with mob calibration; TEST Horizon DoT calibration",
@@ -247,11 +252,6 @@
                         "version":  "0.3.145",
                         "description":  "combat: parsed potion sustain and mana protection",
                         "date":  "2026-05-12T17:38:41.9374384+03:00"
-                    },
-                    {
-                        "version":  "0.3.144",
-                        "description":  "combat: parsed potion sustain and mana protection",
-                        "date":  "2026-05-12T17:38:36.1779417+03:00"
                     }
                 ]
 }
