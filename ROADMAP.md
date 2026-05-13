@@ -123,6 +123,11 @@ Emergency **hotfix** (crash / wrong click): ship immediately, even if tiny.
    - **Player mitigation math:** implement **PhysicalDefense** / **MagicResistance** from **Vitality, Strength, Magic**, gear **Defense / Resistances**, **DefenseMultiplier / ResistanceMultiplier**, and **Effects** (BaseDefense, BaseResistance, floors) — wire inputs only when hero sheet / gear parsing exists; use for **paper vs observed** normalization on **your** side.
    - **Monster side:** keep Defense/Resist as **latent**; optionally **split** calibration by **physical vs magic** skill tags from the skill DB; merge into enemy DB rows as typed multipliers or continue single **hp_drop** ratio until split is stable.
    - **Planner:** fold EV as **paperDamage × empiricalHitRate × enemyCalibrationRatio** (and typed branches when ready); gate behind enough samples + TEST checks.
+   - **Damage reduction (reference — implement when levels + defense/resist inputs are wired):** caps **95%** per type.
+     - **PhysicalReduction (%)** = `min(95, (PhysicalDefense) / (40 × AttackerLevel + PhysicalDefense − 25) × 100)` with physical **Defense** from defender (mob constant or player-derived).
+     - **MagicReduction (%)** = `min(95, (MagicalResistance) / (40 × AttackerLevel + MagicalResistance − 25) × 100)`; for this branch **AttackerLevel** = **EffectiveCombatLevel** (World Sync), not raw character level.
+     - **FinalDamage** = `Damage × (1 − DamageReductionEffects/100) × (1 − DamageReduction/100)` where **DamageReduction** is the **physical** or **magic** percent from the row above (match skill damage type), and **DamageReductionEffects** is the extra percent layer (buffs/debuffs) on top.
+     - **Use in bot:** with only **our** level + **our** stats known, we can reduce **incoming** damage to the hero if we parse **Effects**; for **outgoing** damage to mobs, **target Defense/Resistance** stay **latent** — fit via **hp_drop** / typed split, or back-solve an **effective** defense if paper base damage is trusted.
 
 ## Parking lot
 
