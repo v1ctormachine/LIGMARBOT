@@ -136,6 +136,27 @@
     return Array.isArray(arr) ? arr.filter(Boolean) : [];
   }
 
+  // AI CHANGED: Dispatch uses exactly five bank slots vs one universal smart path — pad short banks by cycling trimmed lines.
+  function normalizeChatBankToFive(messages) {
+    const filtered = [];
+    if (Array.isArray(messages)) {
+      for (let i = 0; i < messages.length; i += 1) {
+        const s = messages[i];
+        if (typeof s === "string" && s.trim()) {
+          filtered.push(s.trim());
+        }
+      }
+    }
+    if (filtered.length === 0) {
+      return [];
+    }
+    const out = [];
+    for (let i = 0; i < 5; i += 1) {
+      out.push(filtered[i % filtered.length]);
+    }
+    return out;
+  }
+
   // AI CHANGED: Flatten all banks for diagnostics / TEST max-length scan.
   function getAllChatSpammerMessagesFlat() {
     const m = Config.chat && Config.chat.messagesByTimeOfDay ? Config.chat.messagesByTimeOfDay : null;
@@ -203,32 +224,30 @@
     };
   }
 
-  // AI CHANGED: Each due window picks either a bank line or the smart opener→delay→follow-up pair (50% default).
+  // AI CHANGED: Each due window rolls uniform 1/6 — smart pair (universal) vs five time-slot bank lines (same odds each).
   function pickAutoChatSpammerDispatch() {
     const slot = getTimeOfDayChatSlot();
-    const messages = getChatSpammerMessagesForSlot(slot);
+    const rawMessages = getChatSpammerMessagesForSlot(slot);
+    const bankFive = normalizeChatBankToFive(rawMessages);
     const smartOk = isChatSmartLineConfigured();
-    const pRaw =
-      Config.chat && Number.isFinite(Config.chat.smartLinePickProbability)
-        ? Config.chat.smartLinePickProbability
-        : 0.5;
-    const p = Math.min(1, Math.max(0, pRaw));
     const delayMsRaw =
       Config.chat && Number.isFinite(Config.chat.smartLineFollowupDelayMs)
         ? Config.chat.smartLineFollowupDelayMs
         : 40000;
     const followDelayMs = Math.max(0, Math.round(delayMsRaw));
 
-    if (!smartOk && messages.length <= 0) {
+    if (!smartOk && bankFive.length === 0) {
       return null;
     }
-    if (smartOk && messages.length <= 0) {
+    if (smartOk && bankFive.length === 0) {
       return {
         kind: "smart",
         slot: slot,
         opener: Config.chat.smartLineOpener.trim(),
         followup: Config.chat.smartLineFollowup.trim(),
-        followDelayMs: followDelayMs
+        followDelayMs: followDelayMs,
+        pickRoll: 0,
+        pickOutcomes: 1
       };
     }
     if (!smartOk) {
@@ -239,21 +258,28 @@
       return Object.assign({ kind: "bank" }, bank);
     }
 
-    const pickSmart = Math.random() < p;
-    if (pickSmart) {
+    const roll = Math.floor(Math.random() * 6);
+    if (roll === 0) {
       return {
         kind: "smart",
         slot: slot,
         opener: Config.chat.smartLineOpener.trim(),
         followup: Config.chat.smartLineFollowup.trim(),
-        followDelayMs: followDelayMs
+        followDelayMs: followDelayMs,
+        pickRoll: roll,
+        pickOutcomes: 6
       };
     }
-    const bank = pickAutoChatSpammerMessage();
-    if (!bank || !bank.message) {
-      return null;
-    }
-    return Object.assign({ kind: "bank" }, bank);
+    const bankIndex = roll - 1;
+    return {
+      kind: "bank",
+      slot: slot,
+      index: bankIndex,
+      message: bankFive[bankIndex],
+      bankSize: 5,
+      pickRoll: roll,
+      pickOutcomes: 6
+    };
   }
 
   async function maybeRunAutoChatSpammer(liveState, userOpts) {
@@ -326,6 +352,8 @@
         timeSlot: dispatch.slot || null,
         openerLength: dispatch.opener.length,
         followDelayMs: dispatch.followDelayMs,
+        pickRoll: Number.isFinite(dispatch.pickRoll) ? dispatch.pickRoll : null,
+        pickOutcomes: Number.isFinite(dispatch.pickOutcomes) ? dispatch.pickOutcomes : null,
         reason: opts.reason || null
       });
       const openResult = await sendLocalChatPromocodeMessage(dispatch.opener);
@@ -464,12 +492,15 @@
     if (!picked.message) {
       return { ok: false, skipped: true, reason: "message_pick_failed" };
     }
-    setBotStatus("waiting", `auto local chat send (msg ${picked.index + 1}/${messages.length})`);
+    const bankDenom = picked.bankSize || messages.length;
+    setBotStatus("waiting", `auto local chat send (msg ${picked.index + 1}/${bankDenom})`);
     Logger.log("CHAT", "Auto local chat send due", {
       kind: "bank",
       messageIndex: picked.index,
       messageLength: picked.message.length,
       timeSlot: picked.slot || null,
+      pickRoll: Number.isFinite(picked.pickRoll) ? picked.pickRoll : null,
+      pickOutcomes: Number.isFinite(picked.pickOutcomes) ? picked.pickOutcomes : null,
       reason: opts.reason || null
     });
     const sendResult = await sendLocalChatPromocodeMessage(picked.message);

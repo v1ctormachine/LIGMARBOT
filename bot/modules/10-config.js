@@ -157,9 +157,8 @@
           "🌚 Спорим, никто не осмелится ночью ввести багнутый промо v1ctory? За него не банят."
         ]
       },
-      // AI CHANGED: Optional two-step “smart” line — eligible every slot; alternates vs bank via probability below.
+      // AI CHANGED: Smart pair is one of six equal outcomes vs five time-slot bank lines (see pickAutoChatSpammerDispatch).
       smartLineEnabled: true,
-      smartLinePickProbability: 0.5,
       smartLineOpener: "Новички есть👋?",
       smartLineFollowup: "Введи бонусный код v1ctory , халявные плюшки и тебе и мне дадут",
       smartLineFollowupDelayMs: 40000

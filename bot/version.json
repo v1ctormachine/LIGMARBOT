@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.162",
-    "description":  "TEST: panel default profile, one button full auto (soak/calibration/resume); release via console",
-    "builtAt":  "2026-05-13T11:21:08.9952380+03:00",
+    "version":  "0.3.163",
+    "description":  "chat: uniform 1/6 pick — smart pair vs five slot bank lines",
+    "builtAt":  "2026-05-13T11:25:09.1207991+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.163",
+                        "description":  "chat: uniform 1/6 pick — smart pair vs five slot bank lines",
+                        "date":  "2026-05-13T11:25:09.1207991+03:00"
+                    },
                     {
                         "version":  "0.3.162",
                         "description":  "TEST: panel default profile, one button full auto (soak/calibration/resume); release via console",
@@ -247,11 +252,6 @@
                         "version":  "0.3.117",
                         "description":  "combat: generic dynamic charge release",
                         "date":  "2026-05-11T20:30:15.1673686+03:00"
-                    },
-                    {
-                        "version":  "0.3.116",
-                        "description":  "planner: natural Sniper Shot shortlist fix",
-                        "date":  "2026-05-11T20:10:12.5922226+03:00"
                     }
                 ]
 }

@@ -1261,10 +1261,7 @@
               typeof getTimeOfDayChatSlot === "function" ? getTimeOfDayChatSlot({ nowMs: Date.now() }) : null,
             smartLineConfigured:
               typeof isChatSmartLineConfigured === "function" ? isChatSmartLineConfigured() : null,
-            smartLinePickProbability:
-              Config.chat && Number.isFinite(Config.chat.smartLinePickProbability)
-                ? Config.chat.smartLinePickProbability
-                : null,
+            smartLineDispatch: "uniform_1_of_6_smart_plus_5_bank_lines",
             smartLineFollowupDelayMs:
               Config.chat && Number.isFinite(Config.chat.smartLineFollowupDelayMs)
                 ? Config.chat.smartLineFollowupDelayMs
