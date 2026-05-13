@@ -849,6 +849,14 @@
     } catch (eBf) {
       out.enemyBuffCalibrationError = String(eBf && eBf.message ? eBf.message : eBf);
     }
+    // AI CHANGED: Planner prefs slice for soak exports (includes openerFollowUpSkillDepth from ligmarbot.plannerUi.v1 after boot load).
+    try {
+      if (typeof plannerPrefsSnapshot === "function") {
+        out.plannerUiPrefs = plannerPrefsSnapshot();
+      }
+    } catch (ePlFv) {
+      out.plannerUiPrefsError = String(ePlFv && ePlFv.message ? ePlFv.message : ePlFv);
+    }
     return out;
   }
 
