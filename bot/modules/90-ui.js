@@ -295,7 +295,7 @@
   function combatPrefsSnapshot() {
     return {
       rankedOpenerChargeGraceMs: Number(Config.combat.rankedOpenerChargeGraceMs) || 0,
-      rankedOpenerEarlyCancelIfHintAfterMs: Number(Config.combat.rankedOpenerEarlyCancelIfHintAfterMs) || 0,
+      chargeSkillReleaseOverrideMs: Number(Config.combat.chargeSkillReleaseOverrideMs) || 0,
       chargeSkillReleaseFraction: Number(Config.combat.chargeSkillReleaseFraction) || 1
     };
   }
@@ -310,8 +310,11 @@
       if (Number.isFinite(p.rankedOpenerChargeGraceMs) && p.rankedOpenerChargeGraceMs >= 0) {
         Config.combat.rankedOpenerChargeGraceMs = p.rankedOpenerChargeGraceMs;
       }
-      if (Number.isFinite(p.rankedOpenerEarlyCancelIfHintAfterMs) && p.rankedOpenerEarlyCancelIfHintAfterMs >= 0) {
-        Config.combat.rankedOpenerEarlyCancelIfHintAfterMs = p.rankedOpenerEarlyCancelIfHintAfterMs;
+      if (Number.isFinite(p.chargeSkillReleaseOverrideMs) && p.chargeSkillReleaseOverrideMs >= 0) {
+        Config.combat.chargeSkillReleaseOverrideMs = p.chargeSkillReleaseOverrideMs;
+      } else if (Number.isFinite(p.rankedOpenerEarlyCancelIfHintAfterMs) && p.rankedOpenerEarlyCancelIfHintAfterMs >= 0) {
+        // AI CHANGED: migrate ligmarbot.combatUi.v1 — old key was planner ms override + removed early-cancel wait; map to chargeSkillReleaseOverrideMs only.
+        Config.combat.chargeSkillReleaseOverrideMs = p.rankedOpenerEarlyCancelIfHintAfterMs;
       }
       if (Number.isFinite(p.chargeSkillReleaseFraction) && p.chargeSkillReleaseFraction > 0 && p.chargeSkillReleaseFraction <= 1) {
         Config.combat.chargeSkillReleaseFraction = p.chargeSkillReleaseFraction;
@@ -351,33 +354,6 @@
     return { ok: !!(planner.ok && combat.ok), planner: planner, combat: combat };
   }
 
-  function clampEarlyCancelToFirstWaitMs(earlyMs) {
-    const firstRaw = Config.combat.rankedOpenerFirstProgressTimeoutMs;
-    const first =
-      Number.isFinite(firstRaw) && firstRaw > 0 ? firstRaw : Config.combat.attackProgressTimeoutMs || 4200;
-    let e = Number.isFinite(earlyMs) && earlyMs >= 0 ? earlyMs : 0;
-    if (e > 0 && e >= first) {
-      e = Math.max(0, first - 1);
-    }
-    return e;
-  }
-
-  function applyCombatTuneInputsAndSave(graceInput, earlyInput) {
-    const g = Number.parseInt(String(graceInput.value), 10);
-    Config.combat.rankedOpenerChargeGraceMs = Number.isFinite(g) && g >= 0 ? g : 0;
-    const eRaw = Number.parseInt(String(earlyInput.value), 10);
-    const e = clampEarlyCancelToFirstWaitMs(Number.isFinite(eRaw) && eRaw >= 0 ? eRaw : 0);
-    if (String(earlyInput.value) !== String(e)) {
-      earlyInput.value = String(e);
-    }
-    Config.combat.rankedOpenerEarlyCancelIfHintAfterMs = e;
-    saveCombatUiPrefs();
-    Logger.log("UI", "combat opener ms", {
-      rankedOpenerChargeGraceMs: Config.combat.rankedOpenerChargeGraceMs,
-      rankedOpenerEarlyCancelIfHintAfterMs: Config.combat.rankedOpenerEarlyCancelIfHintAfterMs
-    });
-  }
-
   // AI CHANGED: Keep exactly one live GUI refresh ticker; recover if callback throws.
   function ensureControlPanelRefreshTicker() {
     if (Runtime.ui.statusRefreshTimer) {
@@ -405,13 +381,6 @@
       const gs = String(Number.isFinite(gv) && gv >= 0 ? gv : 0);
       if (Runtime.ui.combatGraceInput.value !== gs) {
         Runtime.ui.combatGraceInput.value = gs;
-      }
-    }
-    if (Runtime.ui.combatEarlyCancelInput && document.activeElement !== Runtime.ui.combatEarlyCancelInput) {
-      const ev = clampEarlyCancelToFirstWaitMs(Config.combat.rankedOpenerEarlyCancelIfHintAfterMs);
-      const es = String(ev);
-      if (Runtime.ui.combatEarlyCancelInput.value !== es) {
-        Runtime.ui.combatEarlyCancelInput.value = es;
       }
     }
 
@@ -1506,7 +1475,7 @@
       forcedOpenerReason: Runtime.planner.forcedOpenerReason,
       chargeSkillDynamicReleaseEnabled: Config.combat.chargeSkillDynamicReleaseEnabled !== false,
       chargeSkillReleaseFraction: Config.combat.chargeSkillReleaseFraction,
-      rankedOpenerEarlyCancelIfHintAfterMs: Config.combat.rankedOpenerEarlyCancelIfHintAfterMs
+      chargeSkillReleaseOverrideMs: Config.combat.chargeSkillReleaseOverrideMs
     };
     // AI CHANGED: TEST must self-enable ranked checks path; user should only press TEST.
     Config.planner.useRankedAttackSkillsInCombat = true;
@@ -1515,7 +1484,7 @@
     Runtime.planner.forcedOpenerReason = forcedRankedSkillName ? "runUiTestBundle" : null;
     if (forcedRankedSkillName && forceChargeReleaseFraction !== null) {
       Config.combat.chargeSkillDynamicReleaseEnabled = false;
-      Config.combat.rankedOpenerEarlyCancelIfHintAfterMs = 0;
+      Config.combat.chargeSkillReleaseOverrideMs = 0;
       Config.combat.chargeSkillReleaseFraction = forceChargeReleaseFraction;
     }
 
@@ -3579,7 +3548,7 @@
         Runtime.planner.forcedOpenerReason = plannerBackup.forcedOpenerReason || null;
         Config.combat.chargeSkillDynamicReleaseEnabled = plannerBackup.chargeSkillDynamicReleaseEnabled !== false;
         Config.combat.chargeSkillReleaseFraction = plannerBackup.chargeSkillReleaseFraction;
-        Config.combat.rankedOpenerEarlyCancelIfHintAfterMs = plannerBackup.rankedOpenerEarlyCancelIfHintAfterMs;
+        Config.combat.chargeSkillReleaseOverrideMs = plannerBackup.chargeSkillReleaseOverrideMs;
       }
       if (resumeAfter && hadFarmOn && !Runtime.autoFarm.running) {
         Logger.log("TEST", "restarting auto-farm after TEST");
@@ -3851,7 +3820,6 @@
     Runtime.ui.issueStopCopyButton = issueStopCopyButton;
     Runtime.ui.issueReportLine = issueReportLine;
     Runtime.ui.combatGraceInput = null;
-    Runtime.ui.combatEarlyCancelInput = null;
 
     updateControlPanelStatus();
     // AI CHANGED: Faster refresh (500ms) so ON timer + HP/MP/Ping/phase stay live during auto-farm.

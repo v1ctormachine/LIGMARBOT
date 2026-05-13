@@ -17,6 +17,7 @@ Emergency **hotfix** (crash / wrong click): ship immediately, even if tiny.
 
 ## Done recently
 
+- **Remove ranked opener early-cancel wait (ship)** — **`attackUntilProgress`**: no split first-wait / mid-wait **`clickChargingSkillCancelUi`**; single **`firstWaitTimeoutMs`** then existing stuck-cancel + basic path. Planner manual charge hold ms lives on **`Config.combat.chargeSkillReleaseOverrideMs`** (replaces **`rankedOpenerEarlyCancelIfHintAfterMs`**); **`loadCombatUiPrefs`** migrates old **`ligmarbot.combatUi.v1`** key once (`85-combat.js`, `86-planner.js`, `10-config.js`, `90-ui.js`, `20-runtime.js`, `ARCHITECTURE.md`).
 - **§6 buff research console API (v0.3.202)** — **`summarizeEnemyBuffSigBuckets({ key? })`** in **`84-enemy.js`**, **`ligmarBot.summarizeEnemyBuffSigBuckets`**: per-bucket **`signaturePreview`**, means, samples for one mob key (default **`lastFoughtKey`**). TEST soft **`enemy_buff_sig_buckets_api`**.
 - **§6 buff export readability (v0.3.200)** — **`fieldValidation.enemyBuffCalibration.buffSigTop`** entries include **`signaturePreview`** (truncated label fingerprint) plus **`signatureLen`** so **`TestSummary.md`** distinguishes buckets without opening DevTools DB.
 - **Field validation: plannerUiPrefs snapshot (v0.3.199)** — **`buildFieldValidationSnapshotForTestExport`**: **`plannerUiPrefs`** (same shape as **`plannerPrefsSnapshot()`**, includes **`openerFollowUpSkillDepth`**) for **`gameSnapshotEnd.fieldValidation`** / **`getFieldValidationSnapshot()`** soak triage.
@@ -138,7 +139,7 @@ Emergency **hotfix** (crash / wrong click): ship immediately, even if tiny.
 - **Pack A — planner / empty or gated skills**: **`Runtime.planner`** records every ranked-opener pick (`empty_cache`, `no_attack_skills_for_ranker`, `all_candidates_filtered` + skip **breakdown**, or **`picked`**); throttled **`[PLANNER]`** logs when combat falls back to basic; **`Config.planner.logOpeningPickFailures`** / **`openingPickFailureLogThrottleMs`**; **`ligmarBot.getPlannerOpeningPickDiagnostics()`**.
 - Stuck ranked opener → cancel charge (hint visible) so cooldown can start; map button / canvas gap click first.
 - **TEST** — single click runs the full diagnostic + calibration path; auto-farm stops first when it was running.
-- **`rankedOpenerChargeGraceMs`** / **`rankedOpenerEarlyCancelIfHintAfterMs`** — panel **Opener timing (ms)** (persisted **`ligmarbot.combatUi.v1`**) or Config.
+- **`rankedOpenerChargeGraceMs`** / optional **`chargeSkillReleaseOverrideMs`** — persisted **`ligmarbot.combatUi.v1`** (grace + fraction + override) or **`Config.combat`**; old saves may still carry **`rankedOpenerEarlyCancelIfHintAfterMs`** which **`loadCombatUiPrefs`** maps to **`chargeSkillReleaseOverrideMs`** once.
 - **Prefs** — **`ligmarBot.saveAllUiPrefs()`** / **`loadAllUiPrefs()`** or per-key helpers; console prints **`{ ok: true, … }`** on success.
 - **TEST** — press **in combat** for calibration (target bar visible, then keep hitting); **mid-charge** if you want cancel smoke; see panel hint / **`ARCHITECTURE.md`**.
 - **TEST + farm** — if auto-farm was **ON**, TEST stops it for the bundle, then **starts the loop again** (stay off: `ligmarBot.runUiTestBundle({ resumeAutoFarm: false })`).

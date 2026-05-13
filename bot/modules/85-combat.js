@@ -2881,7 +2881,6 @@
       return false;
     }
 
-    let chargeCancelAttempted = false;
     let progressed = false;
     if (!chargeSkillHandled) {
       const firstWaitTimeoutMs =
@@ -2893,114 +2892,25 @@
           slot: open.skillSlot
         });
       }
-
-      const earlyCancelRaw = Config.combat.rankedOpenerEarlyCancelIfHintAfterMs;
-      const earlyCancelMs =
-        open.skillSlot != null &&
-        Number.isFinite(earlyCancelRaw) &&
-        earlyCancelRaw > 0 &&
-        earlyCancelRaw < firstWaitTimeoutMs
-          ? earlyCancelRaw
-          : 0;
-
-      if (earlyCancelMs > 0) {
-        progressed = await waitForCondition(
-          "attack progress (early window)",
-          buildAttackProgressOrQueueAdvancePredicate(beforeState, { onQueueAdvance: queueAdvanceTick }),
-          { timeoutMs: earlyCancelMs, pollMs: pollMs }
-        );
-        if (progressed) {
-          if (open.skillSlot != null) {
-            plannerRecordOpenerRuntimeEvent("ranked_progress", { slot: open.skillSlot, stage: "early_or_late_wait" });
-          }
-          if (queuedActionFired) {
-            const queueSettleMs = Number.isFinite(Config.combat && Config.combat.combatQueuePostProgressSettleMs)
-              ? Math.max(0, Config.combat.combatQueuePostProgressSettleMs)
-              : 0;
-            if (queueSettleMs > 0) {
-              await sleep(queueSettleMs);
-            }
-          }
-          return true;
+      // AI CHANGED: removed rankedOpenerEarlyCancelIfHintAfterMs partial-wait + early cancel UI — single first wait only; stuck path below still clears hint when full wait fails.
+      progressed = await waitForCondition(
+        "attack progress",
+        buildAttackProgressOrQueueAdvancePredicate(beforeState, { onQueueAdvance: queueAdvanceTick }),
+        { timeoutMs: firstWaitTimeoutMs, pollMs: pollMs }
+      );
+      if (progressed) {
+        if (open.skillSlot != null) {
+          plannerRecordOpenerRuntimeEvent("ranked_progress", { slot: open.skillSlot, stage: "first_wait" });
         }
-        if (Runtime.autoFarm.stopRequested) {
-          Logger.log("LOOP", "attackUntilProgress: stop requested after early opener wait");
-          return false;
-        }
-        if (
-          Config.combat.rankedOpenerClickCancelUiIfChargeStuck !== false &&
-          isChargingSkillCancelHintVisible()
-        ) {
-          Logger.log("LOOP", "ranked opener early charge cancel (hint after partial wait)", {
-            earlyCancelMs: earlyCancelMs,
-            slot: open.skillSlot
-          });
-          clickChargingSkillCancelUi();
-          chargeCancelAttempted = true;
-          if (settleRanked > 0) {
-            await sleep(settleRanked);
-          }
-          if (Runtime.autoFarm.stopRequested) {
-            return false;
-          }
-          progressed = await waitForCondition(
-            "attack progress after early charge cancel",
-            buildAttackProgressOrQueueAdvancePredicate(beforeState, { onQueueAdvance: queueAdvanceTick }),
-            { timeoutMs: fullTimeoutMs, pollMs: pollMs }
-          );
-          if (progressed) {
-            plannerRecordOpenerRuntimeEvent("ranked_progress", { slot: open.skillSlot, stage: "after_early_cancel" });
-            if (queuedActionFired) {
-              const queueSettleMs = Number.isFinite(Config.combat && Config.combat.combatQueuePostProgressSettleMs)
-                ? Math.max(0, Config.combat.combatQueuePostProgressSettleMs)
-                : 0;
-              if (queueSettleMs > 0) {
-                await sleep(queueSettleMs);
-              }
-            }
-            return true;
-          }
-        } else {
-          progressed = await waitForCondition(
-            "attack progress (late window)",
-            buildAttackProgressOrQueueAdvancePredicate(beforeState, { onQueueAdvance: queueAdvanceTick }),
-            { timeoutMs: firstWaitTimeoutMs - earlyCancelMs, pollMs: pollMs }
-          );
-          if (progressed) {
-            if (open.skillSlot != null) {
-              plannerRecordOpenerRuntimeEvent("ranked_progress", { slot: open.skillSlot, stage: "late_window" });
-            }
-            if (queuedActionFired) {
-              const queueSettleMs = Number.isFinite(Config.combat && Config.combat.combatQueuePostProgressSettleMs)
-                ? Math.max(0, Config.combat.combatQueuePostProgressSettleMs)
-                : 0;
-              if (queueSettleMs > 0) {
-                await sleep(queueSettleMs);
-              }
-            }
-            return true;
+        if (queuedActionFired) {
+          const queueSettleMs = Number.isFinite(Config.combat && Config.combat.combatQueuePostProgressSettleMs)
+            ? Math.max(0, Config.combat.combatQueuePostProgressSettleMs)
+            : 0;
+          if (queueSettleMs > 0) {
+            await sleep(queueSettleMs);
           }
         }
-      } else {
-        progressed = await waitForCondition(
-          "attack progress",
-          buildAttackProgressOrQueueAdvancePredicate(beforeState, { onQueueAdvance: queueAdvanceTick }),
-          { timeoutMs: firstWaitTimeoutMs, pollMs: pollMs }
-        );
-        if (progressed) {
-          if (open.skillSlot != null) {
-            plannerRecordOpenerRuntimeEvent("ranked_progress", { slot: open.skillSlot, stage: "first_wait" });
-          }
-          if (queuedActionFired) {
-            const queueSettleMs = Number.isFinite(Config.combat && Config.combat.combatQueuePostProgressSettleMs)
-              ? Math.max(0, Config.combat.combatQueuePostProgressSettleMs)
-              : 0;
-            if (queueSettleMs > 0) {
-              await sleep(queueSettleMs);
-            }
-          }
-          return true;
-        }
+        return true;
       }
     }
 
@@ -3013,7 +2923,6 @@
     // AI CHANGED: slice 24b — charge skill stuck: first wait saw no HP/count (CD not running until cancel or full shot). Tap cancel UI only when needed, not a second bar click.
     if (
       !chargeSkillHandled &&
-      !chargeCancelAttempted &&
       open.skillSlot != null &&
       Config.combat.rankedOpenerClickCancelUiIfChargeStuck !== false &&
       isChargingSkillCancelHintVisible()

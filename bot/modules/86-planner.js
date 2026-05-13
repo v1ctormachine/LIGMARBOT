@@ -1101,15 +1101,15 @@
       Number.isFinite(minHoldRaw) && minHoldRaw >= 0
         ? Math.min(Math.round(minHoldRaw), maxMs)
         : 0;
-    const legacyReleaseMsRaw = Config.combat.rankedOpenerEarlyCancelIfHintAfterMs;
-    const hasLegacyReleaseMs = Number.isFinite(legacyReleaseMsRaw) && legacyReleaseMsRaw > 0;
-    if (hasLegacyReleaseMs) {
+    const overrideReleaseMsRaw = Config.combat.chargeSkillReleaseOverrideMs;
+    const hasOverrideReleaseMs = Number.isFinite(overrideReleaseMsRaw) && overrideReleaseMsRaw > 0;
+    if (hasOverrideReleaseMs) {
       const manualPlan = plannerBuildChargeReleasePlanFromMs(
         effect,
         maxMs,
         minHoldMs,
-        legacyReleaseMsRaw,
-        "rankedOpenerEarlyCancelIfHintAfterMs"
+        overrideReleaseMsRaw,
+        "chargeSkillReleaseOverrideMs"
       );
       manualPlan.selectionMode = "manual_ms_override";
       manualPlan.candidates = [

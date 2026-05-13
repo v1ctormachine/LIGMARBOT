@@ -68,8 +68,8 @@
       postRankedSkillClickSettleMs: 25,
       // AI CHANGED: slice 32 — default 200ms grace before first HP poll on ranked opener (reduces false “no progress” vs 0; panel/combatUi.v1 overrides when saved).
       rankedOpenerChargeGraceMs: 200,
-      // AI CHANGED: Legacy/manual charge-release timing override. If > 0 and the opener is a parsed charge skill, release at this many ms (clamped to full charge). 0 = use chargeSkillReleaseFraction.
-      rankedOpenerEarlyCancelIfHintAfterMs: 0,
+      // AI CHANGED: Optional planner/combat manual hold for parsed charge skills (ms). If > 0, overrides fraction/dynamic search for the release hold only. 0 = use chargeSkillReleaseFraction / dynamic scoring (was rankedOpenerEarlyCancelIfHintAfterMs; early-cancel wait path removed).
+      chargeSkillReleaseOverrideMs: 0,
       // AI CHANGED: slice 24b — charge skills (e.g. Sniper Shot): CD does not start until cancel UI tap or full charge fires. Only if first progress wait fails, click the cancel control (not the bar slot).
       rankedOpenerClickCancelUiIfChargeStuck: true,
       // AI CHANGED: Prefer click in the gap between map toggle and map canvas (reliable charge cancel); false = DOM cancel only.

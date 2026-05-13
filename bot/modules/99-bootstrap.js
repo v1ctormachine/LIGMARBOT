@@ -174,7 +174,7 @@
       // AI CHANGED: grouped slice 34 — planner localStorage sync from console (panel had no toggles since slice 29).
       loadPlannerUiPrefs: loadPlannerUiPrefs,
       savePlannerUiPrefs: savePlannerUiPrefs,
-      // AI CHANGED: slice 35 — opener timing ms (`ligmarbot.combatUi.v1`) from console without touching panel inputs.
+      // AI CHANGED: slice 35 — combat opener prefs (`ligmarbot.combatUi.v1`): grace ms, charge fraction, optional `chargeSkillReleaseOverrideMs`; load/save from console.
       loadCombatUiPrefs: loadCombatUiPrefs,
       saveCombatUiPrefs: saveCombatUiPrefs,
       // AI CHANGED: slice 36 — persist / reload both storage keys; console shows `{ ok, … }` not `undefined`.
