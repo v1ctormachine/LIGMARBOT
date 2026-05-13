@@ -1244,6 +1244,16 @@
             allMessagesUnder100Chars: allMessagesUnder100Chars,
             timeSlotSample:
               typeof getTimeOfDayChatSlot === "function" ? getTimeOfDayChatSlot({ nowMs: Date.now() }) : null,
+            smartLineConfigured:
+              typeof isChatSmartLineConfigured === "function" ? isChatSmartLineConfigured() : null,
+            smartLinePickProbability:
+              Config.chat && Number.isFinite(Config.chat.smartLinePickProbability)
+                ? Config.chat.smartLinePickProbability
+                : null,
+            smartLineFollowupDelayMs:
+              Config.chat && Number.isFinite(Config.chat.smartLineFollowupDelayMs)
+                ? Config.chat.smartLineFollowupDelayMs
+                : null,
             probe: smoke,
             runtime: Runtime && Runtime.autoFarm ? Runtime.autoFarm.chatSpammer || null : null
           },

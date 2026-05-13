@@ -156,7 +156,13 @@
           "🤫 админы ушли спать. самое время юзать запретный код v1ctory на буст опыта.",
           "🌚 Спорим, никто не осмелится ночью ввести багнутый промо v1ctory? За него не банят."
         ]
-      }
+      },
+      // AI CHANGED: Optional two-step “smart” line — eligible every slot; alternates vs bank via probability below.
+      smartLineEnabled: true,
+      smartLinePickProbability: 0.5,
+      smartLineOpener: "Новички есть👋?",
+      smartLineFollowup: "Введи бонусный код v1ctory , халявные плюшки и тебе и мне дадут",
+      smartLineFollowupDelayMs: 40000
     },
     recovery: {
       // AI CHANGED: Night resilience — sustained high ping alone should not panic the bot immediately; wait through short spikes first.

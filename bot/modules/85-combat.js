@@ -154,7 +154,30 @@
         }
       }
     }
+    // AI CHANGED: Include smart-line strings in flatten for TEST max-length coverage.
+    const cfg = Config.chat;
+    if (cfg && cfg.smartLineEnabled !== false) {
+      if (typeof cfg.smartLineOpener === "string" && cfg.smartLineOpener.trim()) {
+        out.push(cfg.smartLineOpener.trim());
+      }
+      if (typeof cfg.smartLineFollowup === "string" && cfg.smartLineFollowup.trim()) {
+        out.push(cfg.smartLineFollowup.trim());
+      }
+    }
     return out;
+  }
+
+  // AI CHANGED: True when smart two-step promo is configured (opener + follow-up non-empty).
+  function isChatSmartLineConfigured() {
+    const cfg = Config.chat;
+    return !!(
+      cfg &&
+      cfg.smartLineEnabled !== false &&
+      typeof cfg.smartLineOpener === "string" &&
+      cfg.smartLineOpener.trim() &&
+      typeof cfg.smartLineFollowup === "string" &&
+      cfg.smartLineFollowup.trim()
+    );
   }
 
   function pickAutoChatSpammerMessage() {
@@ -180,14 +203,69 @@
     };
   }
 
+  // AI CHANGED: Each due window picks either a bank line or the smart opener→delay→follow-up pair (50% default).
+  function pickAutoChatSpammerDispatch() {
+    const slot = getTimeOfDayChatSlot();
+    const messages = getChatSpammerMessagesForSlot(slot);
+    const smartOk = isChatSmartLineConfigured();
+    const pRaw =
+      Config.chat && Number.isFinite(Config.chat.smartLinePickProbability)
+        ? Config.chat.smartLinePickProbability
+        : 0.5;
+    const p = Math.min(1, Math.max(0, pRaw));
+    const delayMsRaw =
+      Config.chat && Number.isFinite(Config.chat.smartLineFollowupDelayMs)
+        ? Config.chat.smartLineFollowupDelayMs
+        : 40000;
+    const followDelayMs = Math.max(0, Math.round(delayMsRaw));
+
+    if (!smartOk && messages.length <= 0) {
+      return null;
+    }
+    if (smartOk && messages.length <= 0) {
+      return {
+        kind: "smart",
+        slot: slot,
+        opener: Config.chat.smartLineOpener.trim(),
+        followup: Config.chat.smartLineFollowup.trim(),
+        followDelayMs: followDelayMs
+      };
+    }
+    if (!smartOk) {
+      const bank = pickAutoChatSpammerMessage();
+      if (!bank || !bank.message) {
+        return null;
+      }
+      return Object.assign({ kind: "bank" }, bank);
+    }
+
+    const pickSmart = Math.random() < p;
+    if (pickSmart) {
+      return {
+        kind: "smart",
+        slot: slot,
+        opener: Config.chat.smartLineOpener.trim(),
+        followup: Config.chat.smartLineFollowup.trim(),
+        followDelayMs: followDelayMs
+      };
+    }
+    const bank = pickAutoChatSpammerMessage();
+    if (!bank || !bank.message) {
+      return null;
+    }
+    return Object.assign({ kind: "bank" }, bank);
+  }
+
   async function maybeRunAutoChatSpammer(liveState, userOpts) {
     const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
     if (!Config.chat || Config.chat.autoLocalPromocodeSpammerEnabled === false) {
       return { ok: true, skipped: true, reason: "disabled" };
     }
     const now = Date.now();
-    const messages = getChatSpammerMessagesForSlot(getTimeOfDayChatSlot({ nowMs: now }));
-    if (messages.length <= 0) {
+    const slotNow = getTimeOfDayChatSlot({ nowMs: now });
+    const messages = getChatSpammerMessagesForSlot(slotNow);
+    const smartConfigured = isChatSmartLineConfigured();
+    if (messages.length <= 0 && !smartConfigured) {
       return { ok: false, skipped: true, reason: "no_messages" };
     }
     const rt = getAutoChatSpammerRuntime();
@@ -235,13 +313,160 @@
         nextSendAt: rt.nextSendAt
       };
     }
-    const picked = pickAutoChatSpammerMessage();
-    if (!picked || !picked.message) {
+    const dispatch = pickAutoChatSpammerDispatch();
+    if (!dispatch) {
       return { ok: false, skipped: true, reason: "message_pick_failed" };
     }
+
     rt.lastAttemptAt = now;
+
+    if (dispatch.kind === "smart") {
+      setBotStatus("waiting", "auto local chat smart opener");
+      Logger.log("CHAT", "Auto local chat smart opener due", {
+        timeSlot: dispatch.slot || null,
+        openerLength: dispatch.opener.length,
+        followDelayMs: dispatch.followDelayMs,
+        reason: opts.reason || null
+      });
+      const openResult = await sendLocalChatPromocodeMessage(dispatch.opener);
+      rt.lastResult = openResult;
+      if (!openResult || !openResult.ok) {
+        rt.failures += 1;
+        Logger.warn("CHAT", "Auto local chat smart opener failed", { failures: rt.failures, result: openResult });
+        scheduleNextAutoChatSpammer("send_failed", { nowMs: Date.now() });
+        return {
+          ok: false,
+          sent: false,
+          kind: "smart",
+          stage: "opener",
+          failures: rt.failures,
+          nextSendAt: rt.nextSendAt,
+          lastDelayMs: rt.lastDelayMs,
+          result: openResult
+        };
+      }
+      rt.sends += 1;
+      rt.lastSendAt = Date.now();
+      rt.lastMessage = dispatch.opener;
+      rt.lastMessageIndex = -1;
+      rt.lastChatSlot = dispatch.slot || null;
+      Logger.log("CHAT", "Auto local chat smart opener sent; waiting before follow-up", {
+        followDelayMs: dispatch.followDelayMs,
+        timeSlot: dispatch.slot || null
+      });
+
+      await sleep(dispatch.followDelayMs);
+
+      if (Runtime.autoFarm.stopRequested) {
+        Logger.log("CHAT", "Auto local chat smart follow-up skipped (stop requested)", {});
+        scheduleNextAutoChatSpammer("smart_followup_aborted_stop", { nowMs: Date.now() });
+        return {
+          ok: true,
+          sent: true,
+          kind: "smart",
+          partial: true,
+          stage: "followup_skipped_stop",
+          openerOk: true,
+          nextSendAt: rt.nextSendAt,
+          lastDelayMs: rt.lastDelayMs
+        };
+      }
+
+      const stateFollow = readBasicState();
+      if (
+        stateFollow &&
+        stateFollow.session &&
+        (stateFollow.session.dead === true || stateFollow.session.poorConnection === true)
+      ) {
+        Logger.warn("CHAT", "Auto local chat smart follow-up skipped (session risk)", {});
+        scheduleNextAutoChatSpammer("smart_followup_aborted_session", { nowMs: Date.now() });
+        return {
+          ok: true,
+          sent: true,
+          kind: "smart",
+          partial: true,
+          stage: "followup_skipped_session",
+          openerOk: true,
+          nextSendAt: rt.nextSendAt,
+          lastDelayMs: rt.lastDelayMs
+        };
+      }
+      if (
+        stateFollow &&
+        stateFollow.combat &&
+        typeof stateFollow.combat.enemyCount === "number" &&
+        stateFollow.combat.enemyCount > 0
+      ) {
+        Logger.warn("CHAT", "Auto local chat smart follow-up skipped (enemy present)", {
+          enemyCount: stateFollow.combat.enemyCount
+        });
+        scheduleNextAutoChatSpammer("smart_followup_aborted_combat", { nowMs: Date.now() });
+        return {
+          ok: true,
+          sent: true,
+          kind: "smart",
+          partial: true,
+          stage: "followup_skipped_combat",
+          openerOk: true,
+          nextSendAt: rt.nextSendAt,
+          lastDelayMs: rt.lastDelayMs
+        };
+      }
+
+      setBotStatus("waiting", "auto local chat smart follow-up");
+      Logger.log("CHAT", "Auto local chat smart follow-up due", {
+        messageLength: dispatch.followup.length,
+        timeSlot: dispatch.slot || null
+      });
+      const followResult = await sendLocalChatPromocodeMessage(dispatch.followup);
+      rt.lastResult = followResult;
+      if (!followResult || !followResult.ok) {
+        rt.failures += 1;
+        Logger.warn("CHAT", "Auto local chat smart follow-up failed", { failures: rt.failures, result: followResult });
+        scheduleNextAutoChatSpammer("send_failed", { nowMs: Date.now() });
+        return {
+          ok: false,
+          sent: true,
+          kind: "smart",
+          partial: true,
+          stage: "followup",
+          openerOk: true,
+          failures: rt.failures,
+          nextSendAt: rt.nextSendAt,
+          lastDelayMs: rt.lastDelayMs,
+          result: followResult
+        };
+      }
+      rt.sends += 1;
+      rt.lastSendAt = Date.now();
+      rt.lastMessage = dispatch.followup;
+      rt.lastMessageIndex = -1;
+      rt.lastChatSlot = dispatch.slot || null;
+      Logger.log("CHAT", "Auto local chat smart pair complete", {
+        sends: rt.sends,
+        timeSlot: dispatch.slot || null
+      });
+      scheduleNextAutoChatSpammer("sent", { nowMs: rt.lastSendAt });
+      return Object.assign(
+        {
+          ok: true,
+          sent: true,
+          kind: "smart",
+          pairComplete: true,
+          nextSendAt: rt.nextSendAt,
+          lastDelayMs: rt.lastDelayMs
+        },
+        followResult
+      );
+    }
+
+    const picked = dispatch;
+    if (!picked.message) {
+      return { ok: false, skipped: true, reason: "message_pick_failed" };
+    }
     setBotStatus("waiting", `auto local chat send (msg ${picked.index + 1}/${messages.length})`);
     Logger.log("CHAT", "Auto local chat send due", {
+      kind: "bank",
       messageIndex: picked.index,
       messageLength: picked.message.length,
       timeSlot: picked.slot || null,
@@ -266,6 +491,7 @@
       return Object.assign({
         ok: true,
         sent: true,
+        kind: "bank",
         messageIndex: picked.index,
         nextSendAt: rt.nextSendAt,
         lastDelayMs: rt.lastDelayMs
@@ -281,6 +507,7 @@
     return {
       ok: false,
       sent: false,
+      kind: "bank",
       messageIndex: picked.index,
       failures: rt.failures,
       nextSendAt: rt.nextSendAt,
