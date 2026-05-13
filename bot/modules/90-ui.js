@@ -530,6 +530,8 @@
       auto_farm_reliability: "Combat reliability",
       auto_farm_session_summary: "Auto-farm session",
       field_validation_snapshot: "Field validation",
+      // AI CHANGED: §6 — enemy DB merge exposes buff label signature for TEST export.
+      enemy_buff_calibration_probe: "Enemy buff calibration",
       logger_recent_ring: "Logger ring",
       planner_ranked_openers: "Ranked opener",
       calibration_observe: "Calibration"
@@ -794,6 +796,50 @@
       }
     } catch (eDpFv) {
       out.openerDangerPressureSampleError = String(eDpFv && eDpFv.message ? eDpFv.message : eDpFv);
+    }
+    // AI CHANGED: §6 — last-fought row buff signature + bucket counts for soak export / getFieldValidationSnapshot().
+    try {
+      const fkBuff =
+        Runtime && Runtime.enemy && typeof Runtime.enemy.lastFoughtKey === "string" && Runtime.enemy.lastFoughtKey.trim()
+          ? Runtime.enemy.lastFoughtKey.trim()
+          : null;
+      if (fkBuff && Runtime.enemy.db && Array.isArray(Runtime.enemy.db)) {
+        const er = Runtime.enemy.db.find(function (e) {
+          return e && e.key === fkBuff;
+        });
+        if (er) {
+          const lastB = er.observeCalLast;
+          const calB = er.observeCalAgg;
+          const bucketsB = calB && calB.buffSigBuckets ? calB.buffSigBuckets : null;
+          let topB = [];
+          if (bucketsB && typeof bucketsB === "object") {
+            const ksB = Object.keys(bucketsB);
+            for (let ib = 0; ib < ksB.length; ib += 1) {
+              const bEnt = bucketsB[ksB[ib]];
+              topB.push({
+                signatureLen: bEnt && bEnt.signature ? String(bEnt.signature).length : 0,
+                samples: bEnt ? bEnt.hpDropSamples : null,
+                mean: bEnt ? bEnt.hpDropMean : null,
+                sessions: bEnt ? bEnt.sessionsMerged : null
+              });
+            }
+            topB.sort(function (a, b) {
+              return (b.samples || 0) - (a.samples || 0);
+            });
+            topB = topB.slice(0, 3);
+          }
+          out.enemyBuffCalibration = {
+            lastFoughtKey: fkBuff,
+            statusLabelsMergeSource: lastB ? lastB.statusLabelsMergeSource : null,
+            statusLabelsSignature: lastB ? lastB.statusLabelsSignature : null,
+            statusLabelCount: lastB && Number.isFinite(lastB.statusLabelCount) ? lastB.statusLabelCount : null,
+            buffSigBucketCount: bucketsB ? Object.keys(bucketsB).length : 0,
+            buffSigTop: topB
+          };
+        }
+      }
+    } catch (eBf) {
+      out.enemyBuffCalibrationError = String(eBf && eBf.message ? eBf.message : eBf);
     }
     return out;
   }
@@ -3329,6 +3375,46 @@
           addCheck("calibration_observe", false, { error: calibrationError }, strictCalibration);
         }
         Logger.log("TEST", "bundle done");
+      }
+
+      // AI CHANGED: §6 — after calibration merge, surface buff signature + bucket count (soft; skips when no merge).
+      try {
+        let buffDetail = { skipped: true, reason: "no_merge_payload" };
+        let buffOk = true;
+        if (!runCalibration) {
+          buffDetail = { skipped: true, reason: "calibration_off" };
+        } else if (calibration && calibration.enemyDbMerge && calibration.enemyDbMerge.ok && calibration.enemyDbMerge.row) {
+          const rB = calibration.enemyDbMerge.row;
+          const lastB = rB.observeCalLast;
+          const hasSource = !!(lastB && typeof lastB.statusLabelsMergeSource === "string");
+          buffOk = hasSource;
+          const calRow = rB.observeCalAgg;
+          buffDetail = {
+            skipped: false,
+            key: rB.key,
+            statusLabelsMergeSource: lastB ? lastB.statusLabelsMergeSource : null,
+            statusLabelsSignature: lastB ? lastB.statusLabelsSignature : null,
+            statusLabelCount: lastB && Number.isFinite(lastB.statusLabelCount) ? lastB.statusLabelCount : null,
+            buffSigBucketKeys:
+              calRow && calRow.buffSigBuckets && typeof calRow.buffSigBuckets === "object"
+                ? Object.keys(calRow.buffSigBuckets).length
+                : 0
+          };
+        } else if (calibration && calibration.enemyDbMerge && calibration.enemyDbMerge.error) {
+          buffDetail = {
+            skipped: true,
+            reason: "merge_not_ok",
+            error: String(calibration.enemyDbMerge.error)
+          };
+        }
+        addCheck("enemy_buff_calibration_probe", buffOk || buffDetail.skipped, buffDetail, false);
+      } catch (buffErr) {
+        addCheck(
+          "enemy_buff_calibration_probe",
+          false,
+          { error: String(buffErr && buffErr.message ? buffErr.message : buffErr) },
+          false
+        );
       }
 
       // AI CHANGED: Long-soak mid-session visibility — explicit check for auto-farm resume policy and current status.

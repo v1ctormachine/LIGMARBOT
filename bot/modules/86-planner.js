@@ -136,6 +136,25 @@
         ratioVsCurrentPaper = +(observedMean / currentExpectedHit).toFixed(4);
       }
 
+      // AI CHANGED: §6 buff calibration export — last merge signature + capped per-signature buckets.
+      const buffBuckets = cal.buffSigBuckets && typeof cal.buffSigBuckets === "object" ? cal.buffSigBuckets : null;
+      const buffBucketList = [];
+      if (buffBuckets) {
+        const bkeys = Object.keys(buffBuckets);
+        for (let bi = 0; bi < bkeys.length; bi += 1) {
+          const bb = buffBuckets[bkeys[bi]];
+          buffBucketList.push({
+            signature: bb && bb.signature != null ? String(bb.signature) : bkeys[bi],
+            sessionsMerged: bb ? bb.sessionsMerged : null,
+            hpDropSamples: bb ? bb.hpDropSamples : null,
+            hpDropMean: bb ? bb.hpDropMean : null
+          });
+        }
+        buffBucketList.sort(function (a, b) {
+          return (b.hpDropSamples || 0) - (a.hpDropSamples || 0);
+        });
+      }
+
       rows.push({
         key: row.key,
         name: row.name,
@@ -150,7 +169,17 @@
         ratioObservedVsPaperAtMerge: ratioVsLastMergePaper,
         paperExpectedHitCurrentHero: currentExpectedHit,
         ratioObservedVsCurrentPaper: ratioVsCurrentPaper,
-        statusLabelsLast: row.statusLabelsLast || []
+        statusLabelsLast: row.statusLabelsLast || [],
+        statusLabelsSignatureLastMerge:
+          row.observeCalLast && row.observeCalLast.statusLabelsSignature != null
+            ? row.observeCalLast.statusLabelsSignature
+            : null,
+        statusLabelsMergeSourceLast:
+          row.observeCalLast && row.observeCalLast.statusLabelsMergeSource
+            ? row.observeCalLast.statusLabelsMergeSource
+            : null,
+        buffSigBucketCount: buffBucketList.length,
+        buffSigBucketsTop: buffBucketList.slice(0, 6)
       });
     }
 
@@ -162,7 +191,7 @@
       },
       calibratedRows: rows,
       note:
-        "ratio > 1 often means skills/crits/debuffs mixed in; basic-only fights give cleaner factors. ratioVsCurrentPaper uses live hero stats."
+        "ratio > 1 often means skills/crits/debuffs mixed in; basic-only fights give cleaner factors. ratioVsCurrentPaper uses live hero stats. buffSigBucketsTop groups hp_drop stats by merged statusLabelsSignature (capped) for buffed vs clean comparisons."
     };
   }
 

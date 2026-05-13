@@ -90,6 +90,130 @@
     return `${n}|${lv}|${mx}`;
   }
 
+  // AI CHANGED: §6 buff modeling — stable fingerprint from condition-bar label strings (no numeric buff parse).
+  function buildEnemyStatusLabelsSignatureFromLabels(labels) {
+    const arr = Array.isArray(labels) ? labels : [];
+    const bag = {};
+    const uniq = [];
+    for (let i = 0; i < arr.length; i += 1) {
+      const t = String(arr[i] || "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .toLowerCase();
+      if (!t) {
+        continue;
+      }
+      if (!bag[t]) {
+        bag[t] = true;
+        uniq.push(t);
+      }
+    }
+    uniq.sort();
+    let sig = uniq.join("|");
+    const maxLen = 480;
+    if (sig.length > maxLen) {
+      sig = sig.slice(0, maxLen);
+    }
+    return sig;
+  }
+
+  function enemyBuffSigBucketKey(signature) {
+    const s = typeof signature === "string" ? signature : "";
+    return s.length ? s : "__clean__";
+  }
+
+  function pruneEnemyBuffSigBuckets(buckets, maxKeys) {
+    if (!buckets || typeof buckets !== "object") {
+      return;
+    }
+    const keys = Object.keys(buckets);
+    if (keys.length <= maxKeys) {
+      return;
+    }
+    keys.sort(function (a, b) {
+      const ta = buckets[a] && buckets[a].lastMergedAt ? buckets[a].lastMergedAt : 0;
+      const tb = buckets[b] && buckets[b].lastMergedAt ? buckets[b].lastMergedAt : 0;
+      return ta - tb;
+    });
+    while (keys.length > maxKeys) {
+      const drop = keys.shift();
+      if (drop) {
+        delete buckets[drop];
+      }
+    }
+  }
+
+  // AI CHANGED: Prefer live snapshot (same key) over stale row labels for merge-time buff pairing.
+  function collectStatusLabelsForEnemyDbMerge(row, key) {
+    let labels = [];
+    let source = "none";
+
+    const snap = Runtime.enemy.lastSnapshot;
+    if (snap && snap.ok && snap.targetHp && snap.targetHp.valid) {
+      const sk = makeEnemyDbKey(snap.name, snap.level, snap.targetHp.max);
+      if (sk === key && Array.isArray(snap.statusEffects)) {
+        const fromSnap = [];
+        for (let i = 0; i < snap.statusEffects.length; i += 1) {
+          const se = snap.statusEffects[i];
+          const lb = se && se.label ? String(se.label) : "";
+          const t = lb.replace(/\s+/g, " ").trim();
+          if (t) {
+            fromSnap.push(t);
+          }
+        }
+        if (fromSnap.length > 0) {
+          labels = fromSnap;
+          source = "snapshot_matched";
+        } else {
+          source = "snapshot_matched_empty";
+        }
+      }
+    }
+
+    if (labels.length === 0) {
+      const fresh = readTargetProfileSnapshot();
+      if (fresh && fresh.ok && fresh.targetHp && fresh.targetHp.valid) {
+        const fk = makeEnemyDbKey(fresh.name, fresh.level, fresh.targetHp.max);
+        if (fk === key && Array.isArray(fresh.statusEffects)) {
+          const fromFresh = [];
+          for (let j = 0; j < fresh.statusEffects.length; j += 1) {
+            const se2 = fresh.statusEffects[j];
+            const lb2 = se2 && se2.label ? String(se2.label) : "";
+            const t2 = lb2.replace(/\s+/g, " ").trim();
+            if (t2) {
+              fromFresh.push(t2);
+            }
+          }
+          if (fromFresh.length > 0) {
+            labels = fromFresh;
+            source = "fresh_read_matched";
+          }
+        }
+      }
+    }
+
+    if (labels.length === 0 && Array.isArray(row.statusLabelsLast) && row.statusLabelsLast.length > 0) {
+      const fromRow = [];
+      for (let k = 0; k < row.statusLabelsLast.length; k += 1) {
+        const t3 = String(row.statusLabelsLast[k] || "")
+          .replace(/\s+/g, " ")
+          .trim();
+        if (t3) {
+          fromRow.push(t3);
+        }
+      }
+      if (fromRow.length > 0) {
+        labels = fromRow;
+        source = "row_last";
+      }
+    }
+
+    if (labels.length === 0) {
+      source = "none";
+    }
+    return { labels: labels, source: source };
+  }
+
   function trimEnemyDb() {
     const max = Config.enemyProfile.maxDbEntries;
     if (Runtime.enemy.db.length <= max) {
@@ -372,6 +496,43 @@
       cal.lastUpdatedAt = Date.now();
       cal.hpDropMean = cal.hpDropSum / cal.hpDropSamples;
 
+      // AI CHANGED: §6 — label snapshot + per-signature hp_drop buckets for buffed vs clean pairing.
+      const collected = collectStatusLabelsForEnemyDbMerge(row, key);
+      const statusLabelsSignature = buildEnemyStatusLabelsSignatureFromLabels(collected.labels);
+      if (collected.labels.length > 0) {
+        row.statusLabelsLast = collected.labels;
+      }
+
+      if (!cal.buffSigBuckets) {
+        cal.buffSigBuckets = {};
+      }
+      const bucketKey = enemyBuffSigBucketKey(statusLabelsSignature);
+      const buckets = cal.buffSigBuckets;
+      if (!buckets[bucketKey]) {
+        buckets[bucketKey] = {
+          signature: statusLabelsSignature,
+          hpDropSamples: 0,
+          hpDropSum: 0,
+          hpDropMin: null,
+          hpDropMax: null,
+          sessionsMerged: 0,
+          lastMergedAt: null,
+          lastSessionMean: null,
+          hpDropMean: null
+        };
+      }
+      const bk = buckets[bucketKey];
+      bk.hpDropSamples += n;
+      bk.hpDropSum += sum;
+      bk.hpDropMin = bk.hpDropMin === null ? mn : Math.min(bk.hpDropMin, mn);
+      bk.hpDropMax = bk.hpDropMax === null ? mx : Math.max(bk.hpDropMax, mx);
+      bk.sessionsMerged += 1;
+      bk.lastMergedAt = Date.now();
+      bk.lastSessionMean = mean;
+      bk.hpDropMean = bk.hpDropSum / bk.hpDropSamples;
+      bk.signature = statusLabelsSignature;
+      pruneEnemyBuffSigBuckets(buckets, 20);
+
       let paperHit = null;
       if (typeof estimatePaperBasicAttackDps === "function") {
         const est = estimatePaperBasicAttackDps();
@@ -390,7 +551,14 @@
         hpDropMean: mean,
         lethalEventsInSession: hpDropsAll.filter((e) => e.lethal).length,
         totalHpDropEventsInSession: hpDropsAll.length,
-        paperExpectedHitApprox: paperHit
+        paperExpectedHitApprox: paperHit,
+        statusLabelsSignature: statusLabelsSignature,
+        statusLabelsMergeSource: collected.source,
+        statusLabelCount: collected.labels.length,
+        statusLabelsSample: collected.labels.slice(0, 8).map(function (lb) {
+          const t = String(lb || "").replace(/\s+/g, " ").trim();
+          return t.length > 48 ? t.slice(0, 48) + "..." : t;
+        })
       };
     }
 
@@ -401,7 +569,13 @@
       key: key,
       lastSessionMean: row.observeCalLast ? row.observeCalLast.hpDropMean : null,
       aggMean: row.observeCalAgg.hpDropMean,
-      aggSamples: row.observeCalAgg.hpDropSamples
+      aggSamples: row.observeCalAgg.hpDropSamples,
+      buffSig: row.observeCalLast ? row.observeCalLast.statusLabelsSignature : null,
+      buffSource: row.observeCalLast ? row.observeCalLast.statusLabelsMergeSource : null,
+      buffBuckets:
+        row.observeCalAgg && row.observeCalAgg.buffSigBuckets
+          ? Object.keys(row.observeCalAgg.buffSigBuckets).length
+          : 0
     });
     return row;
   }
