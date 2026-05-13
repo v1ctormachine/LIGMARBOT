@@ -291,8 +291,12 @@
       openerContextCalibrationEaseCap: 0.2,
       // AI CHANGED: Ignore ease when ratio implies more than this much over paper (crit / mixed damage).
       openerContextCalibrationEaseMaxRatio: 1.32,
-      // AI CHANGED: Enemy hp_drop ratio is basic-anchored; opener horizon paper scales instant/dot damage by mobFactor blended toward 1 (w=1 restores full scaling on all effect types like v0.3.190).
+      // AI CHANGED: Enemy hp_drop ratio is basic-anchored; opener horizon paper scales instant/dot by mobFactor blended toward 1. Legacy single knob (magic/unknown) when horizonPaperMobBlendMagicWeight unset.
       horizonPaperMobBlendNonBasicWeight: 0.6,
+      // AI CHANGED: Typed split — physical skill lines on paper use this weight on (mobFactor−1); 1 = full mobFactor (hp_drop tracks phys basics well).
+      horizonPaperMobBlendPhysicalWeight: 1,
+      // AI CHANGED: Magic/magical instant/dot lines damp mobFactor toward 1 (separate from physical).
+      horizonPaperMobBlendMagicWeight: 0.6,
       // AI CHANGED: Under pressure, long casts lose this many basic-DPS units per second of blocked time.
       openerContextCastPressurePenaltyInBasicDps: 0.12,
       // AI CHANGED: Control skills gain this many basic-DPS units under pressure (stun gets full weight, slow gets partial).

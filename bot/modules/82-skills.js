@@ -274,7 +274,13 @@
     // Generic "additional N damage" -- only emitted if no DoT already captured (DoT regex is more
     // specific and would have consumed the same number).
     if (!effects.some((e) => e.type === "dot")) {
-      const m = description.match(/(?:additional|additionally)\s+(\d+(?:\.\d+)?)\s+(physical|magic|magical)\s+damage(?!\s+over)/i);
+      // AI CHANGED: Match "additional 453 physical damage" or "additional 453 → 531 of physical damage" (upgrade arrow) for damageType tagging.
+      let m = description.match(/(?:additional|additionally)\s+(\d+(?:\.\d+)?)\s+(physical|magic|magical)\s+damage(?!\s+over)/i);
+      if (!m) {
+        m = description.match(
+          /(?:additional|additionally)\s+(\d+(?:\.\d+)?)(?:\s*(?:\u2192|>)\s*\d+(?:\.\d+)?)?\s+of\s+(physical|magic|magical)\s+damage(?!\s+over)/i
+        );
+      }
       if (m) {
         effects.push({
           type: "instant",

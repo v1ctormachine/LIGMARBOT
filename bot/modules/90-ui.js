@@ -493,7 +493,7 @@
       planner_opener_horizon_preview: "HorizonSim",
       // AI CHANGED: DoT branch in horizon paper scales with mobFactor (calibration EV).
       // AI CHANGED: Label reflects DoT + instant paper mob blend check (basic_proc/channel still full mobFactor).
-      planner_horizon_dot_mob_calibration: "Horizon paper mob calibration",
+      planner_horizon_dot_mob_calibration: "Horizon typed paper mob calibration",
       planner_conception_path: "Conception path",
       planner_ranked_runtime: "Ranked runtime",
       planner_opener_context_scoring: "Opener context scoring",
@@ -2486,7 +2486,7 @@
           strictRankedChecks
         );
       }
-      // AI CHANGED: openerHorizonSim DoT must scale with mobFactor like other paper skill parts (calibration → EV).
+      // AI CHANGED: openerHorizonSim paper mob — unknown damageType uses magic blend; explicit physical uses physical weight; TEST covers both.
       if (!rankedOn) {
         addCheck(
           "planner_horizon_dot_mob_calibration",
@@ -2501,19 +2501,37 @@
       } else {
         const dotSlot = { effects: [{ type: "dot", perSec: 20, durationSec: 4 }] };
         const instSlot = { effects: [{ type: "instant", value: 100 }] };
+        const dotPhysSlot = { effects: [{ type: "dot", perSec: 20, durationSec: 4, damageType: "physical" }] };
+        const instPhysSlot = { effects: [{ type: "instant", value: 100, damageType: "physical" }] };
         let sFull = null;
         let sHalf = null;
         let iFull = null;
         let iHalf = null;
+        let dpFull = null;
+        let dpHalf = null;
+        let ipFull = null;
+        let ipHalf = null;
         let dotErr = null;
-        const wCfg = Config.planner && Config.planner.horizonPaperMobBlendNonBasicWeight;
-        const wBlend = Number.isFinite(wCfg) ? Math.max(0, Math.min(1, wCfg)) : 0.6;
-        const effHalfRatio = 1 + (0.5 - 1) * wBlend;
+        const wMagCfg = Config.planner && Config.planner.horizonPaperMobBlendMagicWeight;
+        const wMagic = Number.isFinite(wMagCfg)
+          ? Math.max(0, Math.min(1, wMagCfg))
+          : (function () {
+              const leg = Config.planner && Config.planner.horizonPaperMobBlendNonBasicWeight;
+              return Number.isFinite(leg) ? Math.max(0, Math.min(1, leg)) : 0.6;
+            })();
+        const wPhysCfg = Config.planner && Config.planner.horizonPaperMobBlendPhysicalWeight;
+        const wPhys = Number.isFinite(wPhysCfg) ? Math.max(0, Math.min(1, wPhysCfg)) : 1;
+        const effHalfMagic = 1 + (0.5 - 1) * wMagic;
+        const effHalfPhys = 1 + (0.5 - 1) * wPhys;
         try {
           sFull = plannerSummarizeSkillPaperDamageShape(dotSlot, 4, 1, null, null);
           sHalf = plannerSummarizeSkillPaperDamageShape(dotSlot, 4, 0.5, null, null);
           iFull = plannerSummarizeSkillPaperDamageShape(instSlot, 4, 1, null, null);
           iHalf = plannerSummarizeSkillPaperDamageShape(instSlot, 4, 0.5, null, null);
+          dpFull = plannerSummarizeSkillPaperDamageShape(dotPhysSlot, 4, 1, null, null);
+          dpHalf = plannerSummarizeSkillPaperDamageShape(dotPhysSlot, 4, 0.5, null, null);
+          ipFull = plannerSummarizeSkillPaperDamageShape(instPhysSlot, 4, 1, null, null);
+          ipHalf = plannerSummarizeSkillPaperDamageShape(instPhysSlot, 4, 0.5, null, null);
         } catch (eDot) {
           dotErr = String(eDot && eDot.message ? eDot.message : eDot);
         }
@@ -2524,7 +2542,7 @@
           Number.isFinite(sFull.dotDamage) &&
           sFull.dotDamage > 0 &&
           Number.isFinite(sHalf.dotDamage) &&
-          Math.abs(sHalf.dotDamage - sFull.dotDamage * effHalfRatio) < 1e-4;
+          Math.abs(sHalf.dotDamage - sFull.dotDamage * effHalfMagic) < 1e-4;
         const instOk =
           !dotErr &&
           iFull &&
@@ -2532,7 +2550,23 @@
           Number.isFinite(iFull.immediateDamage) &&
           iFull.immediateDamage > 0 &&
           Number.isFinite(iHalf.immediateDamage) &&
-          Math.abs(iHalf.immediateDamage - iFull.immediateDamage * effHalfRatio) < 1e-4;
+          Math.abs(iHalf.immediateDamage - iFull.immediateDamage * effHalfMagic) < 1e-4;
+        const dotPhysOk =
+          !dotErr &&
+          dpFull &&
+          dpHalf &&
+          Number.isFinite(dpFull.dotDamage) &&
+          dpFull.dotDamage > 0 &&
+          Number.isFinite(dpHalf.dotDamage) &&
+          Math.abs(dpHalf.dotDamage - dpFull.dotDamage * effHalfPhys) < 1e-4;
+        const instPhysOk =
+          !dotErr &&
+          ipFull &&
+          ipHalf &&
+          Number.isFinite(ipFull.immediateDamage) &&
+          ipFull.immediateDamage > 0 &&
+          Number.isFinite(ipHalf.immediateDamage) &&
+          Math.abs(ipHalf.immediateDamage - ipFull.immediateDamage * effHalfPhys) < 1e-4;
         const basicSlot = { effects: [{ type: "basic_proc" }] };
         let bFull = null;
         let bHalf = null;
@@ -2549,31 +2583,43 @@
           Number.isFinite(bFull.immediateDamage) &&
           bFull.immediateDamage > 0 &&
           Math.abs(bHalf.immediateDamage - bFull.immediateDamage * 0.5) < 1e-4;
-        const paperMobOk = dotOk && instOk && basicOk;
+        const paperMobOk = dotOk && instOk && basicOk && dotPhysOk && instPhysOk;
         addCheck(
           "planner_horizon_dot_mob_calibration",
           paperMobOk,
           paperMobOk
             ? {
-                blendWeight: wBlend,
-                effHalfRatio: effHalfRatio,
+                blendMagicWeight: wMagic,
+                blendPhysicalWeight: wPhys,
+                effHalfMagic: effHalfMagic,
+                effHalfPhys: effHalfPhys,
                 dotFull: sFull.dotDamage,
                 dotHalf: sHalf.dotDamage,
                 instantFull: iFull.immediateDamage,
                 instantHalf: iHalf.immediateDamage,
+                dotPhysFull: dpFull.dotDamage,
+                dotPhysHalf: dpHalf.dotDamage,
+                instantPhysFull: ipFull.immediateDamage,
+                instantPhysHalf: ipHalf.immediateDamage,
                 basicProcFull: bFull.immediateDamage,
                 basicProcHalf: bHalf.immediateDamage
               }
             : {
                 error: "paper_mob_factor_mismatch",
                 dotError: dotErr,
-                blendWeight: wBlend,
-                effHalfRatio: effHalfRatio,
+                blendMagicWeight: wMagic,
+                blendPhysicalWeight: wPhys,
+                effHalfMagic: effHalfMagic,
+                effHalfPhys: effHalfPhys,
                 dot: { full: sFull, half: sHalf },
                 instant: { full: iFull, half: iHalf },
+                dotPhys: { full: dpFull, half: dpHalf },
+                instantPhys: { full: ipFull, half: ipHalf },
                 basicProc: { full: bFull, half: bHalf },
                 dotOk: dotOk,
                 instOk: instOk,
+                dotPhysOk: dotPhysOk,
+                instPhysOk: instPhysOk,
                 basicOk: basicOk
               },
           false

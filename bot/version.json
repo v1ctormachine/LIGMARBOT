@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.191",
-    "description":  "horizon: blend mobFactor on instant/dot paper; full mf on basic_proc/channel; TEST Horizon paper mob calibration",
-    "builtAt":  "2026-05-13T18:13:40.7827949+03:00",
+    "version":  "0.3.192",
+    "description":  "horizon: typed paper mob blend physical vs magic; instant arrow-tier regex; TEST Horizon typed paper mob calibration",
+    "builtAt":  "2026-05-13T18:22:48.6304947+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.192",
+                        "description":  "horizon: typed paper mob blend physical vs magic; instant arrow-tier regex; TEST Horizon typed paper mob calibration",
+                        "date":  "2026-05-13T18:22:48.6304947+03:00"
+                    },
                     {
                         "version":  "0.3.191",
                         "description":  "horizon: blend mobFactor on instant/dot paper; full mf on basic_proc/channel; TEST Horizon paper mob calibration",
@@ -247,11 +252,6 @@
                         "version":  "0.3.146",
                         "description":  "combat: add out-of-combat hp heal gate",
                         "date":  "2026-05-12T17:53:01.8883902+03:00"
-                    },
-                    {
-                        "version":  "0.3.145",
-                        "description":  "combat: parsed potion sustain and mana protection",
-                        "date":  "2026-05-12T17:38:41.9374384+03:00"
                     }
                 ]
 }

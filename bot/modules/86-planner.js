@@ -1212,21 +1212,34 @@
     return fallbackPlan;
   }
 
-  // AI CHANGED: openerHorizonSim paper — full mobFactor on basic-anchored effects (basic_proc, channel_gear); damp toward 1 on instant/dot when horizonPaperMobBlendNonBasicWeight < 1 (hp_drop is basic-mixed telemetry).
-  function plannerHorizonPaperEffectiveMobFactor(mobFactor, anchoring) {
+  // AI CHANGED: openerHorizonSim paper — full mobFactor on basic-anchored effects (basic_proc, channel_gear); instant/dot use damageType-aware blend weights (physical vs magic/unknown).
+  function plannerHorizonPaperEffectiveMobFactor(mobFactor, anchoring, damageType) {
     const mf = Number.isFinite(mobFactor) && mobFactor > 0 ? mobFactor : 1;
     if (anchoring === "basic") {
       return mf;
     }
-    const wCfg = Config.planner && Config.planner.horizonPaperMobBlendNonBasicWeight;
-    const w = Number.isFinite(wCfg) ? Math.max(0, Math.min(1, wCfg)) : 0.6;
+    const dt = typeof damageType === "string" ? damageType.toLowerCase() : "";
+    const isPhysical = dt === "physical";
+    let w;
+    if (isPhysical) {
+      const wCfg = Config.planner && Config.planner.horizonPaperMobBlendPhysicalWeight;
+      w = Number.isFinite(wCfg) ? Math.max(0, Math.min(1, wCfg)) : 1;
+    } else {
+      const wMag = Config.planner && Config.planner.horizonPaperMobBlendMagicWeight;
+      if (Number.isFinite(wMag)) {
+        w = Math.max(0, Math.min(1, wMag));
+      } else {
+        const wLegacy = Config.planner && Config.planner.horizonPaperMobBlendNonBasicWeight;
+        w = Number.isFinite(wLegacy) ? Math.max(0, Math.min(1, wLegacy)) : 0.6;
+      }
+    }
     if (w >= 1 - 1e-9) {
       return mf;
     }
     return 1 + (mf - 1) * w;
   }
 
-  // AI CHANGED: openerHorizonSim — split skill paper damage into immediate vs delayed parts; basic_proc + channel use full mobFactor; instant/dot use blended mobFactor when configured.
+  // AI CHANGED: openerHorizonSim — split skill paper damage into immediate vs delayed parts; basic_proc + channel use full mobFactor; instant/dot use typed blend via damageType when present.
   function plannerSummarizeSkillPaperDamageShape(slot, horizonSec, mobFactor, expectedBasicHit, prebuiltChargePlan) {
     if (!slot || !Array.isArray(slot.effects) || !(horizonSec > 0)) {
       return {
@@ -1236,7 +1249,6 @@
       };
     }
     const mf = Number.isFinite(mobFactor) && mobFactor > 0 ? mobFactor : 1;
-    const mfNonBasic = plannerHorizonPaperEffectiveMobFactor(mf, "non_basic");
     let totalDamage = 0;
     let immediateDamage = 0;
     let dotDamage = 0;
@@ -1247,12 +1259,13 @@
       }
       if (e.type === "dot" && Number.isFinite(e.perSec)) {
         const dur = Number.isFinite(e.durationSec) ? e.durationSec : horizonSec;
-        // AI CHANGED: DoT uses blended mobFactor — hp_drop is not a clean magic DoT multiplier until typed calibration exists.
-        const add = e.perSec * Math.min(horizonSec, dur) * mfNonBasic;
+        const mfDot = plannerHorizonPaperEffectiveMobFactor(mf, "non_basic", e.damageType);
+        const add = e.perSec * Math.min(horizonSec, dur) * mfDot;
         totalDamage += add;
         dotDamage += add;
       } else if (e.type === "instant" && Number.isFinite(e.value)) {
-        const add = e.value * mfNonBasic;
+        const mfInst = plannerHorizonPaperEffectiveMobFactor(mf, "non_basic", e.damageType);
+        const add = e.value * mfInst;
         totalDamage += add;
         immediateDamage += add;
       } else if (e.type === "basic_proc" && expectedBasicHit !== null && Number.isFinite(expectedBasicHit)) {
