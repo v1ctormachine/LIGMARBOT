@@ -1613,7 +1613,7 @@
               : (
                   Number.isFinite(Config.planner && Config.planner.openerFollowUpSkillDepth)
                     ? Math.max(0, Math.floor(Config.planner.openerFollowUpSkillDepth))
-                    : 1
+                    : 2
                 ),
           queuedActionArmed: queueEvents && Number.isFinite(queueEvents.queued_action_armed) ? queueEvents.queued_action_armed : 0,
           queuedActionFired: queueEvents && Number.isFinite(queueEvents.queued_action_fired) ? queueEvents.queued_action_fired : 0,
