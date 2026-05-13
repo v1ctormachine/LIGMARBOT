@@ -317,21 +317,16 @@
 
     const hpDropsAll = session.events.filter((e) => e.kind === "hp_drop");
     const hpDrops = hpDropsAll.filter((e) => !excludeLethal || !e.lethal);
-    if (hpDrops.length === 0) {
-      Runtime.enemy.lastError = "no_hp_drops";
+    const missN = session.events.filter((e) => e.kind === "miss_text").length;
+
+    if (hpDrops.length === 0 && missN === 0) {
+      Runtime.enemy.lastError = "no_hp_drops_or_miss_text";
       Logger.warn(
         "ENEMY",
-        "mergeLastDamageObserveIntoEnemyDb: no qualifying hp_drop events (try excludeLethal: false or a longer fight)"
+        "mergeLastDamageObserveIntoEnemyDb: no hp_drop or miss_text events in session"
       );
       return null;
     }
-
-    const damages = hpDrops.map((e) => e.damage);
-    const n = damages.length;
-    const sum = damages.reduce((a, b) => a + b, 0);
-    const mn = Math.min.apply(null, damages);
-    const mx = Math.max.apply(null, damages);
-    const mean = sum / n;
 
     let row = Runtime.enemy.db.find((e) => e.key === key);
     if (!row) {
@@ -350,54 +345,96 @@
       Runtime.enemy.db.push(row);
     }
 
-    if (!row.observeCalAgg) {
-      row.observeCalAgg = {
-        hpDropSamples: 0,
-        hpDropSum: 0,
-        hpDropMin: null,
-        hpDropMax: null,
-        sessionsMerged: 0,
-        lastUpdatedAt: null
+    if (hpDrops.length > 0) {
+      const damages = hpDrops.map((e) => e.damage);
+      const n = damages.length;
+      const sum = damages.reduce((a, b) => a + b, 0);
+      const mn = Math.min.apply(null, damages);
+      const mx = Math.max.apply(null, damages);
+      const mean = sum / n;
+
+      if (!row.observeCalAgg) {
+        row.observeCalAgg = {
+          hpDropSamples: 0,
+          hpDropSum: 0,
+          hpDropMin: null,
+          hpDropMax: null,
+          sessionsMerged: 0,
+          lastUpdatedAt: null
+        };
+      }
+      const cal = row.observeCalAgg;
+      cal.hpDropSamples += n;
+      cal.hpDropSum += sum;
+      cal.hpDropMin = cal.hpDropMin === null ? mn : Math.min(cal.hpDropMin, mn);
+      cal.hpDropMax = cal.hpDropMax === null ? mx : Math.max(cal.hpDropMax, mx);
+      cal.sessionsMerged += 1;
+      cal.lastUpdatedAt = Date.now();
+      cal.hpDropMean = cal.hpDropSum / cal.hpDropSamples;
+
+      let paperHit = null;
+      if (typeof estimatePaperBasicAttackDps === "function") {
+        const est = estimatePaperBasicAttackDps();
+        if (est && est.breakdown && Number.isFinite(est.breakdown.physicalAttack) && Number.isFinite(est.expectedHitMult)) {
+          paperHit = est.breakdown.physicalAttack * est.expectedHitMult;
+        }
+      }
+
+      row.observeCalLast = {
+        mergedAt: Date.now(),
+        sessionStartedAt: session.startedAt,
+        hpDropCount: n,
+        hpDropExcludedLethal: excludeLethal,
+        hpDropMin: mn,
+        hpDropMax: mx,
+        hpDropMean: mean,
+        lethalEventsInSession: hpDropsAll.filter((e) => e.lethal).length,
+        totalHpDropEventsInSession: hpDropsAll.length,
+        paperExpectedHitApprox: paperHit
       };
     }
-    const cal = row.observeCalAgg;
-    cal.hpDropSamples += n;
-    cal.hpDropSum += sum;
-    cal.hpDropMin = cal.hpDropMin === null ? mn : Math.min(cal.hpDropMin, mn);
-    cal.hpDropMax = cal.hpDropMax === null ? mx : Math.max(cal.hpDropMax, mx);
-    cal.sessionsMerged += 1;
-    cal.lastUpdatedAt = Date.now();
-    cal.hpDropMean = cal.hpDropSum / cal.hpDropSamples;
 
-    let paperHit = null;
-    if (typeof estimatePaperBasicAttackDps === "function") {
-      const est = estimatePaperBasicAttackDps();
-      if (est && est.breakdown && Number.isFinite(est.breakdown.physicalAttack) && Number.isFinite(est.expectedHitMult)) {
-        paperHit = est.breakdown.physicalAttack * est.expectedHitMult;
+    // AI CHANGED: Roadmap — accumulate floating miss_text counts per enemy key (same attribution as hp_drop merge).
+    if (missN > 0) {
+      if (!row.observeMissAgg) {
+        row.observeMissAgg = {
+          missEvents: 0,
+          sessionsMerged: 0,
+          lastUpdatedAt: null
+        };
       }
+      const ma = row.observeMissAgg;
+      ma.missEvents += missN;
+      ma.sessionsMerged += 1;
+      ma.lastUpdatedAt = Date.now();
     }
 
-    row.observeCalLast = {
+    row.observeMissLast = {
       mergedAt: Date.now(),
       sessionStartedAt: session.startedAt,
-      hpDropCount: n,
-      hpDropExcludedLethal: excludeLethal,
-      hpDropMin: mn,
-      hpDropMax: mx,
-      hpDropMean: mean,
-      lethalEventsInSession: hpDropsAll.filter((e) => e.lethal).length,
-      totalHpDropEventsInSession: hpDropsAll.length,
-      paperExpectedHitApprox: paperHit
+      sessionMissCount: missN,
+      sessionHpDropCount: hpDrops.length,
+      // AI CHANGED: Diagnostic only — hp_drop can include DoT ticks; not literal swing counts.
+      missVsHpDropRatioSession: hpDrops.length > 0 ? missN / hpDrops.length : null
     };
 
     trimEnemyDb();
     saveEnemyDbToCache();
     Runtime.enemy.lastFoughtKey = key;
-    Logger.log("ENEMY", "merged observe session into DB", {
-      key: key,
-      lastSessionMean: mean,
-      aggMean: cal.hpDropMean,
-      aggSamples: cal.hpDropSamples
-    });
+    if (hpDrops.length > 0 && row.observeCalAgg) {
+      Logger.log("ENEMY", "merged observe session into DB", {
+        key: key,
+        lastSessionMean: row.observeCalLast ? row.observeCalLast.hpDropMean : null,
+        aggMean: row.observeCalAgg.hpDropMean,
+        aggSamples: row.observeCalAgg.hpDropSamples,
+        sessionMissCount: missN
+      });
+    } else {
+      Logger.log("ENEMY", "merged observe misses into DB (no hp_drop this session)", {
+        key: key,
+        sessionMissCount: missN,
+        missAggTotal: row.observeMissAgg ? row.observeMissAgg.missEvents : missN
+      });
+    }
     return row;
   }

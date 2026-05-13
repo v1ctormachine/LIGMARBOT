@@ -507,7 +507,10 @@
       Runtime.damage.lastSession = session;
       Runtime.damage.observedAt = Date.now();
 
-      if (mergeToEnemyDb && summary.hpDropEventCount > 0) {
+      if (
+        mergeToEnemyDb &&
+        (summary.hpDropEventCount > 0 || summary.missTextEventCount > 0)
+      ) {
         const mergedRow = mergeLastDamageObserveIntoEnemyDb(mergeOpts);
         session.enemyDbMerge = mergedRow
           ? { ok: true, key: mergedRow.key, row: mergedRow }
@@ -516,8 +519,8 @@
       } else if (mergeToEnemyDb) {
         session.enemyDbMerge = {
           ok: false,
-          error: "skipped_no_hp_drops",
-          hint: "mergeToEnemyDb requested but hpDropEventCount was 0"
+          error: "skipped_no_hp_drops_or_miss_text",
+          hint: "mergeToEnemyDb requested but session had no hp_drop or miss_text events"
         };
       }
 

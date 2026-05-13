@@ -2749,13 +2749,16 @@
               ? { observe: { totalMs: 15000 } }
               : {}
           );
+          const mergeSkippedNoDamageOrMiss =
+            calibration &&
+            calibration.enemyDbMerge &&
+            (calibration.enemyDbMerge.error === "skipped_no_hp_drops" ||
+              calibration.enemyDbMerge.error === "skipped_no_hp_drops_or_miss_text");
           // AI CHANGED: Panel/release strict calibration — tier-1 retry: find + one basic, then longer observe.
           if (
             (isReleaseProfile || isPanelProfile) &&
             strictCalibration &&
-            calibration &&
-            calibration.enemyDbMerge &&
-            calibration.enemyDbMerge.error === "skipped_no_hp_drops"
+            mergeSkippedNoDamageOrMiss
           ) {
             calibrationRetried = true;
             calibrationRetryPasses = 1;
@@ -2770,14 +2773,13 @@
               Logger.warn("TEST", "release calibration retry failed", retryErr);
             }
           }
-          // AI CHANGED: Tier-2 retry — still no hp drops after soak/off-combat gap: stronger combat seed + longest observe.
-          if (
-            (isReleaseProfile || isPanelProfile) &&
-            strictCalibration &&
+          const stillSkippedMerge =
             calibration &&
             calibration.enemyDbMerge &&
-            calibration.enemyDbMerge.error === "skipped_no_hp_drops"
-          ) {
+            (calibration.enemyDbMerge.error === "skipped_no_hp_drops" ||
+              calibration.enemyDbMerge.error === "skipped_no_hp_drops_or_miss_text");
+          // AI CHANGED: Tier-2 retry — still no hp drops after soak/off-combat gap: stronger combat seed + longest observe.
+          if ((isReleaseProfile || isPanelProfile) && strictCalibration && stillSkippedMerge) {
             calibrationRetryPasses = 2;
             try {
               await clickFindEnemyVerified();
