@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.167",
-    "description":  "TEST export: JSON clone before prune — fix false circular in planner snapshot",
-    "builtAt":  "2026-05-13T12:07:23.3827720+03:00",
+    "version":  "0.3.168",
+    "description":  "Skill master: unique cross-class name fallback when class bucket misses",
+    "builtAt":  "2026-05-13T12:13:35.1771430+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.168",
+                        "description":  "Skill master: unique cross-class name fallback when class bucket misses",
+                        "date":  "2026-05-13T12:13:35.1771430+03:00"
+                    },
                     {
                         "version":  "0.3.167",
                         "description":  "TEST export: JSON clone before prune — fix false circular in planner snapshot",
@@ -247,11 +252,6 @@
                         "version":  "0.3.122",
                         "description":  "planner: enemy-calibrated basic baseline",
                         "date":  "2026-05-11T21:40:30.7538489+03:00"
-                    },
-                    {
-                        "version":  "0.3.121",
-                        "description":  "planner: TTK-aware opener horizon",
-                        "date":  "2026-05-11T21:30:11.2660893+03:00"
                     }
                 ]
 }

@@ -776,6 +776,42 @@
     Logger.log("SKILLS", "Skill cache cleared");
   }
 
+  // AI CHANGED: Roadmap — if hero class bucket misses, attach master row when exactly one other class defines that normalized name (shared spelling across classes).
+  function tryResolveUniqueSkillMasterAcrossClasses(rawName) {
+    if (typeof SkillMasterIndex === "undefined" || !SkillMasterIndex) {
+      return null;
+    }
+    const base =
+      typeof normalizeSkillName === "function"
+        ? normalizeSkillName(String(rawName || ""))
+        : String(rawName || "");
+    const key = base.trim().toLowerCase();
+    if (!key) {
+      return null;
+    }
+    let foundEntry = null;
+    const classKeys = Object.keys(SkillMasterIndex);
+    for (let ci = 0; ci < classKeys.length; ci++) {
+      const cls = classKeys[ci];
+      const bucket = SkillMasterIndex[cls];
+      if (!bucket || typeof bucket !== "object") {
+        continue;
+      }
+      const row = bucket[key];
+      if (!row) {
+        continue;
+      }
+      if (foundEntry) {
+        return { ambiguous: true, nameKey: key };
+      }
+      foundEntry = row;
+    }
+    if (!foundEntry) {
+      return null;
+    }
+    return { entry: foundEntry, ambiguous: false };
+  }
+
   // AI CHANGED: Apply master skill DB metadata to scanned slots by normalized name.
   // This is the bridge from per-character action-bar scan -> level-invariant conception.
   // Requirements are not used. classKey is optional: when missing, we auto-detect via profile icon and sync Config.skills.masterClassKey.
@@ -803,6 +839,7 @@
     }
     let totalSkills = 0;
     let matched = 0;
+    let crossClassResolved = 0;
     const matchedNames = [];
     const unmatchedNames = [];
     for (let i = 0; i < slots.length; i += 1) {
@@ -811,7 +848,26 @@
         continue;
       }
       totalSkills += 1;
-      const master = getSkillMasterEntry(ck, s.name || "");
+      let master = getSkillMasterEntry(ck, s.name || "");
+      let resolvedVia = null;
+      if (!master) {
+        const fb = tryResolveUniqueSkillMasterAcrossClasses(s.name || "");
+        if (fb && fb.ambiguous) {
+          Logger.warn("SKILLS", "Skill master name exists in multiple classes — skip cross-class attach", {
+            slotName: s.name,
+            normalizedKey: fb.nameKey
+          });
+        } else if (fb && fb.entry) {
+          master = fb.entry;
+          resolvedVia = "unique_cross_class";
+          crossClassResolved += 1;
+          Logger.log("SKILLS", "Skill master unique cross-class match", {
+            slotName: s.name,
+            barClassKey: ck,
+            rowClassKey: fb.entry.classKey
+          });
+        }
+      }
       if (master) {
         s.master = {
           classKey: master.classKey,
@@ -819,6 +875,9 @@
           tags: master.tags,
           conception: master.conception
         };
+        if (resolvedVia) {
+          s.master.resolvedVia = resolvedVia;
+        }
         matched += 1;
         matchedNames.push(master.name || s.name || "");
       } else {
@@ -829,6 +888,7 @@
       classKey: ck,
       matched: matched,
       totalSkills: totalSkills,
+      crossClassResolved: crossClassResolved,
       unmatchedNames: unmatchedNames,
       matchedSample: matchedNames.slice(0, 5)
     });
@@ -837,6 +897,7 @@
       classKey: ck,
       matched: matched,
       totalSkills: totalSkills,
+      crossClassResolved: crossClassResolved,
       unmatchedCount: unmatchedNames.length,
       unmatchedNames: unmatchedNames,
       matchedSample: matchedNames.slice(0, 5)
