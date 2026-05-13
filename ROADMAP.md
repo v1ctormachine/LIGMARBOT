@@ -17,6 +17,7 @@ Emergency **hotfix** (crash / wrong click): ship immediately, even if tiny.
 
 ## Done recently
 
+- **TEST export: clone before prune (v0.3.167)** — **`cloneJsonSafeForTestExport()`** (JSON round-trip) runs before pruning so **`getPlannerOpeningPickDiagnostics()`** shared references are duplicated and keys like **`lastOpenerHorizonSim`** / **`runtimeAggression`** export as real objects instead of **`"[circular]"`**.
 - **Compact TEST self-export JSON (v0.3.166)** — the paste/tab/clipboard payload still includes every check id + ok/skip + compact **`detail`**, failures, timing, URL/UA, and end-game snapshot, but **`pruneValueForTestExport()`** collapses huge planner arrays (notably dense **`chargeReleasePlan.candidates`**) into **`__truncatedArray`** (**`length`** + **`head`**/**`tail`** samples). **`exportCompact`** records the limits. **`[TEST] DETAILS`** logging remains **unpruned** for deep DevTools debugging.
 - **TEST self-export package for support (v0.3.164)** — one highlighted DevTools **COPY** block (**`LIGMAR_TEST_EXPORT_BEGIN`/`END`**) plus **`[TEST] SELF_TEST_JSON`** / **`Runtime.ui.lastTestExportJson`** / **`ligmarBot.getLastTestExport()`** with full steps, failures, timing, URL/UA, end-game snapshot.
 - **TEST export tab + clipboard (v0.3.165)** — after TEST, opens a **new tab** with paste-ready JSON and **Copy JSON** button; **auto-copies** to clipboard when the browser allows (else use tab or console).

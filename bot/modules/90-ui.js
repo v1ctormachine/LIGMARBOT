@@ -573,7 +573,7 @@
         detail:
           c.detail !== undefined
             ? pruneDetails
-              ? pruneValueForTestExport(c.detail, 0)
+              ? pruneValueForTestExport(cloneJsonSafeForTestExport(c.detail), 0)
               : c.detail
             : null
       };
@@ -616,6 +616,18 @@
       }
     }
     return out;
+  }
+
+  // AI CHANGED: Planner diagnostics reuse one object for multiple keys — JSON clone breaks shared refs so prune does not emit false "[circular]".
+  function cloneJsonSafeForTestExport(obj) {
+    if (obj === null || obj === undefined) {
+      return obj;
+    }
+    try {
+      return JSON.parse(JSON.stringify(obj));
+    } catch (e) {
+      return obj;
+    }
   }
 
   // AI CHANGED: Shrink TEST JSON exports — dense charge-search arrays (10k+ objects) are paste-hostile; keep counts + head/tail samples.
@@ -765,7 +777,10 @@
           label: labelById[c.id] || c.id,
           critical: !!c.critical,
           reason: reason,
-          detail: c.detail !== undefined ? pruneValueForTestExport(c.detail, 0) : null // AI CHANGED: compact paste-friendly failure detail
+          detail:
+            c.detail !== undefined
+              ? pruneValueForTestExport(cloneJsonSafeForTestExport(c.detail), 0)
+              : null // AI CHANGED: compact paste-friendly failure detail (clone breaks shared planner refs)
         });
       }
     }
@@ -808,8 +823,14 @@
       },
       failures: failures,
       steps: buildTestDebugReport(checks, { pruneDetails: true }),
-      gameSnapshotEnd: pruneValueForTestExport(params.gameSnapshot || buildGameSnapshotForTestExport(), 0),
-      extras: params.extras !== undefined && params.extras !== null ? pruneValueForTestExport(params.extras, 0) : null
+      gameSnapshotEnd: pruneValueForTestExport(
+        cloneJsonSafeForTestExport(params.gameSnapshot || buildGameSnapshotForTestExport()),
+        0
+      ),
+      extras:
+        params.extras !== undefined && params.extras !== null
+          ? pruneValueForTestExport(cloneJsonSafeForTestExport(params.extras), 0)
+          : null
     };
   }
 
