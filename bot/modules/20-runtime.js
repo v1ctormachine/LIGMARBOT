@@ -77,7 +77,11 @@
       supportBuffLine: {
         longSelfTracked: {},
         lastSafetyBuffCastAt: 0,
-        prebuffCastCount: 0
+        prebuffCastCount: 0,
+        // AI CHANGED: HP spike → safety skill — set by sustain observations, cleared when safety fires or fails.
+        safetyHpSpikePending: false,
+        safetyHpSpikeLost: null,
+        safetyHpSpikeAt: null
       },
       // AI CHANGED: Night resilience — session-health timestamps and last evaluated risk for overloaded tabs / server drops.
       health: {

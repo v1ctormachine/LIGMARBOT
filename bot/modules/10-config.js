@@ -132,7 +132,12 @@
       maxCombatAttackBurstsPerFind: 24,
       // AI CHANGED: After verified find-enemy (target HP > 0), close map overlay — loot follow-up still calls ensureMapOpen().
       closeMapAfterFindEnemy: true,
-      closeMapAfterFindEnemySettleMs: 120
+      closeMapAfterFindEnemySettleMs: 120,
+      // AI CHANGED: AUTO Safe — before idle `exploreByScan` to the next tile, require HP/MP floors and short prebuff readiness.
+      safeModeExploreMinHpPct: 0.95,
+      safeModeExploreMinMpPct: 0.5,
+      safeModeExplorePollMs: 500,
+      safeModeExploreMaxWaitMs: 180000
     },
     // AI CHANGED: Support-buff teaching — duration/scope/role classification, OOC long self-buffs, prebuff, safety interrupt (Windy Dome wired first).
     supportBuffs: {
@@ -145,16 +150,23 @@
       },
       prebuff: {
         enabled: true,
-        maxSkills: 2,
-        reserveSafetyNameSubstrings: ["windy dome"]
+        // AI CHANGED: Long buffs (e.g. 900s) on new tile before find-enemy; then shorter buffs, longest-short first.
+        maxSkillsTotal: 10,
+        prebuffLongDurationMinSec: 120,
+        shortDurationMaxSec: 120,
+        reserveSafetyNameSubstrings: ["windy dome"],
+        treatAsBuffDespiteAttackNameSubstrings: ["enchanted arrow", "hunters tread", "hunter's tread"],
+        forceLongDurationIfUnknownNameSubstrings: ["enchanted arrow", "hunters tread", "hunter's tread"],
+        unknownLongDefaultDurationSec: 900
       },
       safety: {
         enabled: true,
         // AI CHANGED: Interrupt active charge/cast UI before emergency barrier when cancel hint is visible.
         cancelCurrentSkillFirst: true,
         skillNames: ["Windy Dome"],
-        hpPctMax: 0.38,
-        incomingHpLossPerMaxMin: 0.042,
+        // AI CHANGED: Fire when HP drops by ≥ this fraction of max HP between sustain samples (see spikeSampleMaxDtSec).
+        hpDropImmediateMaxFrac: 0.25,
+        spikeSampleMaxDtSec: 1.5,
         minSpacingMs: 45000
       }
     },

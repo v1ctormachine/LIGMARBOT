@@ -26,6 +26,13 @@
             return;
           }
         }
+        if (options && typeof options.onEachPoll === "function") {
+          try {
+            options.onEachPoll();
+          } catch (error) {
+            Logger.warn("VERIFY", `${label} onEachPoll threw`, error);
+          }
+        }
         let passed = false;
         try {
           passed = !!predicate();

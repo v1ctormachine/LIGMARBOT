@@ -344,7 +344,9 @@
     const expectedSkillName =
       typeof opts.expectedSkillName === "string" ? opts.expectedSkillName.trim() : "";
     const requireBarNameMatch = Config.combat && Config.combat.chargeCancelRequireCastBarNameMatch !== false;
-    if (requireBarNameMatch) {
+    // AI CHANGED: HP-spike / emergency callers may bypass strict cast-bar name gate so map-gap / DOM cancel still runs.
+    const dangerBypassNameMatch = opts.dangerBypassNameMatch === true;
+    if (requireBarNameMatch && !dangerBypassNameMatch) {
       if (!isChargingSkillCancelHintVisible()) {
         Logger.warn("COMBAT", "charge cancel skipped: cancel hint not visible (cast-bar name gate)");
         return false;

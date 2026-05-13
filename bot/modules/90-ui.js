@@ -1971,6 +1971,16 @@
               Config.combat && Number.isFinite(Config.combat.mpPotionForceUseBelowPct)
                 ? Config.combat.mpPotionForceUseBelowPct
                 : null,
+            safetyHpDropImmediateMaxFrac: sb && sb.safety ? sb.safety.hpDropImmediateMaxFrac : null,
+            safetySpikeSampleMaxDtSec: sb && sb.safety ? sb.safety.spikeSampleMaxDtSec : null,
+            safeModeExploreMinHpPct:
+              Config.combat && Number.isFinite(Config.combat.safeModeExploreMinHpPct)
+                ? Config.combat.safeModeExploreMinHpPct
+                : null,
+            safeModeExploreMinMpPct:
+              Config.combat && Number.isFinite(Config.combat.safeModeExploreMinMpPct)
+                ? Config.combat.safeModeExploreMinMpPct
+                : null,
             safetySkillNames: sb && sb.safety ? sb.safety.skillNames : null,
             classifyCount: Array.isArray(cls) ? cls.length : null,
             safetyHeuristicCount: Array.isArray(safe) ? safe.length : null
