@@ -1,7 +1,7 @@
   // AI CHANGED: Phase C2 -- damage observer: target HP deltas (primary) + newly appeared short numeric
   // leaf text under app-game (secondary, for floating combat numbers). Console-first; tolerates missed
   // frames via poll cadence + suspicious-jump filtering.
-  // AI CHANGED: v0.3.173 — removed CanvasRenderingContext2D fillText/strokeText hook; miss labels = DOM scan only.
+  // AI CHANGED: v0.3.174 — removed floating miss DOM scan (no miss_text events); HP deltas + optional float numbers only.
 
   function dmgIsNodeUnderExcludedSubtree(node, selectors) {
     if (!node || typeof node.closest !== "function") {
@@ -14,27 +14,6 @@
         }
       } catch (err) {
         // AI CHANGED: Bad selector in config — skip instead of throwing during observe.
-      }
-    }
-    return false;
-  }
-
-  // AI CHANGED: Leaf text matches configured miss substrings (lowercase ASCII / Unicode).
-  function dmgLeafTextMatchesMissSubstrings(text, substrings) {
-    if (typeof text !== "string" || !substrings || !Array.isArray(substrings)) {
-      return false;
-    }
-    const norm = text.replace(/\u00a0/g, " ").trim().toLowerCase();
-    if (!norm) {
-      return false;
-    }
-    for (let i = 0; i < substrings.length; i += 1) {
-      const s = substrings[i];
-      if (typeof s !== "string" || !s.trim()) {
-        continue;
-      }
-      if (norm.indexOf(s.trim().toLowerCase()) !== -1) {
-        return true;
       }
     }
     return false;
@@ -107,73 +86,11 @@
     return hits;
   }
 
-  // AI CHANGED: Scan same overlay band as floating damage for short leaf labels like "Miss" / locale variants.
-  function scanFloatingMissNodes() {
-    const cfg = Config.damageObserver;
-    const root = document.querySelector(cfg.scanRootSelector) || document.body;
-    const exclude = cfg.excludeClosestSelectors;
-    const subs =
-      cfg && Array.isArray(cfg.missTextSubstrings) && cfg.missTextSubstrings.length > 0
-        ? cfg.missTextSubstrings
-        : ["miss"];
-    const maxLeaf =
-      Number.isFinite(cfg && cfg.missScanMaxLeafLength) && cfg.missScanMaxLeafLength > 0
-        ? Math.round(cfg.missScanMaxLeafLength)
-        : 28;
-    const hits = [];
-    const maxNodes = 900;
-    const nodes = root.querySelectorAll("span, div, p, b, strong, i, em, label");
-    let scanned = 0;
-    for (let i = 0; i < nodes.length; i += 1) {
-      if (hits.length >= 80) {
-        break;
-      }
-      const node = nodes[i];
-      if (!node || node.children.length > 0) {
-        continue;
-      }
-      scanned += 1;
-      if (scanned > maxNodes) {
-        break;
-      }
-      if (dmgIsNodeUnderExcludedSubtree(node, exclude)) {
-        continue;
-      }
-      const raw = (node.textContent || "").trim();
-      if (raw.length < 2 || raw.length > maxLeaf) {
-        continue;
-      }
-      if (dmgParseShortNumericText(raw) !== null) {
-        continue;
-      }
-      if (!dmgLeafTextMatchesMissSubstrings(raw, subs)) {
-        continue;
-      }
-      const rect = node.getBoundingClientRect();
-      if (rect.width < 1 || rect.height < 1) {
-        continue;
-      }
-      if (rect.bottom < 0 || rect.top > window.innerHeight || rect.right < 0 || rect.left > window.innerWidth) {
-        continue;
-      }
-      const key = `m:${Math.round(rect.left)}:${Math.round(rect.top)}:${raw}`;
-      hits.push({
-        key: key,
-        text: raw,
-        x: Math.round(rect.left),
-        y: Math.round(rect.top),
-        cssPath: getCssPath(node)
-      });
-    }
-    return hits;
-  }
-
   function dmgSummarizeSession(samples, events) {
     let hpDropSum = 0;
     let hpDropCount = 0;
     let hpRiseCount = 0;
     let floatCount = 0;
-    let missCount = 0;
     for (let i = 0; i < events.length; i += 1) {
       const e = events[i];
       if (e.kind === "hp_drop") {
@@ -183,8 +100,6 @@
         hpRiseCount += 1;
       } else if (e.kind === "float_text") {
         floatCount += 1;
-      } else if (e.kind === "miss_text") {
-        missCount += 1;
       }
     }
     const validTargetSamples = samples.filter((s) => s.targetValid).length;
@@ -194,7 +109,6 @@
       avgHpDrop: hpDropCount > 0 ? hpDropSum / hpDropCount : null,
       hpRiseEventCount: hpRiseCount,
       floatTextEventCount: floatCount,
-      missTextEventCount: missCount,
       sampleCount: samples.length,
       eventCount: events.length,
       validTargetSamples: validTargetSamples
@@ -205,7 +119,7 @@
     const cfg = Config.damageObserver;
     try {
       const payload = {
-        version: 4,
+        version: 5,
         savedAt: Date.now(),
         summary: session.summary,
         storedEventCount: session.events ? session.events.length : 0,
@@ -254,19 +168,6 @@
     return floats;
   }
 
-  // AI CHANGED: Console/debug — list visible floating miss labels matching Config.damageObserver.missTextSubstrings.
-  function snapFloatingMissOnce() {
-    const misses = scanFloatingMissNodes();
-    Logger.log("DMG", "snapFloatingMissOnce", {
-      count: misses.length,
-      misses: misses,
-      patterns: Config.damageObserver && Config.damageObserver.missTextSubstrings
-        ? Config.damageObserver.missTextSubstrings
-        : null
-    });
-    return misses;
-  }
-
   function getDamageObserveMeta() {
     return {
       lastError: Runtime.damage.lastError,
@@ -282,12 +183,6 @@
     const totalMs = Number.isFinite(opts.totalMs) ? opts.totalMs : cfg.defaultTotalMs;
     const pollMs = Number.isFinite(opts.pollMs) ? opts.pollMs : cfg.defaultPollMs;
     const includeFloatingTexts = opts.includeFloatingTexts !== false;
-    const cfgMissDefault =
-      Config.damageObserver && Config.damageObserver.includeMissTextsDefault !== false;
-    const includeMissTexts =
-      opts.includeMissTexts !== undefined
-        ? opts.includeMissTexts !== false
-        : cfgMissDefault !== false;
     const saveSummary = opts.saveSummary !== false;
     const mergeToEnemyDb = opts.mergeToEnemyDb === true;
     const mergeOpts =
@@ -306,7 +201,6 @@
     let suspiciousJumps = 0;
     let prevTarget = null;
     let prevFloatKeySet = null;
-    let prevMissKeySet = null;
 
     const maxSamples = Math.min(
       Number.isFinite(opts.maxSamples) ? opts.maxSamples : cfg.maxSamplesCap,
@@ -333,7 +227,6 @@
         const th = state.combat.targetHp;
         const now = Date.now();
         const floats = includeFloatingTexts ? scanFloatingDamageNodes() : [];
-        const misses = includeMissTexts ? scanFloatingMissNodes() : [];
 
         const sample = {
           t: now,
@@ -341,8 +234,7 @@
           targetValid: !!(th && th.valid),
           targetCur: th && th.valid ? th.cur : null,
           targetMax: th && th.valid ? th.max : null,
-          floatScanCount: floats.length,
-          missScanCount: misses.length
+          floatScanCount: floats.length
         };
         samples.push(sample);
 
@@ -450,33 +342,6 @@
           }
         }
 
-        if (includeMissTexts) {
-          const mset = new Set();
-          for (let mi = 0; mi < misses.length; mi += 1) {
-            mset.add(misses[mi].key);
-          }
-          if (prevMissKeySet === null) {
-            prevMissKeySet = mset;
-          } else {
-            for (let mj = 0; mj < misses.length; mj += 1) {
-              const mm = misses[mj];
-              if (prevMissKeySet.has(mm.key)) {
-                continue;
-              }
-              events.push({
-                ts: now,
-                kind: "miss_text",
-                text: mm.text,
-                x: mm.x,
-                y: mm.y,
-                cssPath: mm.cssPath
-              });
-              Logger.log("DMG", "miss text (new)", { text: mm.text, x: mm.x, y: mm.y });
-            }
-            prevMissKeySet = mset;
-          }
-        }
-
         prevTarget = th && th.valid ? { cur: th.cur, max: th.max, valid: true } : { valid: false };
 
         await sleep(pollMs);
@@ -497,7 +362,6 @@
         suspiciousJumps: suspiciousJumps,
         optionsUsed: {
           includeFloatingTexts: includeFloatingTexts,
-          includeMissTexts: includeMissTexts,
           saveSummary: saveSummary,
           mergeToEnemyDb: mergeToEnemyDb
         },
@@ -508,10 +372,7 @@
       Runtime.damage.lastSession = session;
       Runtime.damage.observedAt = Date.now();
 
-      if (
-        mergeToEnemyDb &&
-        (summary.hpDropEventCount > 0 || summary.missTextEventCount > 0)
-      ) {
+      if (mergeToEnemyDb && summary.hpDropEventCount > 0) {
         const mergedRow = mergeLastDamageObserveIntoEnemyDb(mergeOpts);
         session.enemyDbMerge = mergedRow
           ? { ok: true, key: mergedRow.key, row: mergedRow }
@@ -520,8 +381,8 @@
       } else if (mergeToEnemyDb) {
         session.enemyDbMerge = {
           ok: false,
-          error: "skipped_no_hp_drops_or_miss_text",
-          hint: "mergeToEnemyDb requested but session had no hp_drop or miss_text events"
+          error: "skipped_no_hp_drops",
+          hint: "mergeToEnemyDb requested but session had no hp_drop events"
         };
       }
 

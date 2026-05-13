@@ -517,7 +517,6 @@
       auto_resume_after_refresh: "Auto-resume refresh",
       watchdog_surface: "Watchdog surface",
       chat_spammer_auto: "Chat spammer auto",
-      damage_observer_miss_scan: "Miss text scan",
       combat_sustain_policy: "Combat sustain",
       auto_farm_resume_policy: "Farm resume policy",
       auto_farm_reliability: "Combat reliability",
@@ -1104,7 +1103,7 @@
     };
   }
 
-  // AI CHANGED: One-click TEST — default **`panel`** profile runs the full automated suite (ranked soak, strict calibration, watchdog/chat/miss probes, skill scan when needed, resume farm). Use **`testProfile: "quick"`** for a fast dev pass; **`release`** for longest soak windows (console).
+  // AI CHANGED: One-click TEST — default **`panel`** profile runs the full automated suite (ranked soak, strict calibration, watchdog/chat probes, skill scan when needed, resume farm). Use **`testProfile: "quick"`** for a fast dev pass; **`release`** for longest soak windows (console).
   async function runUiTestBundle(userOpts) {
     const testBundleStartedAt = Date.now();
     const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
@@ -1688,42 +1687,6 @@
         );
       } catch (err) {
         addCheck("chat_spammer_auto", false, { error: String(err && err.message ? err.message : err) }, false);
-      }
-
-      try {
-        const missPatternsOk =
-          !!(Config.damageObserver &&
-            Array.isArray(Config.damageObserver.missTextSubstrings) &&
-            Config.damageObserver.missTextSubstrings.some(function (s) {
-              return typeof s === "string" && s.trim().length > 0;
-            }));
-        let missScanCallable = false;
-        let missProbeCount = 0;
-        if (typeof scanFloatingMissNodes === "function") {
-          missScanCallable = true;
-          try {
-            const arr = scanFloatingMissNodes();
-            missProbeCount = Array.isArray(arr) ? arr.length : 0;
-          } catch (scanErr) {
-            missProbeCount = -1;
-            Logger.warn("TEST", "scanFloatingMissNodes threw", scanErr);
-          }
-        }
-        addCheck(
-          "damage_observer_miss_scan",
-          !!(missPatternsOk && missScanCallable && missProbeCount >= 0),
-          {
-            patterns: Config.damageObserver ? Config.damageObserver.missTextSubstrings : null,
-            leafMax:
-              Config.damageObserver && Number.isFinite(Config.damageObserver.missScanMaxLeafLength)
-                ? Config.damageObserver.missScanMaxLeafLength
-                : null,
-            visibleMissLeavesAtTest: missProbeCount
-          },
-          false
-        );
-      } catch (err) {
-        addCheck("damage_observer_miss_scan", false, { error: String(err && err.message ? err.message : err) }, false);
       }
 
       try {
@@ -2746,19 +2709,18 @@
           let calibrationRetryError = null;
           calibration = await quickCalibrationSession(
             isReleaseProfile || isPanelProfile
-              ? { observe: { totalMs: 15000, includeMissTexts: true } }
-              : { observe: { includeMissTexts: true } }
+              ? { observe: { totalMs: 15000 } }
+              : {}
           );
-          const mergeSkippedNoDamageOrMiss =
+          const mergeSkippedNoHpDrops =
             calibration &&
             calibration.enemyDbMerge &&
-            (calibration.enemyDbMerge.error === "skipped_no_hp_drops" ||
-              calibration.enemyDbMerge.error === "skipped_no_hp_drops_or_miss_text");
+            calibration.enemyDbMerge.error === "skipped_no_hp_drops";
           // AI CHANGED: Panel/release strict calibration — tier-1 retry: find + one basic, then longer observe.
           if (
             (isReleaseProfile || isPanelProfile) &&
             strictCalibration &&
-            mergeSkippedNoDamageOrMiss
+            mergeSkippedNoHpDrops
           ) {
             calibrationRetried = true;
             calibrationRetryPasses = 1;
@@ -2768,7 +2730,7 @@
               clickBasicAttack();
               await sleep(1400, { bypassStop: true });
               calibration = await quickCalibrationSession({
-                observe: { totalMs: 18000, includeMissTexts: true }
+                observe: { totalMs: 18000 }
               });
             } catch (retryErr) {
               calibrationRetryError = String(retryErr && retryErr.message ? retryErr.message : retryErr);
@@ -2778,8 +2740,7 @@
           const stillSkippedMerge =
             calibration &&
             calibration.enemyDbMerge &&
-            (calibration.enemyDbMerge.error === "skipped_no_hp_drops" ||
-              calibration.enemyDbMerge.error === "skipped_no_hp_drops_or_miss_text");
+            calibration.enemyDbMerge.error === "skipped_no_hp_drops";
           // AI CHANGED: Tier-2 retry — still no hp drops after soak/off-combat gap: stronger combat seed + longest observe.
           if ((isReleaseProfile || isPanelProfile) && strictCalibration && stillSkippedMerge) {
             calibrationRetryPasses = 2;
@@ -2792,7 +2753,7 @@
               }
               await sleep(900, { bypassStop: true });
               calibration = await quickCalibrationSession({
-                observe: { totalMs: 28000, includeMissTexts: true }
+                observe: { totalMs: 28000 }
               });
             } catch (retry2Err) {
               calibrationRetryError = String(retry2Err && retry2Err.message ? retry2Err.message : retry2Err);

@@ -275,6 +275,7 @@
   }
 
   // AI CHANGED: Phase C4 slice 2 — merge hp_drop stats from Runtime.damage.lastSession into enemy DB row.
+  // AI CHANGED: v0.3.174 — miss_text merge removed; at least one hp_drop (after lethal filter) required.
   function mergeLastDamageObserveIntoEnemyDb(userOpts) {
     const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
     const excludeLethal = opts.excludeLethal !== false;
@@ -317,13 +318,12 @@
 
     const hpDropsAll = session.events.filter((e) => e.kind === "hp_drop");
     const hpDrops = hpDropsAll.filter((e) => !excludeLethal || !e.lethal);
-    const missN = session.events.filter((e) => e.kind === "miss_text").length;
 
-    if (hpDrops.length === 0 && missN === 0) {
-      Runtime.enemy.lastError = "no_hp_drops_or_miss_text";
+    if (hpDrops.length === 0) {
+      Runtime.enemy.lastError = "no_hp_drops";
       Logger.warn(
         "ENEMY",
-        "mergeLastDamageObserveIntoEnemyDb: no hp_drop or miss_text events in session"
+        "mergeLastDamageObserveIntoEnemyDb: no hp_drop events in session"
       );
       return null;
     }
@@ -394,47 +394,14 @@
       };
     }
 
-    // AI CHANGED: Roadmap — accumulate floating miss_text counts per enemy key (same attribution as hp_drop merge).
-    if (missN > 0) {
-      if (!row.observeMissAgg) {
-        row.observeMissAgg = {
-          missEvents: 0,
-          sessionsMerged: 0,
-          lastUpdatedAt: null
-        };
-      }
-      const ma = row.observeMissAgg;
-      ma.missEvents += missN;
-      ma.sessionsMerged += 1;
-      ma.lastUpdatedAt = Date.now();
-    }
-
-    row.observeMissLast = {
-      mergedAt: Date.now(),
-      sessionStartedAt: session.startedAt,
-      sessionMissCount: missN,
-      sessionHpDropCount: hpDrops.length,
-      // AI CHANGED: Diagnostic only — hp_drop can include DoT ticks; not literal swing counts.
-      missVsHpDropRatioSession: hpDrops.length > 0 ? missN / hpDrops.length : null
-    };
-
     trimEnemyDb();
     saveEnemyDbToCache();
     Runtime.enemy.lastFoughtKey = key;
-    if (hpDrops.length > 0 && row.observeCalAgg) {
-      Logger.log("ENEMY", "merged observe session into DB", {
-        key: key,
-        lastSessionMean: row.observeCalLast ? row.observeCalLast.hpDropMean : null,
-        aggMean: row.observeCalAgg.hpDropMean,
-        aggSamples: row.observeCalAgg.hpDropSamples,
-        sessionMissCount: missN
-      });
-    } else {
-      Logger.log("ENEMY", "merged observe misses into DB (no hp_drop this session)", {
-        key: key,
-        sessionMissCount: missN,
-        missAggTotal: row.observeMissAgg ? row.observeMissAgg.missEvents : missN
-      });
-    }
+    Logger.log("ENEMY", "merged observe session into DB", {
+      key: key,
+      lastSessionMean: row.observeCalLast ? row.observeCalLast.hpDropMean : null,
+      aggMean: row.observeCalAgg.hpDropMean,
+      aggSamples: row.observeCalAgg.hpDropSamples
+    });
     return row;
   }

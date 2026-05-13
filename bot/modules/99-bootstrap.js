@@ -224,7 +224,6 @@
       // AI CHANGED: Phase C2 -- damage observer (HP deltas + floating numeric text).
       observeCombatDamage: observeCombatDamage,
       snapFloatingDamageOnce: snapFloatingDamageOnce,
-      snapFloatingMissOnce: snapFloatingMissOnce,
       clearDamageObserveStorage: clearDamageObserveStorage,
       getDamageObserveMeta: getDamageObserveMeta,
       loadDamageObserveSummaryFromStorage: loadDamageObserveSummaryFromStorage,

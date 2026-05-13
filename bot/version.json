@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.173",
-    "description":  "Remove canvas2d miss hook; keep DOM miss_text observe + DB merge",
-    "builtAt":  "2026-05-13T13:10:09.0584055+03:00",
+    "version":  "0.3.174",
+    "description":  "Remove DOM miss scan, miss_text, snapFloatingMissOnce; merge DB on hp_drop only; summary v5",
+    "builtAt":  "2026-05-13T13:27:01.4319703+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.174",
+                        "description":  "Remove DOM miss scan, miss_text, snapFloatingMissOnce; merge DB on hp_drop only; summary v5",
+                        "date":  "2026-05-13T13:27:01.4319703+03:00"
+                    },
                     {
                         "version":  "0.3.173",
                         "description":  "Remove canvas2d miss hook; keep DOM miss_text observe + DB merge",
@@ -247,11 +252,6 @@
                         "version":  "0.3.128",
                         "description":  "test: golden comparator payload",
                         "date":  "2026-05-11T22:33:07.0259339+03:00"
-                    },
-                    {
-                        "version":  "0.3.127",
-                        "description":  "test: opportunity-aware natural sniper probe",
-                        "date":  "2026-05-11T22:24:01.5464002+03:00"
                     }
                 ]
 }

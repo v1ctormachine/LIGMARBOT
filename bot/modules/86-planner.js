@@ -461,8 +461,6 @@
     const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
     const baseObserve = {
       includeFloatingTexts: false,
-      // AI CHANGED: Skip floating miss scan during default calibration — reduces DOM walks; pass observe:{ includeMissTexts:true } to enable.
-      includeMissTexts: false,
       mergeToEnemyDb: true,
       totalMs: 10000,
       // AI CHANGED: lethal-only fights (kill within window) still carry a real hp_drop — include in merge so TEST/calibration is not empty.
@@ -483,11 +481,6 @@
       : summarizeEnemyDbCalibration();
     const rank = key ? rankAttackSkillsByHeuristic({ enemyKey: key }) : rankAttackSkillsByHeuristic({});
 
-    const mergedRow =
-      session && session.enemyDbMerge && session.enemyDbMerge.ok && session.enemyDbMerge.row
-        ? session.enemyDbMerge.row
-        : null;
-
     return {
       ok: !!(session && session.ok),
       lastFoughtKey: key,
@@ -495,21 +488,6 @@
       enemyDbMerge: session && session.enemyDbMerge ? session.enemyDbMerge : null,
       calibration: calibration,
       skillRank: rank,
-      // AI CHANGED: Paste-friendly summary for TEST export — miss merge stats without digging session.events.
-      missDiagnostics: {
-        includeMissTexts:
-          session && session.optionsUsed ? session.optionsUsed.includeMissTexts !== false : null,
-        missTextEventCount:
-          session && session.summary && Number.isFinite(session.summary.missTextEventCount)
-            ? session.summary.missTextEventCount
-            : 0,
-        hpDropEventCount:
-          session && session.summary && Number.isFinite(session.summary.hpDropEventCount)
-            ? session.summary.hpDropEventCount
-            : 0,
-        observeMissAgg: mergedRow && mergedRow.observeMissAgg ? mergedRow.observeMissAgg : null,
-        observeMissLast: mergedRow && mergedRow.observeMissLast ? mergedRow.observeMissLast : null
-      },
       note: "Fight during the whole observe window; see ARCHITECTURE.md playbook C2."
     };
   }
