@@ -1290,13 +1290,42 @@
       Number.isFinite(playerHpPct) && playerHpPct < lowHpThresholdPct
         ? ((lowHpThresholdPct - playerHpPct) / lowHpThresholdPct) * lowHpPressureWeight
         : 0;
+    let incomingHpLossPerSec = 0;
+    let incomingPressure = 0;
+    if (Config.planner && Config.planner.openerContextIncomingHpLossEnabled !== false && enemyCountLive >= 1) {
+      const sustain =
+        Runtime && Runtime.autoFarm && Runtime.autoFarm.combatSustain && typeof Runtime.autoFarm.combatSustain === "object"
+          ? Runtime.autoFarm.combatSustain
+          : null;
+      if (sustain && Number.isFinite(sustain.recentHpLossPerSec) && sustain.recentHpLossPerSec > 0) {
+        incomingHpLossPerSec = +sustain.recentHpLossPerSec.toFixed(3);
+        const maxHp =
+          liveState &&
+          liveState.player &&
+          liveState.player.hp &&
+          liveState.player.hp.valid &&
+          Number.isFinite(liveState.player.hp.max) &&
+          liveState.player.hp.max > 0
+            ? liveState.player.hp.max
+            : null;
+        const scaleRaw = Config.planner.openerContextIncomingHpLossScale;
+        const scale = Number.isFinite(scaleRaw) && scaleRaw >= 0 ? scaleRaw : 8;
+        const capRaw = Config.planner.openerContextIncomingHpLossPressureCap;
+        const cap = Number.isFinite(capRaw) && capRaw >= 0 ? capRaw : 2.5;
+        if (Number.isFinite(maxHp) && maxHp > 0) {
+          incomingPressure = Math.min(cap, (incomingHpLossPerSec / maxHp) * scale);
+        }
+      }
+    }
     return {
       enemyCountLive: enemyCountLive,
       extraEnemies: extraEnemies,
       playerHpPct: playerHpPct,
       lowHpThresholdPct: lowHpThresholdPct,
       lowHpPressure: +lowHpPressure.toFixed(4),
-      totalPressure: +(extraEnemies + lowHpPressure).toFixed(4)
+      incomingHpLossPerSec: incomingHpLossPerSec,
+      incomingPressure: +incomingPressure.toFixed(4),
+      totalPressure: +(extraEnemies + lowHpPressure + incomingPressure).toFixed(4)
     };
   }
 
@@ -2642,6 +2671,10 @@
     }
     const reserve = Number.isFinite(Config.planner.skillMpReserve) ? Config.planner.skillMpReserve : 0;
     const st = readBasicState();
+    // AI CHANGED: refresh sustain-derived incoming-damage rate before opener scoring reads `combatSustain.recentHpLossPerSec`.
+    if (typeof updateCombatSustainObservations === "function") {
+      updateCombatSustainObservations(st);
+    }
     const mpCur = st.player.mp && st.player.mp.valid ? st.player.mp.cur : null;
     const disallowChargeSkills =
       opts.disallowChargeSkills === true &&

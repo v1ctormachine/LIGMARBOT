@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.185",
-    "description":  "horizon: unified live-target overkill cap helper for opener and charge",
-    "builtAt":  "2026-05-13T16:55:18.3884536+03:00",
+    "version":  "0.3.186",
+    "description":  "opener danger: sustain HP loss in pressure model, fresh sustain before opener pick, TEST + fieldValidation sample",
+    "builtAt":  "2026-05-13T17:13:27.3439974+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.186",
+                        "description":  "opener danger: sustain HP loss in pressure model, fresh sustain before opener pick, TEST + fieldValidation sample",
+                        "date":  "2026-05-13T17:13:27.3439974+03:00"
+                    },
                     {
                         "version":  "0.3.185",
                         "description":  "horizon: unified live-target overkill cap helper for opener and charge",
@@ -247,11 +252,6 @@
                         "version":  "0.3.140",
                         "description":  "planner: add enemy-state opener context",
                         "date":  "2026-05-12T13:42:30.1329863+03:00"
-                    },
-                    {
-                        "version":  "0.3.139",
-                        "description":  "planner: add bounded runtime aggression credit",
-                        "date":  "2026-05-11T23:31:46.0315085+03:00"
                     }
                 ]
 }

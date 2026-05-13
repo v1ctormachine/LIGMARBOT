@@ -266,6 +266,12 @@
       openerContextLowHpThresholdPct: 0.65,
       // AI CHANGED: Low-HP danger contributes a bit more than one extra enemy to the opener pressure model.
       openerContextLowHpPressureWeight: 1.25,
+      // AI CHANGED: Incoming danger — smoothed player HP loss/sec (`Runtime.autoFarm.combatSustain.recentHpLossPerSec`) adds to opener pressure while `enemyCount >= 1`.
+      openerContextIncomingHpLossEnabled: true,
+      // AI CHANGED: Scale (hpLossPerSec / playerMaxHp) * this value before capping — tuned so typical chip damage nudges pressure without dominating extraEnemies.
+      openerContextIncomingHpLossScale: 8,
+      // AI CHANGED: Hard cap on the incoming-HP-loss contribution to `totalPressure` (same units as extraEnemies + lowHpPressure).
+      openerContextIncomingHpLossPressureCap: 2.5,
       // AI CHANGED: Under pressure, long casts lose this many basic-DPS units per second of blocked time.
       openerContextCastPressurePenaltyInBasicDps: 0.12,
       // AI CHANGED: Control skills gain this many basic-DPS units under pressure (stun gets full weight, slow gets partial).

@@ -508,6 +508,8 @@
       planner_forced_opener: "Forced opener",
       planner_golden_comparator: "Golden comparator",
       planner_combat_episode_plan: "Combat episode plan",
+      // AI CHANGED: TEST human label for opener danger pressure shape check.
+      planner_opener_danger_pressure_shape: "Opener danger pressure",
       planner_charge_release_policy: "Charge release policy",
       planner_dynamic_charge_scoring: "Dynamic charge scoring",
       combat_attackers_retarget_ui: "Attackers retarget UI",
@@ -772,6 +774,18 @@
       out.plannerOpenerEventTotals = Object.assign({}, pr.openerRuntime.events);
     }
     out.lastFoughtEnemyKey = Runtime && Runtime.enemy ? Runtime.enemy.lastFoughtKey || null : null;
+    // AI CHANGED: compact opener danger pressure sample for soak triage (same helper as ranked context scoring).
+    try {
+      if (typeof plannerComputeOpenerDangerPressure === "function" && typeof readBasicState === "function") {
+        const liveStFv = readBasicState();
+        if (typeof updateCombatSustainObservations === "function") {
+          updateCombatSustainObservations(liveStFv);
+        }
+        out.openerDangerPressureSample = plannerComputeOpenerDangerPressure(liveStFv);
+      }
+    } catch (eDpFv) {
+      out.openerDangerPressureSampleError = String(eDpFv && eDpFv.message ? eDpFv.message : eDpFv);
+    }
     return out;
   }
 
@@ -2690,6 +2704,74 @@
                 pickError: episodePickErr,
                 episode: episode
               },
+          false
+        );
+      }
+      // AI CHANGED: Opener danger pressure — validate `plannerComputeOpenerDangerPressure` return shape + bounded incoming term (soft).
+      if (!rankedOn) {
+        addCheck(
+          "planner_opener_danger_pressure_shape",
+          !strictRankedChecks,
+          strictRankedChecks
+            ? { error: "ranked_combat_off", strictRankedChecks: true }
+            : { skipped: true, reason: "ranked_combat_off" },
+          strictRankedChecks
+        );
+      } else if (typeof plannerComputeOpenerDangerPressure !== "function") {
+        addCheck("planner_opener_danger_pressure_shape", false, { error: "missing_plannerComputeOpenerDangerPressure" }, false);
+      } else {
+        const liveStDp = typeof readBasicState === "function" ? readBasicState() : {};
+        try {
+          if (typeof updateCombatSustainObservations === "function") {
+            updateCombatSustainObservations(liveStDp);
+          }
+        } catch (susErr) {
+          /* best-effort */
+        }
+        let dp = null;
+        let dpErr = null;
+        try {
+          dp = plannerComputeOpenerDangerPressure(liveStDp);
+        } catch (eDp) {
+          dpErr = String(eDp && eDp.message ? eDp.message : eDp);
+        }
+        const cap =
+          Config &&
+          Config.planner &&
+          Number.isFinite(Config.planner.openerContextIncomingHpLossPressureCap)
+            ? Math.max(0, Config.planner.openerContextIncomingHpLossPressureCap)
+            : 2.5;
+        const dpOk =
+          !dpErr &&
+          dp &&
+          typeof dp === "object" &&
+          typeof dp.totalPressure === "number" &&
+          Number.isFinite(dp.totalPressure) &&
+          dp.totalPressure >= 0 &&
+          typeof dp.incomingHpLossPerSec === "number" &&
+          Number.isFinite(dp.incomingHpLossPerSec) &&
+          dp.incomingHpLossPerSec >= 0 &&
+          typeof dp.incomingPressure === "number" &&
+          Number.isFinite(dp.incomingPressure) &&
+          dp.incomingPressure >= 0 &&
+          dp.incomingPressure <= cap + 1e-3 &&
+          typeof dp.lowHpPressure === "number" &&
+          Number.isFinite(dp.lowHpPressure) &&
+          dp.lowHpPressure >= 0 &&
+          typeof dp.enemyCountLive === "number" &&
+          Number.isFinite(dp.enemyCountLive) &&
+          dp.enemyCountLive >= 0;
+        addCheck(
+          "planner_opener_danger_pressure_shape",
+          dpOk,
+          dpOk
+            ? {
+                totalPressure: dp.totalPressure,
+                incomingPressure: dp.incomingPressure,
+                incomingHpLossPerSec: dp.incomingHpLossPerSec,
+                enemyCountLive: dp.enemyCountLive
+              }
+            : { error: "danger_pressure_shape_invalid", dpError: dpErr, sample: dp },
           false
         );
       }

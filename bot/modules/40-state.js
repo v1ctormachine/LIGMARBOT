@@ -105,6 +105,44 @@
     return (span.textContent || "").replace(/\s+/g, " ").trim();
   }
 
+  // AI CHANGED: Queue v2 trigger — read all visible non-fraction canvas-condition-bar labels so queueing can react to the real cast name ("Sniper Shot", "Attack", etc.).
+  function readVisibleCombatCastBarTexts() {
+    const nodes = Array.from(document.querySelectorAll(Config.selectors.movingBarValue));
+    const out = [];
+    const seen = new Set();
+    for (let i = 0; i < nodes.length; i += 1) {
+      const span = nodes[i];
+      if (!span || !span.isConnected) {
+        continue;
+      }
+      const host = span.closest("app-canvas-condition-bar") || span;
+      if (!isElementVisible(host)) {
+        continue;
+      }
+      const text = (span.textContent || "").replace(/\s+/g, " ").trim();
+      if (!text) {
+        continue;
+      }
+      if (parseFractionText(text).valid) {
+        continue;
+      }
+      const key = text.toLowerCase();
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      out.push(text);
+    }
+    const battleText = readBattleStatusBarText();
+    if (battleText && !parseFractionText(battleText).valid) {
+      const battleKey = battleText.toLowerCase();
+      if (!seen.has(battleKey)) {
+        out.unshift(battleText);
+      }
+    }
+    return out;
+  }
+
   // AI CHANGED: True when battle status shows known in-progress loot/altar strings (visible bar only).
   function isLootInteractionStatusBusy() {
     const t = readBattleStatusBarText().toLowerCase();
@@ -326,6 +364,11 @@
     const targetHpNode = document.querySelector(Config.selectors.targetHpText);
     const deathScreenNode = document.querySelector(Config.selectors.deathScreen);
     const poorConnectionNode = document.querySelector(Config.selectors.poorConnection);
+    const gameRootNode = document.querySelector(Config.selectors.gameRoot);
+    const actionBarNode = document.querySelector(Config.selectors.actionBar);
+    const mapToggleNode = document.querySelector(Config.selectors.mapToggleButton);
+    const mapCanvasNode = document.querySelector(Config.selectors.mapCanvas);
+    const findEnemyNode = document.querySelector(Config.selectors.findEnemyButton);
 
     const hpText = hpNode ? hpNode.textContent || "" : "";
     const mpText = mpNode ? mpNode.textContent || "" : "";
@@ -362,12 +405,29 @@
       pingMs = pingMatch ? parseFirstInt(pingMatch[1]) : null;
     }
 
+    const gameRootVisible = !!(gameRootNode && isElementVisible(gameRootNode));
+    const actionBarVisible = !!(actionBarNode && isElementVisible(actionBarNode));
+    const mapToggleVisible = !!(mapToggleNode && isElementVisible(mapToggleNode));
+    const mapCanvasVisible = !!(mapCanvasNode && isElementVisible(mapCanvasNode));
+    const findEnemyVisible = !!(findEnemyNode && isElementVisible(findEnemyNode));
+    const coreUiVisible = !!(gameRootVisible && (actionBarVisible || mapToggleVisible || mapCanvasVisible || findEnemyVisible));
+    const coreUiMissing = !coreUiVisible;
+
     return {
       time: Date.now(),
       session: {
         inGame: isGamePage(),
         dead: !!deathScreenNode,
-        poorConnection: !!poorConnectionNode
+        poorConnection: !!poorConnectionNode,
+        coreUi: {
+          gameRootVisible: gameRootVisible,
+          actionBarVisible: actionBarVisible,
+          mapToggleVisible: mapToggleVisible,
+          mapCanvasVisible: mapCanvasVisible,
+          findEnemyVisible: findEnemyVisible,
+          visible: coreUiVisible,
+          missing: coreUiMissing
+        }
       },
       player: {
         hp: hp,
@@ -384,7 +444,8 @@
         fractionCandidateCount: fractionCandidates.length,
         inferredHpNode: inferred.hp ? { text: inferred.hp.text, x: inferred.hp.x, y: inferred.hp.y } : null,
         inferredMpNode: inferred.mp ? { text: inferred.mp.text, x: inferred.mp.x, y: inferred.mp.y } : null,
-        inferredTargetHpNode: inferred.targetHp ? { text: inferred.targetHp.text, x: inferred.targetHp.x, y: inferred.targetHp.y } : null
+        inferredTargetHpNode: inferred.targetHp ? { text: inferred.targetHp.text, x: inferred.targetHp.x, y: inferred.targetHp.y } : null,
+        coreUiVisible: coreUiVisible
       }
     };
   }
