@@ -7,8 +7,9 @@
     },
     // AI CHANGED: Added action verification timing config for click+confirm flows.
     verification: {
-      pollMs: 120,
-      timeoutMs: 2500,
+      // AI CHANGED: Tighter generic verify polling (retarget / target-acquired / find-enemy caps).
+      pollMs: 25,
+      timeoutMs: 1250,
       // AI CHANGED: Loot/shrine completion — require this long with no highlight loot button and no busy battle-status text.
       lootSettleStableMs: 400,
       // AI CHANGED: Longer cap than generic verify; altar/shrine animations can run several seconds.
@@ -64,7 +65,7 @@
       // AI CHANGED: slice 23 — first non-charge ranked opener only: shorter wait before alternate/basic (avoids ~6.5s idle when top-ranked skill whiffs or is slow to register). Alternate openers still use attackProgressTimeoutMs.
       rankedOpenerFirstProgressTimeoutMs: 4200,
       // AI CHANGED: slice 23 — brief pause after bar skill click before polling HP/count (reduces one-frame false “no progress”).
-      postRankedSkillClickSettleMs: 120,
+      postRankedSkillClickSettleMs: 25,
       // AI CHANGED: slice 32 — default 200ms grace before first HP poll on ranked opener (reduces false “no progress” vs 0; panel/combatUi.v1 overrides when saved).
       rankedOpenerChargeGraceMs: 200,
       // AI CHANGED: Legacy/manual charge-release timing override. If > 0 and the opener is a parsed charge skill, release at this many ms (clamped to full charge). 0 = use chargeSkillReleaseFraction.
@@ -86,7 +87,7 @@
       // AI CHANGED: After killing one mob in a multi-mob pull, prefer the attackers popup over find-enemy for faster retarget.
       useAttackersPanelRetargetAfterKill: true,
       // AI CHANGED: Brief settle after opening attackers popup / clicking a member card before verify polling.
-      attackersRetargetSettleMs: 80,
+      attackersRetargetSettleMs: 25,
       // AI CHANGED: slice 24b — optional explicit cancel button(s); if empty, walk up from hint span to button / role=button.
       chargingCancelClickSelectors: [],
       chargingCancelParentWalkMax: 14,
