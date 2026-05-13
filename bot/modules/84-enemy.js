@@ -579,3 +579,97 @@
     });
     return row;
   }
+
+  // AI CHANGED: §6 buff research — console helper to compare per-signature hp_drop buckets for one mob key (pair fights).
+  function formatEnemyBuffSignaturePreviewForResearch(sig) {
+    const s = sig == null ? "" : String(sig);
+    if (!s.length) {
+      return "(clean)";
+    }
+    return s.length > 120 ? s.slice(0, 120) + "..." : s;
+  }
+
+  function summarizeEnemyBuffSigBuckets(userOpts) {
+    const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
+    let key = typeof opts.key === "string" && opts.key.trim() ? opts.key.trim() : null;
+    if (!key && Runtime.enemy && typeof Runtime.enemy.lastFoughtKey === "string" && Runtime.enemy.lastFoughtKey.trim()) {
+      key = Runtime.enemy.lastFoughtKey.trim();
+    }
+    if (!key) {
+      return {
+        ok: false,
+        reason: "no_key",
+        hint: "Pass { key: ligmarBot.makeEnemyDbKey(name, level, maxHp) } or fight a mob so Runtime.enemy.lastFoughtKey is set.",
+        buckets: []
+      };
+    }
+    const row =
+      Runtime.enemy.db && Array.isArray(Runtime.enemy.db)
+        ? Runtime.enemy.db.find(function (r) {
+            return r && r.key === key;
+          })
+        : null;
+    if (!row) {
+      return {
+        ok: false,
+        key: key,
+        reason: "no_row",
+        hint: "No enemy DB row for this key — recordTargetToEnemyDb / merge after observe.",
+        buckets: []
+      };
+    }
+    const cal = row.observeCalAgg;
+    const bucketsRaw = cal && cal.buffSigBuckets && typeof cal.buffSigBuckets === "object" ? cal.buffSigBuckets : null;
+    const list = [];
+    if (bucketsRaw) {
+      const bk = Object.keys(bucketsRaw);
+      for (let i = 0; i < bk.length; i += 1) {
+        const k = bk[i];
+        const b = bucketsRaw[k];
+        const sigFull = b && b.signature != null ? String(b.signature) : "";
+        list.push({
+          bucketKey: k,
+          signaturePreview: formatEnemyBuffSignaturePreviewForResearch(sigFull),
+          signatureLen: sigFull.length,
+          hpDropMean: b && Number.isFinite(b.hpDropMean) ? b.hpDropMean : null,
+          hpDropSamples: b && Number.isFinite(b.hpDropSamples) ? b.hpDropSamples : null,
+          sessionsMerged: b && Number.isFinite(b.sessionsMerged) ? b.sessionsMerged : null,
+          hpDropMin: b && Number.isFinite(b.hpDropMin) ? b.hpDropMin : null,
+          hpDropMax: b && Number.isFinite(b.hpDropMax) ? b.hpDropMax : null,
+          lastMergedAt: b && b.lastMergedAt ? b.lastMergedAt : null
+        });
+      }
+      list.sort(function (a, b) {
+        const sa = a.hpDropSamples || 0;
+        const sb = b.hpDropSamples || 0;
+        if (sb !== sa) {
+          return sb - sa;
+        }
+        return (b.lastMergedAt || 0) - (a.lastMergedAt || 0);
+      });
+    }
+    const last = row.observeCalLast || null;
+    return {
+      ok: true,
+      key: key,
+      name: row.name,
+      level: row.level,
+      maxHp: row.maxHp,
+      aggHpDropMean: cal && Number.isFinite(cal.hpDropMean) ? cal.hpDropMean : null,
+      aggHpDropSamples: cal && Number.isFinite(cal.hpDropSamples) ? cal.hpDropSamples : null,
+      observeCalLast: last
+        ? {
+            mergedAt: last.mergedAt,
+            statusLabelsSignature: last.statusLabelsSignature,
+            statusLabelsMergeSource: last.statusLabelsMergeSource,
+            statusLabelCount: last.statusLabelCount,
+            hpDropMean: last.hpDropMean
+          }
+        : null,
+      statusLabelsLast: row.statusLabelsLast || [],
+      buckets: list,
+      bucketCount: list.length,
+      note:
+        "Compare hpDropMean across signaturePreview rows for the same key (unbuffed vs buffed fights). Planner does not consume this automatically yet."
+    };
+  }

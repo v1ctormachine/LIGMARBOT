@@ -540,6 +540,7 @@
       field_validation_snapshot: "Field validation",
       // AI CHANGED: §6 — enemy DB merge exposes buff label signature for TEST export.
       enemy_buff_calibration_probe: "Enemy buff calibration",
+      enemy_buff_sig_buckets_api: "Enemy buff bucket API",
       logger_recent_ring: "Logger ring",
       planner_ranked_openers: "Ranked opener",
       calibration_observe: "Calibration"
@@ -3445,6 +3446,31 @@
           "enemy_buff_calibration_probe",
           false,
           { error: String(buffErr && buffErr.message ? buffErr.message : buffErr) },
+          false
+        );
+      }
+
+      // AI CHANGED: §6 — smoke that summarizeEnemyBuffSigBuckets returns a stable shape (console research API).
+      try {
+        let apiDetail = { skipped: true, reason: "no_summarizeEnemyBuffSigBuckets" };
+        let apiOk = false;
+        if (typeof summarizeEnemyBuffSigBuckets === "function") {
+          const sB = summarizeEnemyBuffSigBuckets({});
+          apiOk = !!(sB && typeof sB === "object" && Array.isArray(sB.buckets));
+          apiDetail = {
+            skipped: false,
+            returnOk: !!(sB && sB.ok),
+            reason: sB && sB.reason ? String(sB.reason) : null,
+            key: sB && sB.key ? sB.key : null,
+            bucketCount: sB && Number.isFinite(sB.bucketCount) ? sB.bucketCount : sB && sB.buckets ? sB.buckets.length : 0
+          };
+        }
+        addCheck("enemy_buff_sig_buckets_api", apiOk || apiDetail.skipped, apiDetail, false);
+      } catch (eApi) {
+        addCheck(
+          "enemy_buff_sig_buckets_api",
+          false,
+          { error: String(eApi && eApi.message ? eApi.message : eApi) },
           false
         );
       }

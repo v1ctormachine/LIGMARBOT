@@ -255,6 +255,7 @@
       summarizePlannerInputs: summarizePlannerInputs,
       summarizeEnemyDbCalibration: summarizeEnemyDbCalibration,
       getEnemyCalibrationRow: getEnemyCalibrationRow,
+      summarizeEnemyBuffSigBuckets: summarizeEnemyBuffSigBuckets,
       plannerSkillEffectHeuristicScore: plannerSkillEffectHeuristicScore,
       rankAttackSkillsByHeuristic: rankAttackSkillsByHeuristic,
       calibrateEnemyFromCombat: calibrateEnemyFromCombat,

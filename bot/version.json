@@ -1,8 +1,18 @@
 ﻿{
-    "version":  "0.3.200",
-    "description":  "fieldValidation buffSigTop adds signaturePreview for §6 exports",
-    "builtAt":  "2026-05-13T20:08:16.4691568+03:00",
+    "version":  "0.3.202",
+    "description":  "ligmarBot.summarizeEnemyBuffSigBuckets + TEST enemy_buff_sig_buckets_api",
+    "builtAt":  "2026-05-13T20:23:12.5852463+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.202",
+                        "description":  "ligmarBot.summarizeEnemyBuffSigBuckets + TEST enemy_buff_sig_buckets_api",
+                        "date":  "2026-05-13T20:23:12.5852463+03:00"
+                    },
+                    {
+                        "version":  "0.3.201",
+                        "description":  "ligmarBot.summarizeEnemyBuffSigBuckets for buff pairing research",
+                        "date":  "2026-05-13T20:22:35.1181456+03:00"
+                    },
                     {
                         "version":  "0.3.200",
                         "description":  "fieldValidation buffSigTop adds signaturePreview for §6 exports",
@@ -242,16 +252,6 @@
                         "version":  "0.3.153",
                         "description":  "combat retarget fast-path and safer post-retarget charge guard",
                         "date":  "2026-05-12T23:08:00.5912357+03:00"
-                    },
-                    {
-                        "version":  "0.3.152",
-                        "description":  "progress-bar queue chaining",
-                        "date":  "2026-05-12T22:23:29.4506277+03:00"
-                    },
-                    {
-                        "version":  "0.3.151",
-                        "description":  "queue delay and retarget cancel",
-                        "date":  "2026-05-12T21:56:31.1819830+03:00"
                     }
                 ]
 }
