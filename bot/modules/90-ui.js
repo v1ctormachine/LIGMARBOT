@@ -824,8 +824,13 @@
             const ksB = Object.keys(bucketsB);
             for (let ib = 0; ib < ksB.length; ib += 1) {
               const bEnt = bucketsB[ksB[ib]];
+              const sigFull = bEnt && bEnt.signature != null ? String(bEnt.signature) : "";
+              // AI CHANGED: §6 soak triage — short text so TestSummary.json distinguishes buckets (not only signatureLen).
+              const signaturePreview =
+                sigFull.length > 0 ? (sigFull.length > 96 ? sigFull.slice(0, 96) + "..." : sigFull) : "(clean)";
               topB.push({
-                signatureLen: bEnt && bEnt.signature ? String(bEnt.signature).length : 0,
+                signatureLen: sigFull.length,
+                signaturePreview: signaturePreview,
                 samples: bEnt ? bEnt.hpDropSamples : null,
                 mean: bEnt ? bEnt.hpDropMean : null,
                 sessions: bEnt ? bEnt.sessionsMerged : null

@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.199",
-    "description":  "fieldValidation: plannerUiPrefs snapshot for soak exports",
-    "builtAt":  "2026-05-13T20:03:11.6764812+03:00",
+    "version":  "0.3.200",
+    "description":  "fieldValidation buffSigTop adds signaturePreview for §6 exports",
+    "builtAt":  "2026-05-13T20:08:16.4691568+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.200",
+                        "description":  "fieldValidation buffSigTop adds signaturePreview for §6 exports",
+                        "date":  "2026-05-13T20:08:16.4691568+03:00"
+                    },
                     {
                         "version":  "0.3.199",
                         "description":  "fieldValidation: plannerUiPrefs snapshot for soak exports",
@@ -247,11 +252,6 @@
                         "version":  "0.3.151",
                         "description":  "queue delay and retarget cancel",
                         "date":  "2026-05-12T21:56:31.1819830+03:00"
-                    },
-                    {
-                        "version":  "0.3.150",
-                        "description":  "charge verify fast fallback",
-                        "date":  "2026-05-12T21:49:06.2633596+03:00"
                     }
                 ]
 }
