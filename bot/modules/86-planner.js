@@ -1273,13 +1273,17 @@
     return plannerSummarizeSkillPaperDamageShape(slot, horizonSec, mobFactor, expectedBasicHit, prebuiltChargePlan).totalDamage;
   }
 
-  // AI CHANGED: Enemy DB calibration → opener pressure — when observed mean hp_drop vs current paper ratio stays below 1 with enough samples, fights last longer than paper; add small bounded pressure (same units as extraEnemies in `totalPressure`).
+  // AI CHANGED: Enemy DB calibration → opener pressure — hard when ratio < paper (with spread confidence); optional ease when ratio > paper within a capped band; charge holds use hard only.
   function plannerComputeCalibrationPressureAddon(enemyKey) {
     const out = {
+      hardAddon: 0,
+      easeAddon: 0,
       addon: 0,
       ratio: null,
       hpDropSamples: null,
-      skippedReason: null
+      skippedReason: null,
+      spreadRel: null,
+      confidenceMul: 1
     };
     if (Config.planner && Config.planner.openerContextCalibrationPressureEnabled === false) {
       out.skippedReason = "disabled";
@@ -1305,12 +1309,34 @@
       out.skippedReason = "low_samples";
       return out;
     }
-    const ratio = row.ratioObservedVsCurrentPaper;
-    if (ratio >= 0.995) {
-      out.skippedReason = "ratio_not_below_paper";
-      return out;
+    const mean = row.observedMeanHpDrop;
+    let spreadRel = null;
+    let confMul = 1;
+    if (Number.isFinite(mean) && mean > 0 && Number.isFinite(row.observedMin) && Number.isFinite(row.observedMax)) {
+      spreadRel = (row.observedMax - row.observedMin) / mean;
+      out.spreadRel = +spreadRel.toFixed(4);
+      const spreadLo =
+        Config.planner && Number.isFinite(Config.planner.openerContextCalibrationSpreadLo)
+          ? Math.max(0, Config.planner.openerContextCalibrationSpreadLo)
+          : 0.18;
+      const spreadHi =
+        Config.planner && Number.isFinite(Config.planner.openerContextCalibrationSpreadHi)
+          ? Math.max(spreadLo + 0.01, Config.planner.openerContextCalibrationSpreadHi)
+          : 0.72;
+      const pen =
+        Config.planner && Number.isFinite(Config.planner.openerContextCalibrationSpreadConfidencePenalty)
+          ? Math.max(0, Config.planner.openerContextCalibrationSpreadConfidencePenalty)
+          : 0.85;
+      if (spreadRel > spreadHi) {
+        out.skippedReason = "spread_too_wide";
+        return out;
+      }
+      confMul = Math.max(0.2, 1 - Math.max(0, spreadRel - spreadLo) * pen);
+      out.confidenceMul = +confMul.toFixed(4);
+    } else {
+      out.confidenceMul = 1;
     }
-    const deficit = 1 - ratio;
+    const ratio = row.ratioObservedVsCurrentPaper;
     const scale =
       Config.planner && Number.isFinite(Config.planner.openerContextCalibrationPressureScale)
         ? Math.max(0, Config.planner.openerContextCalibrationPressureScale)
@@ -1319,11 +1345,37 @@
       Config.planner && Number.isFinite(Config.planner.openerContextCalibrationPressureCap)
         ? Math.max(0, Config.planner.openerContextCalibrationPressureCap)
         : 0.45;
-    out.addon = +Math.min(cap, deficit * scale).toFixed(4);
+    if (ratio < 0.995) {
+      const deficit = 1 - ratio;
+      out.hardAddon = +Math.min(cap, deficit * scale * confMul).toFixed(4);
+    }
+    if (
+      Config.planner &&
+      Config.planner.openerContextCalibrationEaseEnabled !== false &&
+      ratio > 1.005
+    ) {
+      const maxR =
+        Config.planner && Number.isFinite(Config.planner.openerContextCalibrationEaseMaxRatio)
+          ? Math.max(1.01, Config.planner.openerContextCalibrationEaseMaxRatio)
+          : 1.32;
+      if (ratio <= maxR) {
+        const easeScale =
+          Config.planner && Number.isFinite(Config.planner.openerContextCalibrationEaseScale)
+            ? Math.max(0, Config.planner.openerContextCalibrationEaseScale)
+            : 0.22;
+        const easeCap =
+          Config.planner && Number.isFinite(Config.planner.openerContextCalibrationEaseCap)
+            ? Math.max(0, Config.planner.openerContextCalibrationEaseCap)
+            : 0.2;
+        const surplus = ratio - 1;
+        out.easeAddon = +Math.min(easeCap, surplus * easeScale * confMul).toFixed(4);
+      }
+    }
+    out.addon = +(out.hardAddon - out.easeAddon).toFixed(4);
     return out;
   }
 
-  // AI CHANGED: Live-fight danger model for generic opener scoring — reused so diagnostics can explain why long casts or control skills gained/lost value. Optional `dangerOpts.enemyKey` folds DB calibration when the mob is harder than paper.
+  // AI CHANGED: Live-fight danger model for generic opener scoring — optional `dangerOpts.enemyKey` folds DB calibration (spread confidence, hard/ease ratio nudges) into `totalPressure`.
   function plannerComputeOpenerDangerPressure(liveState, dangerOpts) {
     const dOpt = dangerOpts && typeof dangerOpts === "object" ? dangerOpts : null;
     const enemyKeyForCal =
@@ -1379,7 +1431,12 @@
       }
     }
     const calWrap = plannerComputeCalibrationPressureAddon(enemyKeyForCal);
-    const calibrationPressure = calWrap && Number.isFinite(calWrap.addon) ? calWrap.addon : 0;
+    const calibrationPressureHard = calWrap && Number.isFinite(calWrap.hardAddon) ? calWrap.hardAddon : 0;
+    const calibrationPressureEase = calWrap && Number.isFinite(calWrap.easeAddon) ? calWrap.easeAddon : 0;
+    const calibrationPressure =
+      calWrap && Number.isFinite(calWrap.addon) ? calWrap.addon : calibrationPressureHard - calibrationPressureEase;
+    const totalPressureRaw = extraEnemies + lowHpPressure + incomingPressure + calibrationPressure;
+    const totalPressure = +Math.max(0, totalPressureRaw).toFixed(4);
     // AI CHANGED: Pull-size labels for diagnostics / exports (solo = one live enemy bar, duo = two, pack = three+).
     const pullTier =
       enemyCountLive <= 0 ? "none" : enemyCountLive === 1 ? "solo" : enemyCountLive === 2 ? "duo" : "pack";
@@ -1393,11 +1450,16 @@
       lowHpPressure: +lowHpPressure.toFixed(4),
       incomingHpLossPerSec: incomingHpLossPerSec,
       incomingPressure: +incomingPressure.toFixed(4),
+      calibrationPressureHard: +calibrationPressureHard.toFixed(4),
+      calibrationPressureEase: +calibrationPressureEase.toFixed(4),
       calibrationPressure: +calibrationPressure.toFixed(4),
       calibrationRatio: calWrap && calWrap.ratio !== null && Number.isFinite(calWrap.ratio) ? +calWrap.ratio.toFixed(4) : null,
       calibrationHpDropSamples: calWrap && calWrap.hpDropSamples !== null ? calWrap.hpDropSamples : null,
+      calibrationSpreadRel: calWrap && calWrap.spreadRel !== null && Number.isFinite(calWrap.spreadRel) ? calWrap.spreadRel : null,
+      calibrationConfidenceMul:
+        calWrap && Number.isFinite(calWrap.confidenceMul) ? +calWrap.confidenceMul.toFixed(4) : null,
       calibrationPressureSkipped: calWrap && calWrap.skippedReason ? calWrap.skippedReason : null,
-      totalPressure: +(extraEnemies + lowHpPressure + incomingPressure + calibrationPressure).toFixed(4)
+      totalPressure: totalPressure
     };
   }
 
@@ -1470,8 +1532,13 @@
             : null;
         const dp = precalcPressure || plannerComputeOpenerDangerPressure(liveState, dpDangerOpt);
         const incP = dp && Number.isFinite(dp.incomingPressure) ? Math.max(0, dp.incomingPressure) : 0;
-        const calP = dp && Number.isFinite(dp.calibrationPressure) ? Math.max(0, dp.calibrationPressure) : 0;
-        const incomingLike = incP + calP;
+        const calHard =
+          dp && Number.isFinite(dp.calibrationPressureHard)
+            ? Math.max(0, dp.calibrationPressureHard)
+            : dp && Number.isFinite(dp.calibrationPressure)
+              ? Math.max(0, dp.calibrationPressure)
+              : 0;
+        const incomingLike = incP + calHard;
         if (incomingLike > 0) {
           incomingHoldPenalty = castBlockedSec * basicDps * incomingLike * incCoeff;
           out.incomingHoldPenalty = +incomingHoldPenalty.toFixed(2);

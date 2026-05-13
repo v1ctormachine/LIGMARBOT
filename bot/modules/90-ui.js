@@ -2757,6 +2757,12 @@
           Number.isFinite(Config.planner.openerContextCalibrationPressureCap)
             ? Math.max(0, Config.planner.openerContextCalibrationPressureCap)
             : 0.45;
+        const easeCapBound =
+          Config &&
+          Config.planner &&
+          Number.isFinite(Config.planner.openerContextCalibrationEaseCap)
+            ? Math.max(0, Config.planner.openerContextCalibrationEaseCap)
+            : 0.2;
         const dpOk =
           !dpErr &&
           dp &&
@@ -2773,8 +2779,16 @@
           dp.incomingPressure <= cap + 1e-3 &&
           typeof dp.calibrationPressure === "number" &&
           Number.isFinite(dp.calibrationPressure) &&
-          dp.calibrationPressure >= 0 &&
+          dp.calibrationPressure >= -easeCapBound - 1e-3 &&
           dp.calibrationPressure <= calCap + 1e-3 &&
+          typeof dp.calibrationPressureHard === "number" &&
+          Number.isFinite(dp.calibrationPressureHard) &&
+          dp.calibrationPressureHard >= 0 &&
+          dp.calibrationPressureHard <= calCap + 1e-3 &&
+          typeof dp.calibrationPressureEase === "number" &&
+          Number.isFinite(dp.calibrationPressureEase) &&
+          dp.calibrationPressureEase >= 0 &&
+          dp.calibrationPressureEase <= easeCapBound + 1e-3 &&
           typeof dp.lowHpPressure === "number" &&
           Number.isFinite(dp.lowHpPressure) &&
           dp.lowHpPressure >= 0 &&
@@ -2788,7 +2802,14 @@
           dp.pullEnemyCount >= 0 &&
           (dp.calibrationRatio === null || (typeof dp.calibrationRatio === "number" && Number.isFinite(dp.calibrationRatio))) &&
           (dp.calibrationHpDropSamples === null ||
-            (typeof dp.calibrationHpDropSamples === "number" && Number.isFinite(dp.calibrationHpDropSamples) && dp.calibrationHpDropSamples >= 0));
+            (typeof dp.calibrationHpDropSamples === "number" && Number.isFinite(dp.calibrationHpDropSamples) && dp.calibrationHpDropSamples >= 0)) &&
+          (dp.calibrationSpreadRel === null ||
+            (typeof dp.calibrationSpreadRel === "number" && Number.isFinite(dp.calibrationSpreadRel) && dp.calibrationSpreadRel >= 0)) &&
+          (dp.calibrationConfidenceMul === null ||
+            (typeof dp.calibrationConfidenceMul === "number" &&
+              Number.isFinite(dp.calibrationConfidenceMul) &&
+              dp.calibrationConfidenceMul > 0 &&
+              dp.calibrationConfidenceMul <= 1.001));
         addCheck(
           "planner_opener_danger_pressure_shape",
           dpOk,
@@ -2798,6 +2819,8 @@
                 incomingPressure: dp.incomingPressure,
                 incomingHpLossPerSec: dp.incomingHpLossPerSec,
                 calibrationPressure: dp.calibrationPressure,
+                calibrationPressureHard: dp.calibrationPressureHard,
+                calibrationPressureEase: dp.calibrationPressureEase,
                 enemyCountLive: dp.enemyCountLive,
                 pullTier: dp.pullTier
               }

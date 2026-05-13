@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.188",
-    "description":  "calibration: hp_drop ratio adds opener pressure + charge hold when harder than paper",
-    "builtAt":  "2026-05-13T17:35:16.5609473+03:00",
+    "version":  "0.3.189",
+    "description":  "calibration pressure v2: spread confidence, ratio ease, charge hold hard-only",
+    "builtAt":  "2026-05-13T17:45:02.0473454+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.189",
+                        "description":  "calibration pressure v2: spread confidence, ratio ease, charge hold hard-only",
+                        "date":  "2026-05-13T17:45:02.0473454+03:00"
+                    },
                     {
                         "version":  "0.3.188",
                         "description":  "calibration: hp_drop ratio adds opener pressure + charge hold when harder than paper",
@@ -247,11 +252,6 @@
                         "version":  "0.3.143",
                         "description":  "combat readiness: dense charge execute and potion sustain",
                         "date":  "2026-05-12T17:07:48.2440906+03:00"
-                    },
-                    {
-                        "version":  "0.3.142",
-                        "description":  "planner: fresh-target alpha scoring for Sniper Shot",
-                        "date":  "2026-05-12T16:06:13.6774718+03:00"
                     }
                 ]
 }

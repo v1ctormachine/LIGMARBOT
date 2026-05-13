@@ -280,6 +280,17 @@
       openerContextCalibrationPressureScale: 0.35,
       // AI CHANGED: Max contribution of calibration to `totalPressure` (same additive units as incomingPressure cap philosophy).
       openerContextCalibrationPressureCap: 0.45,
+      // AI CHANGED: Spread gate — (max−min)/mean on merged hp_drop; below `SpreadLo` full confidence; above `SpreadHi` skip calibration nudges (noisy).
+      openerContextCalibrationSpreadLo: 0.18,
+      openerContextCalibrationSpreadHi: 0.72,
+      // AI CHANGED: Per unit of (spreadRel − spreadLo) above the lo floor, multiply hard/ease addons by max(0.2, 1 − penalty * excess).
+      openerContextCalibrationSpreadConfidencePenalty: 0.85,
+      // AI CHANGED: When ratio > 1 with clean spread, subtract bounded pressure (mob easier than paper); does not reduce charge hold term (only hard applies there).
+      openerContextCalibrationEaseEnabled: true,
+      openerContextCalibrationEaseScale: 0.22,
+      openerContextCalibrationEaseCap: 0.2,
+      // AI CHANGED: Ignore ease when ratio implies more than this much over paper (crit / mixed damage).
+      openerContextCalibrationEaseMaxRatio: 1.32,
       // AI CHANGED: Under pressure, long casts lose this many basic-DPS units per second of blocked time.
       openerContextCastPressurePenaltyInBasicDps: 0.12,
       // AI CHANGED: Control skills gain this many basic-DPS units under pressure (stun gets full weight, slow gets partial).
