@@ -17,6 +17,7 @@ Emergency **hotfix** (crash / wrong click): ship immediately, even if tiny.
 
 ## Done recently
 
+- **Charge late-wait tuning (v0.3.178)** — default **`chargeSkillReleaseLateProgressTimeoutMs`** **2000**; **`chargeSkillReleaseLateTinyCancelCapMs`** / **`chargeSkillReleaseLateTinyFractionThreshold`** shorten extended HP polling for micro **`cancel_release`** so the bot does not sit silent ~3.5s after a tap cancel.
 - **Charge cancel late-wait + queue tick fix (v0.3.177)** — **`chargeSkillReleaseLateProgressTimeoutMs`** second progress wait before alternate openers; per-opener queue arm for alternates; **`queueAdvanceTick`** when queue **active** (not gated on first opener non-charge).
 - **STOP + COPY LOGS + Logger ring (v0.3.176)** — **`15-logger.js`** buffers last **200** formatted lines; panel **STOP + COPY LOGS** stops auto-farm (if ON) and copies last **30** to clipboard (**`---LIGMARBOT_ISSUE_LOG_CLIP_…`**); **`ligmarBot.copyIssueReportLogs()`**; TEST soft **`Logger ring`**.
 - **Field validation snapshot in TEST export (v0.3.175)** — **`gameSnapshotEnd.fieldValidation`** bundles reliability / health / recovery / sustain / combat queue / chat spammer / last session / planner opener counters + **`ligmarBot.getFieldValidationSnapshot()`**; TEST adds soft **`Field validation`** check.

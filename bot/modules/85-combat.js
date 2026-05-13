@@ -2668,12 +2668,28 @@
       const lateStrat = chargePlanForLate && chargePlanForLate.strategy ? chargePlanForLate.strategy : "";
       if (lateStrat === "cancel_release" || lateStrat === "full_charge") {
         const lateRaw = Config.combat.chargeSkillReleaseLateProgressTimeoutMs;
-        const lateMs =
-          Number.isFinite(lateRaw) && lateRaw > 0 ? Math.min(lateRaw, fullTimeoutMs) : Math.min(3600, fullTimeoutMs);
+        let lateMs =
+          Number.isFinite(lateRaw) && lateRaw > 0 ? Math.min(lateRaw, fullTimeoutMs) : Math.min(2000, fullTimeoutMs);
+        // AI CHANGED: Micro cancel_release (planner tiny fraction + min hold) rarely needs multi-second silence; user clip showed ~3.6s idle before alternates.
+        let lateTinyNote = null;
+        if (lateStrat === "cancel_release" && chargePlanForLate) {
+          const thRaw = Config.combat.chargeSkillReleaseLateTinyFractionThreshold;
+          const fracTh =
+            Number.isFinite(thRaw) && thRaw > 0 && thRaw < 1 ? thRaw : 0.12;
+          const rf = Number.isFinite(chargePlanForLate.releaseFraction) ? chargePlanForLate.releaseFraction : 1;
+          if (rf < fracTh) {
+            const capRaw = Config.combat.chargeSkillReleaseLateTinyCancelCapMs;
+            const capMs =
+              Number.isFinite(capRaw) && capRaw >= 400 ? Math.min(capRaw, lateMs) : Math.min(1150, lateMs);
+            lateMs = Math.max(450, Math.min(lateMs, capMs));
+            lateTinyNote = { releaseFraction: rf, capMs: capMs };
+          }
+        }
         Logger.log("LOOP", "Charge opener: no progress in fast verify window; extended wait before alternates", {
           slot: open.skillSlot,
           strategy: lateStrat,
-          extendedTimeoutMs: lateMs
+          extendedTimeoutMs: lateMs,
+          lateTinyCap: lateTinyNote
         });
         const progressedLate = await waitForCondition(
           "attack progress after charge release (extended)",

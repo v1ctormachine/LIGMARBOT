@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.177",
-    "description":  "Combat: charge release late wait + queue tick + per-opener queue arm",
-    "builtAt":  "2026-05-13T14:01:18.5465236+03:00",
+    "version":  "0.3.178",
+    "description":  "Combat: shorter charge late-wait + tiny cancel_release cap",
+    "builtAt":  "2026-05-13T14:12:24.8105758+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.178",
+                        "description":  "Combat: shorter charge late-wait + tiny cancel_release cap",
+                        "date":  "2026-05-13T14:12:24.8105758+03:00"
+                    },
                     {
                         "version":  "0.3.177",
                         "description":  "Combat: charge release late wait + queue tick + per-opener queue arm",
@@ -247,11 +252,6 @@
                         "version":  "0.3.132",
                         "description":  "skills: harden master name normalization",
                         "date":  "2026-05-11T22:53:23.2595197+03:00"
-                    },
-                    {
-                        "version":  "0.3.131",
-                        "description":  "skills: harden master name normalization",
-                        "date":  "2026-05-11T22:53:09.3239070+03:00"
                     }
                 ]
 }
