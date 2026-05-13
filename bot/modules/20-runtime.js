@@ -142,6 +142,10 @@
       // AI CHANGED: slice 26 — ranked opener grace ms input (90-ui.js); early-cancel wait mechanic removed.
       combatGraceInput: null
     },
+    // AI CHANGED: runUiTestBundle scope — quick profile sets disableChargeCancelUi so charge-cancel taps are skipped (`40-state.js`).
+    testBundle: {
+      disableChargeCancelUi: false
+    },
     // AI CHANGED: Phase C0 -- skill DB. Populated by scanSkills() (manual, console-first). Combat can
     // consume cached slots when Config.planner.useRankedAttackSkillsInCombat is true (slice 8).
     skills: {

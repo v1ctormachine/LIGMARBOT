@@ -293,6 +293,11 @@
 
   // AI CHANGED: slice 24b — cancel charge: prefer map-toggle/canvas gap click; else DOM cancel control (not bar slot).
   function clickChargingSkillCancelUi() {
+    // AI CHANGED: quick TEST profile — no charge-cancel UI clicks during bundle (soak/combat inside TEST).
+    if (Runtime.testBundle && Runtime.testBundle.disableChargeCancelUi === true) {
+      Logger.log("STATE", "charge cancel UI skipped (TEST quick profile)");
+      return false;
+    }
     if (Config.combat.chargingCancelPreferMapGapClick !== false) {
       if (clickChargeCancelViaMapToggleCanvasGap()) {
         return true;

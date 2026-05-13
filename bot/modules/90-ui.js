@@ -1264,8 +1264,8 @@
     const isQuickProfile = requestedProfile === "quick";
     const isPanelProfile = requestedProfile === "panel";
     const runCalibration = isQuickProfile ? opts.runQuickCalibration !== false : true;
-    // AI CHANGED: Legacy option kept for API compatibility; TEST no longer runs charge-cancel smoke by default.
-    const fireChargeCancelIfHint = opts.fireChargeCancelIfHint === true;
+    // AI CHANGED: Legacy option kept for API compatibility; TEST no longer runs charge-cancel smoke by default. Quick profile never runs cancel smoke even if opts ask for it.
+    const fireChargeCancelIfHint = !isQuickProfile && opts.fireChargeCancelIfHint === true;
     // AI CHANGED: Soak workflow hardening — release profile defaults to resume auto-farm after TEST when it was ON pre-run.
     const resumeAfter =
       typeof opts.resumeAutoFarm === "boolean" ? opts.resumeAutoFarm : !isQuickProfile;
@@ -1313,6 +1313,7 @@
     let forcedOpenerReadiness = null;
     let forcedOpenerRuntime = null;
     let naturalSniperProbe = null;
+    let testBundleQuickCancelBackup = null;
 
     function addCheck(id, ok, detail, critical, note) {
       const c = { id: id, ok: !!ok, critical: critical === true };
@@ -1487,6 +1488,18 @@
       Config.combat.chargeSkillReleaseOverrideMs = 0;
       Config.combat.chargeSkillReleaseFraction = forceChargeReleaseFraction;
     }
+    // AI CHANGED: quick TEST — disable all charge-cancel UI taps during bundle + stuck-cancel config for soak combat inside TEST.
+    if (isQuickProfile) {
+      testBundleQuickCancelBackup = {
+        disableChargeCancelUi: Runtime.testBundle.disableChargeCancelUi === true,
+        rankedOpenerClickCancelUiIfChargeStuck: Config.combat.rankedOpenerClickCancelUiIfChargeStuck,
+        chargingCancelPreferMapGapClick: Config.combat.chargingCancelPreferMapGapClick
+      };
+      Runtime.testBundle.disableChargeCancelUi = true;
+      Config.combat.rankedOpenerClickCancelUiIfChargeStuck = false;
+      Config.combat.chargingCancelPreferMapGapClick = false;
+      Logger.log("TEST", "quick profile: charge cancel UI + stuck-cancel prefs disabled for bundle scope");
+    }
 
     try {
       Logger.log("TEST", "BUNDLE_START", {
@@ -1524,7 +1537,8 @@
           rankedSoakMinEvents: rankedSoakMinEvents,
           autoRankedSoak: autoRankedSoak,
           forceRankedSkillName: forcedRankedSkillName || null,
-          forceChargeReleaseFraction: forceChargeReleaseFraction
+          forceChargeReleaseFraction: forceChargeReleaseFraction,
+          quickDisableChargeCancelUi: isQuickProfile === true
         },
         false
       );
@@ -3541,6 +3555,15 @@
         testExportJson: testExportJson
       };
     } finally {
+      if (testBundleQuickCancelBackup) {
+        if (!Runtime.testBundle) {
+          Runtime.testBundle = { disableChargeCancelUi: false };
+        }
+        Runtime.testBundle.disableChargeCancelUi = testBundleQuickCancelBackup.disableChargeCancelUi === true;
+        Config.combat.rankedOpenerClickCancelUiIfChargeStuck = testBundleQuickCancelBackup.rankedOpenerClickCancelUiIfChargeStuck;
+        Config.combat.chargingCancelPreferMapGapClick = testBundleQuickCancelBackup.chargingCancelPreferMapGapClick;
+        testBundleQuickCancelBackup = null;
+      }
       if (plannerBackup) {
         Config.planner.useRankedAttackSkillsInCombat = !!plannerBackup.useRankedAttackSkillsInCombat;
         Config.planner.skillMpReserve = plannerBackup.skillMpReserve;

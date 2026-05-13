@@ -17,6 +17,7 @@ Emergency **hotfix** (crash / wrong click): ship immediately, even if tiny.
 
 ## Done recently
 
+- **Quick TEST: no charge-cancel clicks (v0.3.204)** — `testProfile: "quick"` sets `Runtime.testBundle.disableChargeCancelUi` (guards `clickChargingSkillCancelUi`), forces `rankedOpenerClickCancelUiIfChargeStuck` / map-gap cancel off for bundle scope, ignores `fireChargeCancelIfHint`; restored in `finally` (`20-runtime.js`, `40-state.js`, `90-ui.js`).
 - **Remove ranked opener early-cancel wait (ship)** — **`attackUntilProgress`**: no split first-wait / mid-wait **`clickChargingSkillCancelUi`**; single **`firstWaitTimeoutMs`** then existing stuck-cancel + basic path. Planner manual charge hold ms lives on **`Config.combat.chargeSkillReleaseOverrideMs`** (replaces **`rankedOpenerEarlyCancelIfHintAfterMs`**); **`loadCombatUiPrefs`** migrates old **`ligmarbot.combatUi.v1`** key once (`85-combat.js`, `86-planner.js`, `10-config.js`, `90-ui.js`, `20-runtime.js`, `ARCHITECTURE.md`).
 - **§6 buff research console API (v0.3.202)** — **`summarizeEnemyBuffSigBuckets({ key? })`** in **`84-enemy.js`**, **`ligmarBot.summarizeEnemyBuffSigBuckets`**: per-bucket **`signaturePreview`**, means, samples for one mob key (default **`lastFoughtKey`**). TEST soft **`enemy_buff_sig_buckets_api`**.
 - **§6 buff export readability (v0.3.200)** — **`fieldValidation.enemyBuffCalibration.buffSigTop`** entries include **`signaturePreview`** (truncated label fingerprint) plus **`signatureLen`** so **`TestSummary.md`** distinguishes buckets without opening DevTools DB.
