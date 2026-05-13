@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.184",
-    "description":  "horizon: unify charge hold risk in opener context; reuse cooldown in scored rows",
-    "builtAt":  "2026-05-13T16:43:50.5405355+03:00",
+    "version":  "0.3.185",
+    "description":  "horizon: unified live-target overkill cap helper for opener and charge",
+    "builtAt":  "2026-05-13T16:55:18.3884536+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.185",
+                        "description":  "horizon: unified live-target overkill cap helper for opener and charge",
+                        "date":  "2026-05-13T16:55:18.3884536+03:00"
+                    },
                     {
                         "version":  "0.3.184",
                         "description":  "horizon: unify charge hold risk in opener context; reuse cooldown in scored rows",
@@ -247,11 +252,6 @@
                         "version":  "0.3.139",
                         "description":  "planner: add bounded runtime aggression credit",
                         "date":  "2026-05-11T23:31:46.0315085+03:00"
-                    },
-                    {
-                        "version":  "0.3.138",
-                        "description":  "skills: finish canonical DB mojibake cleanup",
-                        "date":  "2026-05-11T23:20:04.1446237+03:00"
                     }
                 ]
 }

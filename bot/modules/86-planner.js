@@ -858,15 +858,9 @@
     return out;
   }
 
-  function plannerScoreChargeReleaseCandidate(effect, chargePlan, horizonSec, mobFactor, expectedBasicHit, basicDps, liveState, scoreOpts) {
-    const opts = scoreOpts && typeof scoreOpts === "object" ? scoreOpts : {};
-    const mf = Number.isFinite(mobFactor) && mobFactor > 0 ? mobFactor : 1;
-    const basePart = expectedBasicHit * mf;
-    const releaseDamageRaw =
-      horizonSec >= chargePlan.releaseSec
-        ? basePart * chargePlan.expectedBasePlusGearMultiplier
-        : 0;
-    const targetHpCur =
+  // AI CHANGED: Horizon unified terms — live target HP for opener/charge scoring (one resolver).
+  function plannerHorizonResolveLiveTargetHpCur(liveState) {
+    const th =
       liveState &&
       liveState.combat &&
       liveState.combat.targetHp &&
@@ -875,12 +869,52 @@
       liveState.combat.targetHp.cur > 0
         ? liveState.combat.targetHp.cur
         : null;
-    const capOverkill = Config.planner && Config.planner.chargeSkillTargetOverkillCapEnabled !== false;
-    const releaseDamage =
-      capOverkill && Number.isFinite(targetHpCur)
-        ? Math.min(releaseDamageRaw, targetHpCur)
-        : releaseDamageRaw;
-    const wastedOverkillDamage = Math.max(0, releaseDamageRaw - releaseDamage);
+    return Number.isFinite(th) ? th : null;
+  }
+
+  // AI CHANGED: Horizon unified terms — cap paper/release damage to current target HP when enabled (generic vs charge config flags).
+  function plannerHorizonCapSkillDamageToTargetHp(damageRaw, liveState, policy) {
+    const raw = Number.isFinite(damageRaw) ? damageRaw : 0;
+    const capHp = plannerHorizonResolveLiveTargetHpCur(liveState);
+    let capEnabled = true;
+    if (policy === "charge_release") {
+      capEnabled = Config.planner && Config.planner.chargeSkillTargetOverkillCapEnabled !== false;
+    } else {
+      capEnabled = Config.planner && Config.planner.openerTargetHpAwareScoring !== false;
+    }
+    if (!capEnabled || capHp == null) {
+      return {
+        capped: raw,
+        raw: raw,
+        applied: false,
+        wastedOverkill: 0,
+        capHp: capHp,
+        policy: policy || "generic_opener"
+      };
+    }
+    const capped = Math.min(raw, capHp);
+    return {
+      capped: capped,
+      raw: raw,
+      applied: raw - capped > 1e-9,
+      wastedOverkill: Math.max(0, raw - capped),
+      capHp: capHp,
+      policy: policy || "generic_opener"
+    };
+  }
+
+  function plannerScoreChargeReleaseCandidate(effect, chargePlan, horizonSec, mobFactor, expectedBasicHit, basicDps, liveState, scoreOpts) {
+    const opts = scoreOpts && typeof scoreOpts === "object" ? scoreOpts : {};
+    const mf = Number.isFinite(mobFactor) && mobFactor > 0 ? mobFactor : 1;
+    const basePart = expectedBasicHit * mf;
+    const releaseDamageRaw =
+      horizonSec >= chargePlan.releaseSec
+        ? basePart * chargePlan.expectedBasePlusGearMultiplier
+        : 0;
+    const targetHpCur = plannerHorizonResolveLiveTargetHpCur(liveState);
+    const overkillWrap = plannerHorizonCapSkillDamageToTargetHp(releaseDamageRaw, liveState, "charge_release");
+    const releaseDamage = overkillWrap.capped;
+    const wastedOverkillDamage = overkillWrap.wastedOverkill;
     const followUpBasicDamage = Math.max(0, horizonSec - chargePlan.releaseSec) * basicDps;
     const followUpAction = plannerBestFollowUpActionValue(
       Math.max(0, horizonSec - chargePlan.releaseSec),
@@ -1727,19 +1761,9 @@
         : (Number.isFinite(slot.castTimeSec) && slot.castTimeSec > 0 ? Math.min(horizonSec, slot.castTimeSec) : 0);
     const skillShape = plannerSummarizeSkillPaperDamageShape(slot, horizonSec, mobFactor, expectedBasicHit, chargePlan);
     const skillPaperRaw = skillShape.totalDamage;
-    const liveTargetHp =
-      opts.liveState &&
-      opts.liveState.combat &&
-      opts.liveState.combat.targetHp &&
-      opts.liveState.combat.targetHp.valid &&
-      Number.isFinite(opts.liveState.combat.targetHp.cur) &&
-      opts.liveState.combat.targetHp.cur > 0
-        ? opts.liveState.combat.targetHp.cur
-        : null;
-    const skillPaper =
-      Config.planner && Config.planner.openerTargetHpAwareScoring !== false && Number.isFinite(liveTargetHp)
-        ? Math.min(skillPaperRaw, liveTargetHp)
-        : skillPaperRaw;
+    const liveTargetHp = plannerHorizonResolveLiveTargetHpCur(opts.liveState || null);
+    const overkillWrap = plannerHorizonCapSkillDamageToTargetHp(skillPaperRaw, opts.liveState || null, "generic_opener");
+    const skillPaper = overkillWrap.capped;
     const manaCost = Number.isFinite(slot && slot.manaCost) ? slot.manaCost : 0;
     const followUp = plannerBestFollowUpActionValue(
       Math.max(0, horizonSec - castBlocked),
