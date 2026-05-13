@@ -73,6 +73,12 @@
         failures: 0,
         lastResult: null
       },
+      // AI CHANGED: Support-buff line — long self-buff assumed expiry map, safety cast spacing, prebuff telemetry.
+      supportBuffLine: {
+        longSelfTracked: {},
+        lastSafetyBuffCastAt: 0,
+        prebuffCastCount: 0
+      },
       // AI CHANGED: Night resilience — session-health timestamps and last evaluated risk for overloaded tabs / server drops.
       health: {
         lastHealthyAt: null,

@@ -113,6 +113,8 @@
       hpPotionForecastWindowSec: 4,
       // AI CHANGED: Use MP potion below this mp pct so ranked combat does not degrade into basic-only farming for long windows.
       mpPotionUseBelowPct: 0.22,
+      // AI CHANGED: When MP pct ≤ this value, always request an MP potion (overrides can_cast_any / other skip paths). Set null to disable.
+      mpPotionForceUseBelowPct: 0.25,
       // AI CHANGED: When true (default), drink MP potions once missing mana ≥ largest bar MP potion heal (cur+HoT remainder ≤ max−heal), i.e. at least one pot’s worth of headroom to fill without massive overheal. Falls back to mpPotionUseBelowPct when max MP or pot heal is unknown.
       mpPotionUseWhenBelowMaxMinusHeal: true,
       // AI CHANGED: Before idle tile-to-tile explore when enemyCount===0, wait until HP reaches this pct using HP potions (parsed bar) + passive regen.
@@ -131,6 +133,30 @@
       // AI CHANGED: After verified find-enemy (target HP > 0), close map overlay — loot follow-up still calls ensureMapOpen().
       closeMapAfterFindEnemy: true,
       closeMapAfterFindEnemySettleMs: 120
+    },
+    // AI CHANGED: Support-buff teaching — duration/scope/role classification, OOC long self-buffs, prebuff, safety interrupt (Windy Dome wired first).
+    supportBuffs: {
+      enabled: true,
+      longDurationMinSec: 120,
+      shortPrebuffMaxSec: 120,
+      permanentSelf: {
+        enabled: true,
+        renewWhenRemainingSec: 90
+      },
+      prebuff: {
+        enabled: true,
+        maxSkills: 2,
+        reserveSafetyNameSubstrings: ["windy dome"]
+      },
+      safety: {
+        enabled: true,
+        // AI CHANGED: Interrupt active charge/cast UI before emergency barrier when cancel hint is visible.
+        cancelCurrentSkillFirst: true,
+        skillNames: ["Windy Dome"],
+        hpPctMax: 0.38,
+        incomingHpLossPerMaxMin: 0.042,
+        minSpacingMs: 45000
+      }
     },
     chat: {
       // AI CHANGED: AUTO ON mode — periodically send one random local promocode line when the loop is at a safe boundary.

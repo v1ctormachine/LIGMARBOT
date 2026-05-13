@@ -296,7 +296,9 @@
     const raw =
       Runtime.autoFarm && Runtime.autoFarm.combatMode ? String(Runtime.autoFarm.combatMode).toLowerCase() : "fast";
     const cm = raw === "easy" || raw === "safe" || raw === "fast" ? raw : "fast";
-    return { combatMode: cm };
+    // AI CHANGED: Persist AUTO local chat spammer toggle with combat mode (`ligmarbot.autoFarmUi.v1`).
+    const spamOn = !!(Config.chat && Config.chat.autoLocalPromocodeSpammerEnabled !== false);
+    return { combatMode: cm, autoLocalChatSpammerEnabled: spamOn };
   }
 
   function loadAutoFarmUiPrefs() {
@@ -311,6 +313,10 @@
         if (m === "fast" || m === "safe" || m === "easy") {
           Runtime.autoFarm.combatMode = m;
         }
+      }
+      // AI CHANGED: Restore chat spammer preference from the same AUTO prefs blob.
+      if (typeof p.autoLocalChatSpammerEnabled === "boolean" && Config.chat) {
+        Config.chat.autoLocalPromocodeSpammerEnabled = p.autoLocalChatSpammerEnabled;
       }
       return { ok: true, fromStorage: true, autoFarm: autoFarmUiPrefsSnapshot() };
     } catch (err) {
@@ -475,6 +481,14 @@
       Runtime.ui.stopButton.style.cursor = canStop ? "pointer" : "not-allowed";
     }
 
+    // AI CHANGED: Keep chat spammer checkbox aligned with Config when not being edited.
+    if (Runtime.ui.chatSpammerCheckbox && document.activeElement !== Runtime.ui.chatSpammerCheckbox) {
+      const spamOn = !!(Config.chat && Config.chat.autoLocalPromocodeSpammerEnabled !== false);
+      if (Runtime.ui.chatSpammerCheckbox.checked !== spamOn) {
+        Runtime.ui.chatSpammerCheckbox.checked = spamOn;
+      }
+    }
+
     // Update phase block (large activity indicator).
     const phase = Runtime.status && Runtime.status.phase ? Runtime.status.phase : "idle";
     const detail = Runtime.status && Runtime.status.detail ? Runtime.status.detail : "";
@@ -579,6 +593,7 @@
       auto_resume_after_refresh: "Auto-resume refresh",
       watchdog_surface: "Watchdog surface",
       chat_spammer_auto: "Chat spammer auto",
+      support_buffs_surface: "Support buffs surface",
       combat_sustain_policy: "Combat sustain",
       auto_farm_resume_policy: "Farm resume policy",
       auto_farm_reliability: "Combat reliability",
@@ -1911,8 +1926,6 @@
         addCheck(
           "chat_spammer_auto",
           !!(
-            Config.chat &&
-            Config.chat.autoLocalPromocodeSpammerEnabled !== false &&
             smoke &&
             smoke.ok &&
             allMessagesUnder100Chars
@@ -1941,6 +1954,31 @@
         );
       } catch (err) {
         addCheck("chat_spammer_auto", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      try {
+        const sb = Config.supportBuffs;
+        const clsOk = typeof listScannedSupportBuffClassifications === "function";
+        const safeOk = typeof listScannedSkillsMatchingSafetyBuffHeuristic === "function";
+        const cls = clsOk ? listScannedSupportBuffClassifications() : null;
+        const safe = safeOk ? listScannedSkillsMatchingSafetyBuffHeuristic() : null;
+        addCheck(
+          "support_buffs_surface",
+          !!(sb && sb.enabled !== false && clsOk && safeOk && Array.isArray(cls) && Array.isArray(safe)),
+          {
+            enabled: !!(sb && sb.enabled !== false),
+            mpPotionForceUseBelowPct:
+              Config.combat && Number.isFinite(Config.combat.mpPotionForceUseBelowPct)
+                ? Config.combat.mpPotionForceUseBelowPct
+                : null,
+            safetySkillNames: sb && sb.safety ? sb.safety.skillNames : null,
+            classifyCount: Array.isArray(cls) ? cls.length : null,
+            safetyHeuristicCount: Array.isArray(safe) ? safe.length : null
+          },
+          false
+        );
+      } catch (err) {
+        addCheck("support_buffs_surface", false, { error: String(err && err.message ? err.message : err) }, false);
       }
 
       try {
@@ -3826,6 +3864,32 @@
     autoModeRow.appendChild(modeBtnEasy);
     panel.appendChild(autoModeRow);
 
+    // AI CHANGED: Panel toggle — AUTO local chat promo spammer (persists in `ligmarbot.autoFarmUi.v1`).
+    const chatSpamRow = document.createElement("label");
+    chatSpamRow.style.display = "flex";
+    chatSpamRow.style.alignItems = "center";
+    chatSpamRow.style.gap = "8px";
+    chatSpamRow.style.marginBottom = "10px";
+    chatSpamRow.style.fontSize = "10px";
+    chatSpamRow.style.opacity = "0.9";
+    chatSpamRow.style.cursor = "pointer";
+    const chatSpamCb = document.createElement("input");
+    chatSpamCb.type = "checkbox";
+    chatSpamCb.checked = !!(Config.chat && Config.chat.autoLocalPromocodeSpammerEnabled !== false);
+    chatSpamCb.addEventListener("change", function () {
+      if (Config.chat) {
+        Config.chat.autoLocalPromocodeSpammerEnabled = !!chatSpamCb.checked;
+      }
+      saveAutoFarmUiPrefs();
+      Logger.log("UI", "Auto local chat spammer toggled", { enabled: !!chatSpamCb.checked });
+      setTimeout(updateControlPanelStatus, 20);
+    });
+    const chatSpamLbl = document.createElement("span");
+    chatSpamLbl.textContent = "Auto local chat promo spammer";
+    chatSpamRow.appendChild(chatSpamCb);
+    chatSpamRow.appendChild(chatSpamLbl);
+    panel.appendChild(chatSpamRow);
+
     // AI CHANGED: TEST — one-click **`panel`** profile (full automated suite: soak, strict calibration, probes, resume farm). Console: `ligmarBot.runUiTestBundle({ testProfile: "quick" })` or `"release"`.
     const testButton = makeButton(`TEST (${BotVersion.version})`, "#737fff", "#8f94ff", () => {
       if (testButton.disabled) {
@@ -3984,6 +4048,7 @@
     Runtime.ui.issueStopCopyButton = issueStopCopyButton;
     Runtime.ui.issueReportLine = issueReportLine;
     Runtime.ui.combatGraceInput = null;
+    Runtime.ui.chatSpammerCheckbox = chatSpamCb;
     Runtime.ui.autoFarmModeButtons = { fast: modeBtnFast, safe: modeBtnSafe, easy: modeBtnEasy };
     refreshAutoFarmModeButtonsVisual();
 

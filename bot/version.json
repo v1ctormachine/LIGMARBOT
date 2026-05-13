@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.207",
-    "description":  "MP potion: allow max-minus-heal top-off after preferred mana ok",
-    "builtAt":  "2026-05-13T22:42:00.9463596+03:00",
+    "version":  "0.3.208",
+    "description":  "support buffs: OOC renew, prebuff, Windy Dome safety; chat spammer toggle; MP floor 25%",
+    "builtAt":  "2026-05-13T23:48:50.6686449+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.208",
+                        "description":  "support buffs: OOC renew, prebuff, Windy Dome safety; chat spammer toggle; MP floor 25%",
+                        "date":  "2026-05-13T23:48:50.6686449+03:00"
+                    },
                     {
                         "version":  "0.3.207",
                         "description":  "MP potion: allow max-minus-heal top-off after preferred mana ok",
@@ -247,11 +252,6 @@
                         "version":  "0.3.159",
                         "description":  "AUTO chat: time-of-day banks, 5-15min cadence, slot-aware dedupe",
                         "date":  "2026-05-13T10:20:37.4354386+03:00"
-                    },
-                    {
-                        "version":  "0.3.158",
-                        "description":  "AUTO chat: time-of-day promo banks + local-clock slot picker",
-                        "date":  "2026-05-13T09:52:41.8140112+03:00"
                     }
                 ]
 }

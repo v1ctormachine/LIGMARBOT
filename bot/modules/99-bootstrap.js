@@ -125,6 +125,11 @@
       getTimeOfDayChatSlot: getTimeOfDayChatSlot,
       getChatSpammerMessagesForSlot: getChatSpammerMessagesForSlot,
       getAllChatSpammerMessagesFlat: getAllChatSpammerMessagesFlat,
+      // AI CHANGED: Support-buff teaching — classify scanned support slots; heuristic list for Windy Dome–style absorbs.
+      listScannedSupportBuffClassifications:
+        typeof listScannedSupportBuffClassifications === "function" ? listScannedSupportBuffClassifications : null,
+      listSafetyLikeBuffsFromScannedSkills:
+        typeof listScannedSkillsMatchingSafetyBuffHeuristic === "function" ? listScannedSkillsMatchingSafetyBuffHeuristic : null,
       waitForCondition: waitForCondition,
       clickFindEnemyVerified: clickFindEnemyVerified,
       clickLootOrActivateVerified: clickLootOrActivateVerified,

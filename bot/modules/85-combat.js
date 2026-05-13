@@ -1583,6 +1583,33 @@
     const reserve = Number.isFinite(Config.planner && Config.planner.skillMpReserve) ? Config.planner.skillMpReserve : 0;
     const maxAttackManaNeed = getCombatMaximumAttackManaNeed();
     const activeRemaining = getCombatActivePotionRemaining(sustain.activeMpPotion, liveState && Number.isFinite(liveState.time) ? liveState.time : Date.now());
+    // AI CHANGED: Hard floor — at/below this MP pct always request a potion (overrides can_cast_any and other skips).
+    const forcePctRaw = Config.combat && Config.combat.mpPotionForceUseBelowPct;
+    if (Number.isFinite(forcePctRaw) && forcePctRaw > 0 && forcePctRaw <= 1 && mpPct <= forcePctRaw) {
+      const mpMaxF =
+        liveState &&
+        liveState.player &&
+        liveState.player.mp &&
+        liveState.player.mp.valid &&
+        Number.isFinite(liveState.player.mp.max)
+          ? liveState.player.mp.max
+          : null;
+      const effectiveMpF = mpCur + activeRemaining;
+      const shortageF =
+        Number.isFinite(mpMaxF) && mpMaxF > 0 ? Math.max(0, mpMaxF - effectiveMpF) : Math.max(1, bestKnown.spec.totalValue);
+      return {
+        needed: true,
+        reason: "force_below_mp_pct",
+        mpCur: +mpCur.toFixed(2),
+        mpPct: +mpPct.toFixed(4),
+        activeRemaining: +activeRemaining.toFixed(2),
+        shortage: +shortageF.toFixed(2),
+        forceBelowPct: +forcePctRaw,
+        potionTotalValue: bestKnown.spec.totalValue,
+        potionDurationSec: bestKnown.spec.durationSec,
+        potionPerSec: bestKnown.spec.perSec
+      };
+    }
     const lowMpPct = Number.isFinite(Config.combat.mpPotionUseBelowPct)
       ? Math.max(0.05, Math.min(1, Config.combat.mpPotionUseBelowPct))
       : 0.22;
@@ -1672,6 +1699,427 @@
       potionDurationSec: bestKnown.spec.durationSec,
       potionPerSec: bestKnown.spec.perSec
     };
+  }
+
+  // AI CHANGED: Runtime slice for support-buff renew / safety / prebuff counters (see `Config.supportBuffs`).
+  function getSupportBuffLineRuntime() {
+    if (!Runtime.autoFarm.supportBuffLine || typeof Runtime.autoFarm.supportBuffLine !== "object") {
+      Runtime.autoFarm.supportBuffLine = {
+        longSelfTracked: Object.create(null),
+        lastSafetyBuffCastAt: 0,
+        prebuffCastCount: 0
+      };
+    }
+    const rt = Runtime.autoFarm.supportBuffLine;
+    if (!rt.longSelfTracked || typeof rt.longSelfTracked !== "object") {
+      rt.longSelfTracked = Object.create(null);
+    }
+    if (!Number.isFinite(rt.lastSafetyBuffCastAt)) {
+      rt.lastSafetyBuffCastAt = 0;
+    }
+    if (!Number.isFinite(rt.prebuffCastCount)) {
+      rt.prebuffCastCount = 0;
+    }
+    return rt;
+  }
+
+  function getSupportBuffDescriptionForRow(row, classKey) {
+    let desc = row && typeof row.description === "string" ? row.description : "";
+    if (!desc && classKey && typeof getSkillMasterEntry === "function" && row && row.name) {
+      try {
+        const ent = getSkillMasterEntry(classKey, row.name);
+        if (ent && typeof ent.description === "string") {
+          desc = ent.description;
+        }
+      } catch (_e) {
+        desc = desc || "";
+      }
+    }
+    return desc;
+  }
+
+  function parseEffectsMaxDurationSec(row) {
+    if (!row || !Array.isArray(row.effects)) {
+      return null;
+    }
+    let best = null;
+    for (let i = 0; i < row.effects.length; i++) {
+      const ef = row.effects[i];
+      if (ef && Number.isFinite(ef.durationSec) && ef.durationSec > 0) {
+        if (best === null || ef.durationSec > best) {
+          best = ef.durationSec;
+        }
+      }
+    }
+    return best;
+  }
+
+  function parseLikelyBuffDurationSecFromDescription(desc) {
+    const d = String(desc || "");
+    const re = /(\d[\d.,]{0,8})\s*s(?:econds?)?\b/gi;
+    let best = null;
+    let x;
+    while ((x = re.exec(d)) !== null) {
+      const v = parseFloat(String(x[1]).replace(/,/g, "."));
+      if (Number.isFinite(v) && v > 0 && v < 200000 && (best === null || v > best)) {
+        best = v;
+      }
+    }
+    return best;
+  }
+
+  function guessBuffDurationSecForSupportRow(row, classKey) {
+    const desc = getSupportBuffDescriptionForRow(row, classKey);
+    let dur = parseLikelyBuffDurationSecFromDescription(desc);
+    const fromFx = parseEffectsMaxDurationSec(row);
+    if (Number.isFinite(fromFx)) {
+      if (!Number.isFinite(dur) || fromFx > dur) {
+        dur = fromFx;
+      }
+    }
+    return Number.isFinite(dur) ? dur : null;
+  }
+
+  function skillNameMatchesAnySubstring(name, subs) {
+    const raw = String(name || "").trim();
+    const n =
+      typeof normalizeSkillName === "function"
+        ? String(normalizeSkillName(raw)).toLowerCase()
+        : raw.toLowerCase();
+    const list = Array.isArray(subs) ? subs : [];
+    for (let i = 0; i < list.length; i++) {
+      const s = String(list[i] || "").toLowerCase().trim();
+      if (s && n.indexOf(s) !== -1) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function findActionBarSlotForSupportSkillNameCandidates(names) {
+    const wantList = Array.isArray(names) ? names : [];
+    const slots = Runtime.skills && Array.isArray(Runtime.skills.slots) ? Runtime.skills.slots : [];
+    for (let n = 0; n < wantList.length; n++) {
+      const wantRaw = String(wantList[n] || "").trim();
+      if (!wantRaw) {
+        continue;
+      }
+      const key =
+        typeof normalizeSkillName === "function"
+          ? String(normalizeSkillName(wantRaw)).toLowerCase()
+          : wantRaw.toLowerCase();
+      for (let i = 0; i < slots.length; i++) {
+        const row = slots[i];
+        if (!row || row.kind !== "skill") {
+          continue;
+        }
+        const rawName = typeof row.name === "string" ? row.name : "";
+        const nk =
+          typeof normalizeSkillName === "function"
+            ? String(normalizeSkillName(rawName)).toLowerCase()
+            : rawName.toLowerCase();
+        if (nk.indexOf(key) !== -1 || key.indexOf(nk) !== -1) {
+          const slotIdx = typeof row.slot === "number" ? row.slot : i;
+          return { slot: slotIdx, name: rawName, row: row };
+        }
+      }
+    }
+    return null;
+  }
+
+  async function maybeCombatSafetyBuffInterrupt(liveState) {
+    const root = Config.supportBuffs;
+    const cfg = root && root.safety;
+    if (!root || root.enabled === false || !cfg || cfg.enabled === false) {
+      return { fired: false, skipped: true, reason: "disabled" };
+    }
+    const now = Date.now();
+    const rt = getSupportBuffLineRuntime();
+    const spacing = Number.isFinite(cfg.minSpacingMs) ? Math.max(0, cfg.minSpacingMs) : 45000;
+    if (now - rt.lastSafetyBuffCastAt < spacing) {
+      return { fired: false, skipped: true, reason: "spacing" };
+    }
+    const hpPct =
+      liveState && liveState.player && liveState.player.hp && liveState.player.hp.valid && Number.isFinite(liveState.player.hp.pct)
+        ? liveState.player.hp.pct
+        : null;
+    const sustain = getCombatSustainRuntime();
+    const incoming = Number.isFinite(sustain.recentHpLossPerSec) ? sustain.recentHpLossPerSec : 0;
+    const hpMax =
+      liveState && liveState.player && liveState.player.hp && liveState.player.hp.valid && Number.isFinite(liveState.player.hp.max)
+        ? liveState.player.hp.max
+        : null;
+    const lossNorm = Number.isFinite(hpMax) && hpMax > 0 ? incoming / hpMax : 0;
+    const hpTh = Number.isFinite(cfg.hpPctMax) ? cfg.hpPctMax : 0.38;
+    const lossTh = Number.isFinite(cfg.incomingHpLossPerMaxMin) ? cfg.incomingHpLossPerMaxMin : 0.042;
+    if (!Number.isFinite(hpPct) || hpPct > hpTh || lossNorm < lossTh) {
+      return { fired: false, skipped: true, reason: "thresholds", hpPct: hpPct, lossNorm: lossNorm };
+    }
+    const pick = findActionBarSlotForSupportSkillNameCandidates(cfg.skillNames || ["Windy Dome"]);
+    if (!pick) {
+      return { fired: false, skipped: true, reason: "no_slot" };
+    }
+    if (typeof isActionBarSlotShowingCooldown === "function" && isActionBarSlotShowingCooldown(pick.slot)) {
+      return { fired: false, skipped: true, reason: "on_cd" };
+    }
+    if (cfg.cancelCurrentSkillFirst !== false && typeof isChargingSkillCancelHintVisible === "function" && isChargingSkillCancelHintVisible()) {
+      const labels = typeof readVisibleCombatCastBarTexts === "function" ? readVisibleCombatCastBarTexts() : [];
+      const exp = labels && labels.length > 0 ? String(labels[0]).trim() : "";
+      if (typeof clickChargingSkillCancelUi === "function") {
+        clickChargingSkillCancelUi(exp ? { expectedSkillName: exp } : {});
+      }
+      const settleCancel = Number.isFinite(Config.combat && Config.combat.postRankedSkillClickSettleMs)
+        ? Math.max(25, Config.combat.postRankedSkillClickSettleMs)
+        : 40;
+      await sleep(settleCancel);
+    }
+    const clicked = clickActionBarSlot(pick.slot);
+    if (clicked) {
+      rt.lastSafetyBuffCastAt = now;
+      Logger.log("COMBAT", "Safety buff fired", {
+        name: pick.name,
+        hpPct: hpPct,
+        lossNorm: +lossNorm.toFixed(5),
+        slot: pick.slot
+      });
+      const settle = Number.isFinite(Config.combat && Config.combat.postRankedSkillClickSettleMs)
+        ? Math.max(25, Config.combat.postRankedSkillClickSettleMs)
+        : 40;
+      await sleep(settle);
+      return { fired: true, slot: pick.slot, name: pick.name };
+    }
+    return { fired: false, skipped: true, reason: "click_failed" };
+  }
+
+  async function maybeApplySupportPrebuffsBeforeCombat(liveState) {
+    const root = Config.supportBuffs;
+    const pb = root && root.prebuff;
+    if (!root || root.enabled === false || !pb || pb.enabled === false) {
+      return { used: 0 };
+    }
+    if (!liveState || typeof liveState.combat.enemyCount !== "number" || liveState.combat.enemyCount <= 0) {
+      return { used: 0, skipped: true, reason: "no_enemies" };
+    }
+    const rt = getSupportBuffLineRuntime();
+    rt.prebuffCastCount = 0;
+    const maxCasts = Number.isFinite(pb.maxSkills) ? Math.max(0, Math.floor(pb.maxSkills)) : 2;
+    const reserveSubs = Array.isArray(pb.reserveSafetyNameSubstrings) ? pb.reserveSafetyNameSubstrings : ["windy dome"];
+    const shortMax = Number.isFinite(root.shortPrebuffMaxSec) ? root.shortPrebuffMaxSec : 120;
+    const classKey = typeof Config.skills.masterClassKey === "string" ? Config.skills.masterClassKey.trim() : "";
+    const slots = Runtime.skills && Array.isArray(Runtime.skills.slots) ? Runtime.skills.slots : [];
+    let used = 0;
+    const settleMs = Number.isFinite(Config.combat && Config.combat.postRankedSkillClickSettleMs)
+      ? Math.max(80, Config.combat.postRankedSkillClickSettleMs * 3)
+      : 120;
+    for (let i = 0; i < slots.length && used < maxCasts; i++) {
+      const row = slots[i];
+      if (!row || row.kind !== "skill" || !row.isSupport || row.isAttack) {
+        continue;
+      }
+      if (skillNameMatchesAnySubstring(row.name, reserveSubs)) {
+        continue;
+      }
+      const dur = guessBuffDurationSecForSupportRow(row, classKey);
+      if (!Number.isFinite(dur) || dur > shortMax) {
+        continue;
+      }
+      const slotIdx = typeof row.slot === "number" ? row.slot : i;
+      if (typeof isActionBarSlotShowingCooldown === "function" && isActionBarSlotShowingCooldown(slotIdx)) {
+        continue;
+      }
+      if (!clickActionBarSlot(slotIdx)) {
+        continue;
+      }
+      used += 1;
+      rt.prebuffCastCount += 1;
+      Logger.log("COMBAT", "Prebuff cast", { name: row.name, assumedDurationSec: dur, slot: slotIdx });
+      await sleep(settleMs);
+    }
+    return { used: used };
+  }
+
+  async function maybeMaintainLongSelfSupportBuffsOutOfCombat(liveState) {
+    const root = Config.supportBuffs;
+    const perm = root && root.permanentSelf;
+    if (!root || root.enabled === false || !perm || perm.enabled === false) {
+      return { renewed: 0 };
+    }
+    if (!liveState || typeof liveState.combat.enemyCount !== "number" || liveState.combat.enemyCount !== 0) {
+      return { renewed: 0, skipped: true, reason: "not_clear_tile" };
+    }
+    const longMin = Number.isFinite(root.longDurationMinSec) ? root.longDurationMinSec : 120;
+    const renewRem = Number.isFinite(perm.renewWhenRemainingSec) ? perm.renewWhenRemainingSec : 90;
+    const classKey = typeof Config.skills.masterClassKey === "string" ? Config.skills.masterClassKey.trim() : "";
+    const slots = Runtime.skills && Array.isArray(Runtime.skills.slots) ? Runtime.skills.slots : [];
+    const rt = getSupportBuffLineRuntime();
+    let renewed = 0;
+    const settleMs = Number.isFinite(Config.combat && Config.combat.postRankedSkillClickSettleMs)
+      ? Math.max(120, Config.combat.postRankedSkillClickSettleMs * 4)
+      : 180;
+    const now = Date.now();
+    for (let i = 0; i < slots.length; i++) {
+      const row = slots[i];
+      if (!row || row.kind !== "skill" || !row.isSupport || !row.targetsSelf || row.isAttack) {
+        continue;
+      }
+      const dur = guessBuffDurationSecForSupportRow(row, classKey);
+      if (!Number.isFinite(dur) || dur < longMin) {
+        continue;
+      }
+      const nameKey =
+        typeof normalizeSkillName === "function" ? normalizeSkillName(String(row.name || "")) : String(row.name || "");
+      const tracked = rt.longSelfTracked[nameKey];
+      if (tracked && Number.isFinite(tracked.expectedEndAt) && now < tracked.expectedEndAt - renewRem * 1000) {
+        continue;
+      }
+      const slotIdx = typeof row.slot === "number" ? row.slot : i;
+      if (typeof isActionBarSlotShowingCooldown === "function" && isActionBarSlotShowingCooldown(slotIdx)) {
+        continue;
+      }
+      if (!clickActionBarSlot(slotIdx)) {
+        continue;
+      }
+      rt.longSelfTracked[nameKey] = { expectedEndAt: now + Math.round(dur * 1000), assumedDurationSec: dur };
+      renewed += 1;
+      Logger.log("COMBAT", "Long self-buff renew (OOC)", { name: row.name, durSec: dur, slot: slotIdx });
+      await sleep(settleMs);
+    }
+    return { renewed: renewed };
+  }
+
+  function listScannedSupportBuffClassifications() {
+    const out = [];
+    const classKey = typeof Config.skills.masterClassKey === "string" ? Config.skills.masterClassKey.trim() : "";
+    const slots = Runtime.skills && Array.isArray(Runtime.skills.slots) ? Runtime.skills.slots : [];
+    const longMin = Number.isFinite(Config.supportBuffs && Config.supportBuffs.longDurationMinSec)
+      ? Config.supportBuffs.longDurationMinSec
+      : 120;
+    const shortMax = Number.isFinite(Config.supportBuffs && Config.supportBuffs.shortPrebuffMaxSec)
+      ? Config.supportBuffs.shortPrebuffMaxSec
+      : 120;
+    for (let i = 0; i < slots.length; i++) {
+      const row = slots[i];
+      if (!row || row.kind !== "skill" || !row.isSupport) {
+        continue;
+      }
+      const desc = getSupportBuffDescriptionForRow(row, classKey);
+      const d = desc.toLowerCase();
+      const dur = guessBuffDurationSecForSupportRow(row, classKey);
+      let durationKind = "unknown";
+      if (Number.isFinite(dur)) {
+        if (dur >= longMin) {
+          durationKind = "long";
+        } else if (dur <= shortMax) {
+          durationKind = "short";
+        } else {
+          durationKind = "medium";
+        }
+      }
+      let scope = "unknown";
+      if (row.targetsSelf && !row.targetsEnemy) {
+        scope = "self";
+      } else if (!row.targetsSelf) {
+        if (d.indexOf("allies") !== -1 || d.indexOf("ally") !== -1 || d.indexOf("party") !== -1 || d.indexOf("friendly") !== -1) {
+          scope = "mass";
+        } else if (
+          Array.isArray(row.tags) &&
+          row.tags.some(function (t) {
+            return /area|allies|party|nearby|around/i.test(String(t));
+          })
+        ) {
+          scope = "mass";
+        }
+      }
+      const protNeedles = [
+        "shield",
+        "armor",
+        "armour",
+        "defense",
+        "defence",
+        "dodge",
+        "barrier",
+        "absorb",
+        "resist",
+        "mitigat",
+        "protection",
+        "invulnerable",
+        "aegis",
+        "block",
+        "immune"
+      ];
+      const attNeedles = [
+        "damage",
+        "attack power",
+        "attack rating",
+        "critical",
+        "haste",
+        "speed",
+        "power",
+        "strength",
+        "agility",
+        "fury",
+        "rage"
+      ];
+      let hitsProt = false;
+      let hitsAtt = false;
+      for (let p = 0; p < protNeedles.length; p++) {
+        if (d.indexOf(protNeedles[p]) !== -1) {
+          hitsProt = true;
+          break;
+        }
+      }
+      for (let a = 0; a < attNeedles.length; a++) {
+        if (d.indexOf(attNeedles[a]) !== -1) {
+          hitsAtt = true;
+          break;
+        }
+      }
+      let role = "unknown";
+      if (hitsProt && hitsAtt) {
+        role = "mixed";
+      } else if (hitsProt) {
+        role = "protective";
+      } else if (hitsAtt) {
+        role = "attacking";
+      }
+      out.push({
+        slot: typeof row.slot === "number" ? row.slot : i,
+        name: row.name,
+        durationKind: durationKind,
+        durationSecGuess: dur,
+        scope: scope,
+        role: role,
+        isAttack: !!row.isAttack,
+        description: desc
+      });
+    }
+    return out;
+  }
+
+  function listScannedSkillsMatchingSafetyBuffHeuristic() {
+    const out = [];
+    const classKey = typeof Config.skills.masterClassKey === "string" ? Config.skills.masterClassKey.trim() : "";
+    const slots = Runtime.skills && Array.isArray(Runtime.skills.slots) ? Runtime.skills.slots : [];
+    for (let i = 0; i < slots.length; i++) {
+      const row = slots[i];
+      if (!row || row.kind !== "skill") {
+        continue;
+      }
+      const desc = getSupportBuffDescriptionForRow(row, classKey);
+      const d = String(desc).toLowerCase();
+      const isSafetyLike =
+        (d.indexOf("absorb") !== -1 && d.indexOf("incoming") !== -1) ||
+        (d.indexOf("absorbs") !== -1 && d.indexOf("incoming") !== -1) ||
+        (d.indexOf("incoming damage") !== -1 && (d.indexOf("barrier") !== -1 || d.indexOf("shield") !== -1));
+      if (isSafetyLike) {
+        out.push({
+          slot: typeof row.slot === "number" ? row.slot : i,
+          name: row.name,
+          description: desc
+        });
+      }
+    }
+    return out;
   }
 
   async function tryUseCombatPotion(resource, potion, reason, userOpts) {
@@ -3281,6 +3729,10 @@
         break;
       }
 
+      // AI CHANGED: Short support prebuffs (excludes safety reserve names) before first burst.
+      await maybeApplySupportPrebuffsBeforeCombat(current);
+      current = readBasicState();
+
       const maxBursts = Number.isFinite(Config.combat.maxCombatAttackBurstsPerFind)
         ? Config.combat.maxCombatAttackBurstsPerFind
         : 24;
@@ -3309,6 +3761,10 @@
         }
         attackBursts += 1;
         plannerMaybeRecordEnemyBeforeAttack();
+
+        current = readBasicState();
+        await maybeCombatSafetyBuffInterrupt(current);
+        current = readBasicState();
 
         const useRankedBurst = rankedBurstsLeft > 0;
         await maybeUseCombatSustain(current, {
@@ -3809,6 +4265,8 @@
           typeof nowState.combat.enemyCount === "number" &&
           nowState.combat.enemyCount === 0;
         if (shouldIdleBackoff) {
+          // AI CHANGED: Renew long self-support buffs on empty tiles before heal gate / explore (OOC only).
+          await maybeMaintainLongSelfSupportBuffsOutOfCombat(readBasicState());
           // AI CHANGED: enemyCount===0 — top off to outOfCombatHealWaitHpPct with HP potions + passive regen before exploreByScan.
           const healReady = await waitForOutOfCombatHealBeforeExplore({
             reason: "before_explore_move"
