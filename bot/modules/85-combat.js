@@ -2527,6 +2527,25 @@
         return { handled: true, progressed: false };
       }
     }
+    let cancelVerifyMs = cancelReleaseTimeout;
+    if (chargePlan.strategy === "cancel_release") {
+      const thRaw = Config.combat.chargeSkillReleaseLateTinyFractionThreshold;
+      const fracTh = Number.isFinite(thRaw) && thRaw > 0 && thRaw < 1 ? thRaw : 0.12;
+      const rf = Number.isFinite(chargePlan.releaseFraction) ? chargePlan.releaseFraction : 1;
+      if (rf < fracTh) {
+        const tinyFirstRaw = Config.combat.chargeSkillReleaseTinyFractionProgressTimeoutMs;
+        if (Number.isFinite(tinyFirstRaw) && tinyFirstRaw > 0) {
+          cancelVerifyMs = Math.min(Math.max(cancelReleaseTimeout, tinyFirstRaw), fullTimeoutMs);
+        }
+        if (cancelVerifyMs > cancelReleaseTimeout) {
+          Logger.log("LOOP", "Charge cancel_release: widened first progress timeout for tiny releaseFraction", {
+            slot: open.skillSlot,
+            releaseFraction: rf,
+            timeoutMs: cancelVerifyMs
+          });
+        }
+      }
+    }
     const fullChargeTimeoutRaw = Config.combat.chargeSkillFullChargeProgressTimeoutMs;
     const fullChargeTimeout =
       Number.isFinite(fullChargeTimeoutRaw) && fullChargeTimeoutRaw > 0
@@ -2535,7 +2554,7 @@
     const progressed = await waitForCondition(
       chargePlan.strategy === "full_charge" ? "attack progress after full charge" : "attack progress after charge release",
       hasCombatProgressSince(beforeState),
-      { timeoutMs: chargePlan.strategy === "full_charge" ? fullChargeTimeout : cancelReleaseTimeout, pollMs: pollMs }
+      { timeoutMs: chargePlan.strategy === "full_charge" ? fullChargeTimeout : cancelVerifyMs, pollMs: pollMs }
     );
     if (progressed) {
       plannerRecordOpenerRuntimeEvent("ranked_progress", {

@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.178",
-    "description":  "Combat: shorter charge late-wait + tiny cancel_release cap",
-    "builtAt":  "2026-05-13T14:12:24.8105758+03:00",
+    "version":  "0.3.179",
+    "description":  "Combat: widen tiny cancel_release first verify + shorter tiny late cap",
+    "builtAt":  "2026-05-13T15:21:00.4862376+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.179",
+                        "description":  "Combat: widen tiny cancel_release first verify + shorter tiny late cap",
+                        "date":  "2026-05-13T15:21:00.4862376+03:00"
+                    },
                     {
                         "version":  "0.3.178",
                         "description":  "Combat: shorter charge late-wait + tiny cancel_release cap",
@@ -247,11 +252,6 @@
                         "version":  "0.3.133",
                         "description":  "test: soften partial ranked soak timeout",
                         "date":  "2026-05-11T22:58:23.2988777+03:00"
-                    },
-                    {
-                        "version":  "0.3.132",
-                        "description":  "skills: harden master name normalization",
-                        "date":  "2026-05-11T22:53:23.2595197+03:00"
                     }
                 ]
 }

@@ -52,9 +52,11 @@
       // AI CHANGED: After cancel_release / full_charge misses the fast window above, wait before alternate opener; tiny-fraction cap avoids multi-second frozen polls on micro cancel_release.
       chargeSkillReleaseLateProgressTimeoutMs: 2000,
       // AI CHANGED: cancel_release with tiny dynamic fraction — cap extended HP wait so combat does not sit idle ~3s+ when the shot is effectively a tap-cancel whiff.
-      chargeSkillReleaseLateTinyCancelCapMs: 1150,
+      chargeSkillReleaseLateTinyCancelCapMs: 650,
       // AI CHANGED: Below this releaseFraction, chargeSkillReleaseLateTinyCancelCapMs applies (cancel_release only).
       chargeSkillReleaseLateTinyFractionThreshold: 0.12,
+      // AI CHANGED: cancel_release + releaseFraction under tiny threshold — wider first HP poll after release (still capped); reduces false timeout → long extended wait.
+      chargeSkillReleaseTinyFractionProgressTimeoutMs: 520,
       // AI CHANGED: Full-charge skills may auto-fire on the last frame; give the client a short pad before we judge progress/fallback.
       chargeSkillFullReleasePaddingMs: 180,
       // AI CHANGED: Hotfix — full-charge auto-fire also gets the same aggressive 250ms progress window before safe fallback continues.
