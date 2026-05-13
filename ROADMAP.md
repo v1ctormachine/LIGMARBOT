@@ -17,6 +17,7 @@ Emergency **hotfix** (crash / wrong click): ship immediately, even if tiny.
 
 ## Done recently
 
+- **Compact TEST self-export JSON (v0.3.166)** — the paste/tab/clipboard payload still includes every check id + ok/skip + compact **`detail`**, failures, timing, URL/UA, and end-game snapshot, but **`pruneValueForTestExport()`** collapses huge planner arrays (notably dense **`chargeReleasePlan.candidates`**) into **`__truncatedArray`** (**`length`** + **`head`**/**`tail`** samples). **`exportCompact`** records the limits. **`[TEST] DETAILS`** logging remains **unpruned** for deep DevTools debugging.
 - **TEST self-export package for support (v0.3.164)** — one highlighted DevTools **COPY** block (**`LIGMAR_TEST_EXPORT_BEGIN`/`END`**) plus **`[TEST] SELF_TEST_JSON`** / **`Runtime.ui.lastTestExportJson`** / **`ligmarBot.getLastTestExport()`** with full steps, failures, timing, URL/UA, end-game snapshot.
 - **TEST export tab + clipboard (v0.3.165)** — after TEST, opens a **new tab** with paste-ready JSON and **Copy JSON** button; **auto-copies** to clipboard when the browser allows (else use tab or console).
 - **Chat spammer 1/6 smart + bank (v0.3.163)** — each promo cycle rolls **uniform 1/6**: one outcome is the **smart** opener→delay→follow-up pair; the other five are the five **time-of-day** bank lines for the current slot (banks with fewer than five unique lines are **cycled** to five dispatch slots). Removed **`smartLinePickProbability`**. See **`pickAutoChatSpammerDispatch`** in **`85-combat.js`**.

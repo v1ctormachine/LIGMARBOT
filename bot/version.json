@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.165",
-    "description":  "TEST: open export in new tab + auto clipboard copy",
-    "builtAt":  "2026-05-13T11:48:16.0858673+03:00",
+    "version":  "0.3.166",
+    "description":  "TEST export: compact JSON — prune huge planner arrays, keep head/tail samples",
+    "builtAt":  "2026-05-13T12:00:40.6704832+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.166",
+                        "description":  "TEST export: compact JSON — prune huge planner arrays, keep head/tail samples",
+                        "date":  "2026-05-13T12:00:40.6704832+03:00"
+                    },
                     {
                         "version":  "0.3.165",
                         "description":  "TEST: open export in new tab + auto clipboard copy",
@@ -247,11 +252,6 @@
                         "version":  "0.3.120",
                         "description":  "planner: threshold-aware opener selection",
                         "date":  "2026-05-11T21:19:57.0487506+03:00"
-                    },
-                    {
-                        "version":  "0.3.119",
-                        "description":  "planner: queue-aware opener scoring",
-                        "date":  "2026-05-11T21:11:43.2918510+03:00"
                     }
                 ]
 }

@@ -560,7 +560,8 @@
   }
 
   // AI CHANGED: Precise TEST debug payload for DevTools — compact but complete, stable across patches.
-  function buildTestDebugReport(checks) {
+  function buildTestDebugReport(checks, opts) {
+    const pruneDetails = !!(opts && opts.pruneDetails);
     const report = {};
     for (let i = 0; i < checks.length; i += 1) {
       const c = checks[i];
@@ -569,7 +570,12 @@
         critical: !!c.critical,
         skipped: !!(c.detail && c.detail.skipped),
         note: c.note || null,
-        detail: c.detail !== undefined ? c.detail : null
+        detail:
+          c.detail !== undefined
+            ? pruneDetails
+              ? pruneValueForTestExport(c.detail, 0)
+              : c.detail
+            : null
       };
     }
     return report;
@@ -610,6 +616,99 @@
       }
     }
     return out;
+  }
+
+  // AI CHANGED: Shrink TEST JSON exports — dense charge-search arrays (10k+ objects) are paste-hostile; keep counts + head/tail samples.
+  function pruneValueForTestExport(value, depth, seen) {
+    const MAX_DEPTH = 22;
+    const MAX_INLINE_ARRAY = 12;
+    const HEAD = 5;
+    const TAIL = 2;
+    const MAX_STRING = 2400;
+    const d = typeof depth === "number" ? depth : 0;
+    if (d > MAX_DEPTH) {
+      return "[max depth]";
+    }
+    if (value === null || value === undefined) {
+      return value;
+    }
+    const t = typeof value;
+    if (t === "string") {
+      if (value.length <= MAX_STRING) {
+        return value;
+      }
+      return {
+        __truncatedString: true,
+        length: value.length,
+        head: value.slice(0, 600),
+        tail: value.length > 800 ? value.slice(-400) : ""
+      };
+    }
+    if (t === "number" || t === "boolean") {
+      return value;
+    }
+    if (t === "function") {
+      return "[function]";
+    }
+    if (typeof value === "object") {
+      const ws = seen || new WeakSet();
+      if (ws.has(value)) {
+        return "[circular]";
+      }
+      if (Array.isArray(value)) {
+        ws.add(value);
+        if (value.length <= MAX_INLINE_ARRAY) {
+          const arr = [];
+          for (let i = 0; i < value.length; i += 1) {
+            arr.push(pruneValueForTestExport(value[i], d + 1, ws));
+          }
+          return arr;
+        }
+        const headItems = [];
+        const nHead = Math.min(HEAD, value.length);
+        for (let i = 0; i < nHead; i += 1) {
+          headItems.push(pruneValueForTestExport(value[i], d + 1, ws));
+        }
+        let tailItems = [];
+        if (value.length > nHead + TAIL) {
+          for (let j = value.length - TAIL; j < value.length; j += 1) {
+            tailItems.push(pruneValueForTestExport(value[j], d + 1, ws));
+          }
+        } else if (value.length > nHead) {
+          for (let k = nHead; k < value.length; k += 1) {
+            tailItems.push(pruneValueForTestExport(value[k], d + 1, ws));
+          }
+        }
+        return {
+          __truncatedArray: true,
+          length: value.length,
+          head: headItems,
+          tail: tailItems.length ? tailItems : undefined
+        };
+      }
+      ws.add(value);
+      const out = {};
+      let keys;
+      try {
+        keys = Object.keys(value);
+      } catch (eK) {
+        return "[object keys error]";
+      }
+      for (let i = 0; i < keys.length; i += 1) {
+        const k = keys[i];
+        try {
+          out[k] = pruneValueForTestExport(value[k], d + 1, ws);
+        } catch (e2) {
+          out[k] = "[error]";
+        }
+      }
+      return out;
+    }
+    try {
+      return String(value);
+    } catch (e3) {
+      return "[unserializable]";
+    }
   }
 
   // AI CHANGED: End-of-bundle game/planner snapshot for offline analysis (best-effort).
@@ -666,12 +765,19 @@
           label: labelById[c.id] || c.id,
           critical: !!c.critical,
           reason: reason,
-          detail: c.detail !== undefined ? c.detail : null
+          detail: c.detail !== undefined ? pruneValueForTestExport(c.detail, 0) : null // AI CHANGED: compact paste-friendly failure detail
         });
       }
     }
     return {
       ligmarbotSelfTest: 1,
+      exportCompact: {
+        schema: 1,
+        maxInlineArray: 12,
+        truncatedArrayHead: 5,
+        truncatedArrayTail: 2,
+        maxStringChars: 2400
+      },
       version: params.botVersion,
       timing: {
         startedAt: startedAt,
@@ -701,9 +807,9 @@
         failuresListed: failures.length
       },
       failures: failures,
-      steps: buildTestDebugReport(checks),
-      gameSnapshotEnd: params.gameSnapshot || buildGameSnapshotForTestExport(),
-      extras: params.extras || null
+      steps: buildTestDebugReport(checks, { pruneDetails: true }),
+      gameSnapshotEnd: pruneValueForTestExport(params.gameSnapshot || buildGameSnapshotForTestExport(), 0),
+      extras: params.extras !== undefined && params.extras !== null ? pruneValueForTestExport(params.extras, 0) : null
     };
   }
 
