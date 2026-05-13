@@ -55,6 +55,8 @@
         advanceCount: 0,
         anchorNeedsReset: false
       },
+      // AI CHANGED: Combat episode v1 — last burst’s ordered opener + follow-up plan snapshot (`86-planner` + `85-combat`); cleared on target change / secure cycle / post-kill retarget.
+      combatEpisode: null,
       // AI CHANGED: AUTO ON chat spammer — next due time, last sent line, and recent send/fail telemetry.
       chatSpammer: {
         nextSendAt: null,

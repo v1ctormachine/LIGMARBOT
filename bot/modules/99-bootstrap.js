@@ -160,6 +160,9 @@
       startAutoFarmLoop: startAutoFarmLoop,
       stopAutoFarmLoop: stopAutoFarmLoop,
       getAutoFarmStatus: getAutoFarmStatus,
+      getCombatEpisode: function () {
+        return Runtime.autoFarm && Runtime.autoFarm.combatEpisode ? Runtime.autoFarm.combatEpisode : null;
+      },
       // AI CHANGED: Night resilience — debug the watchdog and persisted refresh-resume behavior from console.
       evaluateAutoFarmHealth: evaluateAutoFarmHealth,
       maybeRecoverUnhealthySession: maybeRecoverUnhealthySession,
@@ -257,6 +260,10 @@
       calibrateEnemyFromCombat: calibrateEnemyFromCombat,
       quickCalibrationSession: quickCalibrationSession,
       getLastFoughtEnemyKey: getLastFoughtEnemyKey,
+      plannerResolveCombatEpisodeTargetKey:
+        typeof plannerResolveCombatEpisodeTargetKey === "function" ? plannerResolveCombatEpisodeTargetKey : null,
+      plannerBuildCombatEpisodePlan:
+        typeof plannerBuildCombatEpisodePlan === "function" ? plannerBuildCombatEpisodePlan : null,
       plannerPickSkillSlotToCast: plannerPickSkillSlotToCast,
       plannerPickSkillOpeningPick: plannerPickSkillOpeningPick,
       plannerOpenerHoldCastMs: plannerOpenerHoldCastMs,

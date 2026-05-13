@@ -1959,6 +1959,17 @@
     return queue;
   }
 
+  // AI CHANGED: Combat episode v1 — drop structured burst plan when target/context resets (logged once when something was stored).
+  function clearCombatEpisode(reason) {
+    if (!Runtime || !Runtime.autoFarm) {
+      return;
+    }
+    if (Runtime.autoFarm.combatEpisode != null) {
+      Logger.log("COMBAT", "combatEpisode cleared", { reason: reason || "unspecified" });
+    }
+    Runtime.autoFarm.combatEpisode = null;
+  }
+
   function clearCombatActionQueue(reason, detail) {
     const queue = getCombatQueueRuntime();
     queue.active = false;
@@ -2374,39 +2385,51 @@
     };
   }
 
+  // AI CHANGED: Combat episode v1 — split ranked pick vs click so `attackUntilProgress` can snapshot the plan without double-calling the planner.
+  function resolvePlannerOpeningPick(opts, excludeSlots) {
+    const useRankedPath =
+      Config.planner.useRankedAttackSkillsInCombat &&
+      (!opts || opts.useRankedSkillOpener !== false);
+    if (!useRankedPath) {
+      return { useRankedPath: false, opening: null };
+    }
+    const opening = plannerPickSkillOpeningPick({
+      excludeSlots: excludeSlots || [],
+      disallowChargeSkills: !!(opts && opts.disallowChargeSkills)
+    });
+    return { useRankedPath: true, opening: opening };
+  }
+
   // AI CHANGED: Phase C4 slice 8 — first swing: ranked attack skill (if enabled + pick), else basic attack.
   // AI CHANGED: slice 9 — optional opts.useRankedSkillOpener === false forces basic-only (follow-up bursts).
   // AI CHANGED: slice 22 — combat opener is tap-only (clickActionBarSlot); no synthetic bar hold — game uses tap for skills including charge start.
   // AI CHANGED: slice 15 — excludeSlots skips bar indices already used this burst (alternate ranked openers).
-  async function clickPlannerOpeningAttack(opts, excludeSlots) {
-    const useSkill =
-      Config.planner.useRankedAttackSkillsInCombat &&
-      (!opts || opts.useRankedSkillOpener !== false);
-    if (useSkill) {
-      const opening = plannerPickSkillOpeningPick({
-        excludeSlots: excludeSlots || [],
-        disallowChargeSkills: !!(opts && opts.disallowChargeSkills)
-      });
-      if (opening != null) {
-        const ok = clickActionBarSlot(opening.slot); // AI CHANGED: slice 22 — always normal bar click
-        if (ok) {
-          plannerRecordOpenerRuntimeEvent("ranked_pick", { slot: opening.slot, excluded: (excludeSlots || []).slice(0, 8) });
-          Logger.log("PLANNER", "Opening attack used ranked skill slot", { slot: opening.slot });
-          return {
-            ok: true,
-            skillSlot: opening.slot,
-            skillRecord: opening.record || null,
-            chargeReleasePlan: opening.chargeReleasePlan || null,
-            queuedAction: opening.queuedAction || null
-          };
-        }
-        plannerRecordOpenerRuntimeEvent("ranked_click_failed", { slot: opening.slot });
-        Logger.warn("PLANNER", "Ranked skill slot click failed; falling back to basic attack", { slot: opening.slot });
-      } else {
-        plannerRecordOpenerRuntimeEvent("ranked_pick_none", {
-          reason: Runtime.planner && Runtime.planner.lastOpeningPickReason ? Runtime.planner.lastOpeningPickReason : null
+  async function applyPlannerOpeningPick(pickWrap, opts, excludeSlots) {
+    const wrap = pickWrap && typeof pickWrap === "object" ? pickWrap : { useRankedPath: false, opening: null };
+    const useRankedPath = !!wrap.useRankedPath;
+    const opening = wrap.opening;
+    if (useRankedPath && opening != null) {
+      const ok = clickActionBarSlot(opening.slot); // AI CHANGED: slice 22 — always normal bar click
+      if (ok) {
+        plannerRecordOpenerRuntimeEvent("ranked_pick", {
+          slot: opening.slot,
+          excluded: (excludeSlots || []).slice(0, 8)
         });
+        Logger.log("PLANNER", "Opening attack used ranked skill slot", { slot: opening.slot });
+        return {
+          ok: true,
+          skillSlot: opening.slot,
+          skillRecord: opening.record || null,
+          chargeReleasePlan: opening.chargeReleasePlan || null,
+          queuedAction: opening.queuedAction || null
+        };
       }
+      plannerRecordOpenerRuntimeEvent("ranked_click_failed", { slot: opening.slot });
+      Logger.warn("PLANNER", "Ranked skill slot click failed; falling back to basic attack", { slot: opening.slot });
+    } else if (useRankedPath && opening == null) {
+      plannerRecordOpenerRuntimeEvent("ranked_pick_none", {
+        reason: Runtime.planner && Runtime.planner.lastOpeningPickReason ? Runtime.planner.lastOpeningPickReason : null
+      });
     }
     const basicOk = clickBasicAttack();
     const basicQueuedAction =
@@ -2422,6 +2445,10 @@
           })
         : null;
     return { ok: basicOk, skillSlot: null, skillRecord: null, chargeReleasePlan: null, queuedAction: basicQueuedAction };
+  }
+
+  async function clickPlannerOpeningAttack(opts, excludeSlots) {
+    return applyPlannerOpeningPick(resolvePlannerOpeningPick(opts, excludeSlots), opts, excludeSlots);
   }
 
   // AI CHANGED: slice 8b — true if enemy died (count) or target red bar dropped (same max HP baseline).
@@ -2583,7 +2610,61 @@
       ? Config.combat.attackProgressPollMs
       : 140;
 
-    const open = await clickPlannerOpeningAttack(opts, []);
+    const fpNow =
+      typeof plannerResolveCombatEpisodeTargetKey === "function"
+        ? plannerResolveCombatEpisodeTargetKey(beforeState)
+        : null;
+    if (
+      fpNow &&
+      Runtime.autoFarm.combatEpisode &&
+      Runtime.autoFarm.combatEpisode.targetFingerprint &&
+      Runtime.autoFarm.combatEpisode.targetFingerprint !== fpNow
+    ) {
+      clearCombatEpisode("target_fingerprint_changed");
+    }
+
+    const pickWrap = resolvePlannerOpeningPick(opts, []);
+
+    let planPickForEpisode = null;
+    if (pickWrap.useRankedPath && pickWrap.opening) {
+      planPickForEpisode = pickWrap.opening;
+    } else {
+      const bq =
+        !(opts && opts.allowCombatQueue === false) &&
+        Config.combat &&
+        Config.combat.combatQueueEnabled !== false &&
+        typeof plannerBuildCombatQueueAction === "function"
+          ? plannerBuildCombatQueueAction({
+              afterSlot: null,
+              liveState: beforeState,
+              disallowChargeSkills: true
+            })
+          : null;
+      planPickForEpisode = {
+        slot: null,
+        record: null,
+        chargeReleasePlan: null,
+        queuedAction: bq
+      };
+    }
+
+    if (typeof plannerBuildCombatEpisodePlan === "function") {
+      Runtime.autoFarm.combatEpisode = plannerBuildCombatEpisodePlan(beforeState, planPickForEpisode, opts);
+      Logger.log("COMBAT", "combatEpisode built", {
+        fingerprint: fpNow,
+        steps: Runtime.autoFarm.combatEpisode ? Runtime.autoFarm.combatEpisode.stepsTotal : 0,
+        firstKind:
+          Runtime.autoFarm.combatEpisode &&
+          Runtime.autoFarm.combatEpisode.steps &&
+          Runtime.autoFarm.combatEpisode.steps[0]
+            ? Runtime.autoFarm.combatEpisode.steps[0].kind
+            : null
+      });
+    } else {
+      clearCombatEpisode("planner_build_missing");
+    }
+
+    const open = await applyPlannerOpeningPick(pickWrap, opts, []);
     if (!open.ok) {
       Logger.warn("LOOP", "Attack loop aborted: no attack click succeeded");
       return false;
@@ -3109,6 +3190,7 @@
   // AI CHANGED: Added first autonomous secure-current-tile-and-loot cycle with bounded retries.
   async function secureTileAndLootOnce() {
     const startState = readBasicState();
+    clearCombatEpisode("secure_cycle_start");
     // AI CHANGED: slice 21 — death / disconnect often reset in-game zoom without reloading the page.
     resetZoomAssumptionIfSessionRisk(startState.session);
     if (typeof startState.combat.enemyCount !== "number") {
@@ -3382,6 +3464,7 @@
             Logger.log("LOOP", "Enemies cleared during re-find after kill");
             break;
           }
+          clearCombatEpisode("post_kill_retarget");
           firstBurstAfterRetarget = true;
           chargeGuardUntilRetargetProgress = true;
           rankedBurstsLeft = getRankedBurstsPerFindEffective();

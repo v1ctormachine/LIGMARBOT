@@ -3206,6 +3206,88 @@
     return p ? p.slot : null;
   }
 
+  // AI CHANGED: Combat episode v1 — stable fingerprint for the current pull/target (enemy DB key when known, else enemyCount + target max HP).
+  function plannerResolveCombatEpisodeTargetKey(st) {
+    const live = st && typeof st === "object" ? st : readBasicState();
+    const enemyKey =
+      Runtime && Runtime.enemy && Runtime.enemy.lastFoughtKey != null && String(Runtime.enemy.lastFoughtKey).length > 0
+        ? String(Runtime.enemy.lastFoughtKey)
+        : "";
+    const combat = live && live.combat ? live.combat : null;
+    const ec = combat && Number.isFinite(combat.enemyCount) ? Math.round(combat.enemyCount) : null;
+    const th = combat && combat.targetHp && combat.targetHp.valid ? combat.targetHp : null;
+    const maxHp = th && Number.isFinite(th.max) ? th.max : null;
+    if (enemyKey) {
+      return "k:" + enemyKey + "|ec:" + (ec != null ? ec : "u") + "|max:" + (maxHp != null ? maxHp : "u");
+    }
+    return "ec:" + (ec != null ? ec : "u") + "|max:" + (maxHp != null ? maxHp : "u");
+  }
+
+  // AI CHANGED: Combat episode v1 — serialize opener + optional queued follow-up into ordered steps (telemetry + future executor); does not call `plannerPickSkillOpeningPick` (caller passes the pick already used for the burst).
+  function plannerBuildCombatEpisodePlan(st, openingPick, burstOpts) {
+    const fp = plannerResolveCombatEpisodeTargetKey(st);
+    const steps = [];
+    const rankedSlot =
+      openingPick && typeof openingPick.slot === "number" && Number.isFinite(openingPick.slot) ? openingPick.slot : null;
+    const rec = openingPick && openingPick.record && typeof openingPick.record === "object" ? openingPick.record : null;
+    if (rankedSlot != null && rec) {
+      const strat =
+        openingPick.chargeReleasePlan && openingPick.chargeReleasePlan.strategy
+          ? String(openingPick.chargeReleasePlan.strategy)
+          : null;
+      steps.push({
+        kind: "opener_skill",
+        slot: rankedSlot,
+        name: rec.name || "",
+        chargeStrategy: strat
+      });
+    } else {
+      steps.push({ kind: "opener_basic" });
+    }
+    const q =
+      openingPick && openingPick.queuedAction && openingPick.queuedAction.mode ? openingPick.queuedAction : null;
+    if (q) {
+      steps.push({
+        kind: "queued_followup",
+        mode: q.mode,
+        slot: q.mode === "skill" && Number.isFinite(q.slot) ? q.slot : null,
+        name: q.name || ""
+      });
+    }
+    const pr = Runtime && Runtime.planner ? Runtime.planner : null;
+    const burst = burstOpts && typeof burstOpts === "object" ? burstOpts : null;
+    return {
+      version: 1,
+      targetFingerprint: fp,
+      builtAt: Date.now(),
+      burstOptsSummary: burst
+        ? {
+            useRankedSkillOpener: burst.useRankedSkillOpener !== false,
+            firstBurstAfterRetarget: !!burst.firstBurstAfterRetarget,
+            disallowChargeSkills: !!burst.disallowChargeSkills
+          }
+        : null,
+      openerPickSlot: rankedSlot,
+      openerPickReason: pr && pr.lastOpeningPickReason ? pr.lastOpeningPickReason : null,
+      horizonSummary:
+        pr && pr.lastOpenerHorizonSim && typeof pr.lastOpenerHorizonSim === "object"
+          ? {
+              horizonMs:
+                pr.lastOpenerHorizonSim.horizonMs != null && Number.isFinite(pr.lastOpenerHorizonSim.horizonMs)
+                  ? pr.lastOpenerHorizonSim.horizonMs
+                  : null,
+              bestSlot:
+                pr.lastOpenerHorizonSim.bestSlot != null && Number.isFinite(pr.lastOpenerHorizonSim.bestSlot)
+                  ? pr.lastOpenerHorizonSim.bestSlot
+                  : null,
+              decisionMode: pr.lastOpenerHorizonSim.decisionMode || null
+            }
+          : null,
+      steps: steps,
+      stepsTotal: steps.length
+    };
+  }
+
   function getLastFoughtEnemyKey() {
     return Runtime.enemy.lastFoughtKey || null;
   }

@@ -507,6 +507,7 @@
       planner_execute_policy: "Execute policy",
       planner_forced_opener: "Forced opener",
       planner_golden_comparator: "Golden comparator",
+      planner_combat_episode_plan: "Combat episode plan",
       planner_charge_release_policy: "Charge release policy",
       planner_dynamic_charge_scoring: "Dynamic charge scoring",
       combat_attackers_retarget_ui: "Attackers retarget UI",
@@ -2620,6 +2621,77 @@
           };
         }
         addCheck("planner_ranked_reason_quality", qualityOk, qualityDetail, false);
+      }
+      // AI CHANGED: Combat episode v1 — `plannerBuildCombatEpisodePlan` must emit versioned steps whenever ranked helpers exist.
+      if (!rankedOn) {
+        addCheck(
+          "planner_combat_episode_plan",
+          !strictRankedChecks,
+          strictRankedChecks
+            ? { error: "ranked_combat_off", strictRankedChecks: true }
+            : { skipped: true, reason: "ranked_combat_off" },
+          strictRankedChecks
+        );
+      } else if (
+        typeof plannerBuildCombatEpisodePlan !== "function" ||
+        typeof plannerResolveCombatEpisodeTargetKey !== "function" ||
+        typeof plannerPickSkillOpeningPick !== "function"
+      ) {
+        addCheck("planner_combat_episode_plan", false, { error: "missing_planner_episode_helpers" }, false);
+      } else {
+        let episodePick = null;
+        let episodePickErr = null;
+        try {
+          episodePick = plannerPickSkillOpeningPick({ excludeSlots: [], disallowChargeSkills: false });
+        } catch (epErr) {
+          episodePickErr = String(epErr && epErr.message ? epErr.message : epErr);
+        }
+        const liveSt = typeof readBasicState === "function" ? readBasicState() : null;
+        let planPick = episodePick;
+        if (!episodePickErr && !planPick) {
+          const bq =
+            Config.combat &&
+            Config.combat.combatQueueEnabled !== false &&
+            typeof plannerBuildCombatQueueAction === "function"
+              ? plannerBuildCombatQueueAction({
+                  afterSlot: null,
+                  liveState: liveSt,
+                  disallowChargeSkills: true
+                })
+              : null;
+          planPick = { slot: null, record: null, chargeReleasePlan: null, queuedAction: bq };
+        }
+        const episode =
+          !episodePickErr && planPick
+            ? plannerBuildCombatEpisodePlan(liveSt, planPick, {
+                useRankedSkillOpener: true,
+                firstBurstAfterRetarget: false,
+                disallowChargeSkills: false
+              })
+            : null;
+        const epOk =
+          !!episode &&
+          episode.version === 1 &&
+          typeof episode.targetFingerprint === "string" &&
+          episode.targetFingerprint.length > 0 &&
+          Array.isArray(episode.steps) &&
+          episode.steps.length >= 1;
+        addCheck(
+          "planner_combat_episode_plan",
+          epOk,
+          epOk
+            ? {
+                fingerprintLen: episode.targetFingerprint.length,
+                steps: episode.steps.length,
+                firstKind: episode.steps[0] ? episode.steps[0].kind : null
+              }
+            : {
+                error: "episode_shape_invalid",
+                pickError: episodePickErr,
+                episode: episode
+              },
+          false
+        );
       }
       // AI CHANGED: Tuning-hint check — soft diagnostics only; skipped when ranked is off or not enough runtime telemetry.
       if (!rankedOn) {
