@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.158",
-    "description":  "AUTO chat: time-of-day promo banks + local-clock slot picker",
-    "builtAt":  "2026-05-13T09:52:41.8140112+03:00",
+    "version":  "0.3.159",
+    "description":  "AUTO chat: time-of-day banks, 5-15min cadence, slot-aware dedupe",
+    "builtAt":  "2026-05-13T10:20:37.4354386+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.159",
+                        "description":  "AUTO chat: time-of-day banks, 5-15min cadence, slot-aware dedupe",
+                        "date":  "2026-05-13T10:20:37.4354386+03:00"
+                    },
                     {
                         "version":  "0.3.158",
                         "description":  "AUTO chat: time-of-day promo banks + local-clock slot picker",
@@ -247,11 +252,6 @@
                         "version":  "0.3.113",
                         "description":  "TEST forces Sniper Shot partial release at 75 percent charge",
                         "date":  "2026-05-11T19:27:30.0785706+03:00"
-                    },
-                    {
-                        "version":  "0.3.112",
-                        "description":  "full-charge skills verify briefly after auto-fire and never cancel late",
-                        "date":  "2026-05-11T19:11:31.9571987+03:00"
                     }
                 ]
 }

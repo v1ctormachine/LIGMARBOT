@@ -1215,22 +1215,40 @@
         const maxMessageLength = chatMessages.reduce(function (maxLen, row) {
           return Math.max(maxLen, typeof row === "string" ? row.length : 0);
         }, 0);
+        const allMessagesUnder100Chars =
+          chatMessages.length > 0 &&
+          chatMessages.every(function (row) {
+            return typeof row === "string" && row.length > 0 && row.length < 100;
+          });
         const smoke =
           probeMessage && typeof probeLocalChatPromocodeUi === "function"
             ? await probeLocalChatPromocodeUi(probeMessage)
             : { ok: false, reason: probeMessage ? "probe_helper_missing" : "no_messages" };
-        addCheck("chat_spammer_auto", !!(Config.chat && Config.chat.autoLocalPromocodeSpammerEnabled !== false && smoke && smoke.ok), {
-          enabled: !!(Config.chat && Config.chat.autoLocalPromocodeSpammerEnabled !== false),
-          mode: "auto_on_cycle_boundary",
-          intervalMinMs: Number.isFinite(Config.chat && Config.chat.messageIntervalMinMs) ? Config.chat.messageIntervalMinMs : null,
-          intervalMaxMs: Number.isFinite(Config.chat && Config.chat.messageIntervalMaxMs) ? Config.chat.messageIntervalMaxMs : null,
-          messageCount: chatMessages.length,
-          maxMessageLength: maxMessageLength,
-          timeSlotSample:
-            typeof getTimeOfDayChatSlot === "function" ? getTimeOfDayChatSlot({ nowMs: Date.now() }) : null,
-          probe: smoke,
-          runtime: Runtime && Runtime.autoFarm ? Runtime.autoFarm.chatSpammer || null : null
-        }, false);
+        // AI CHANGED: Enforce <100 char bank + time-of-day banks; UI probe unchanged.
+        addCheck(
+          "chat_spammer_auto",
+          !!(
+            Config.chat &&
+            Config.chat.autoLocalPromocodeSpammerEnabled !== false &&
+            smoke &&
+            smoke.ok &&
+            allMessagesUnder100Chars
+          ),
+          {
+            enabled: !!(Config.chat && Config.chat.autoLocalPromocodeSpammerEnabled !== false),
+            mode: "auto_on_cycle_boundary_time_of_day_banks",
+            intervalMinMs: Number.isFinite(Config.chat && Config.chat.messageIntervalMinMs) ? Config.chat.messageIntervalMinMs : null,
+            intervalMaxMs: Number.isFinite(Config.chat && Config.chat.messageIntervalMaxMs) ? Config.chat.messageIntervalMaxMs : null,
+            messageCount: chatMessages.length,
+            maxMessageLength: maxMessageLength,
+            allMessagesUnder100Chars: allMessagesUnder100Chars,
+            timeSlotSample:
+              typeof getTimeOfDayChatSlot === "function" ? getTimeOfDayChatSlot({ nowMs: Date.now() }) : null,
+            probe: smoke,
+            runtime: Runtime && Runtime.autoFarm ? Runtime.autoFarm.chatSpammer || null : null
+          },
+          false
+        );
       } catch (err) {
         addCheck("chat_spammer_auto", false, { error: String(err && err.message ? err.message : err) }, false);
       }

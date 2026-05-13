@@ -119,14 +119,14 @@
     chat: {
       // AI CHANGED: AUTO ON mode — periodically send one random local promocode line when the loop is at a safe boundary.
       autoLocalPromocodeSpammerEnabled: true,
-      // AI CHANGED: Randomized delay window between local chat sends (user requested 8-20 minutes).
-      messageIntervalMinMs: 8 * 60 * 1000,
-      messageIntervalMaxMs: 20 * 60 * 1000,
+      // AI CHANGED: Randomized delay window between local chat sends (5–15 minutes local clock).
+      messageIntervalMinMs: 5 * 60 * 1000,
+      messageIntervalMaxMs: 15 * 60 * 1000,
       // AI CHANGED: Brief UI settle between chat open/type/channel/send/close steps.
       uiSettleMs: 120,
       openTimeoutMs: 1200,
       closeTimeoutMs: 1200,
-      // AI CHANGED: Time-of-day message banks (local clock); promo code must stay exactly `v1ctory`; each line < 100 JS .length.
+      // AI CHANGED: Referral code must stay exactly `v1ctory`; each line must stay under 100 JS string length (see TEST).
       messagesByTimeOfDay: {
         morning: [
           "☕ Доброе утро. Вбейте v1ctory пока пьете кофе. Даст випку, перс сам качаться будет.",

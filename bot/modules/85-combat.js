@@ -49,6 +49,10 @@
     if (!Object.prototype.hasOwnProperty.call(rt, "lastMessageIndex")) {
       rt.lastMessageIndex = null;
     }
+    // AI CHANGED: Duplicate-avoid index is only meaningful within the same time-of-day slot.
+    if (!Object.prototype.hasOwnProperty.call(rt, "lastChatSlot")) {
+      rt.lastChatSlot = null;
+    }
     if (!Number.isFinite(rt.sends)) {
       rt.sends = 0;
     }
@@ -69,6 +73,7 @@
     rt.lastSendAt = null;
     rt.lastMessage = null;
     rt.lastMessageIndex = null;
+    rt.lastChatSlot = null;
     rt.sends = 0;
     rt.failures = 0;
     rt.lastResult = null;
@@ -78,10 +83,10 @@
   function pickAutoChatSpammerDelayMs() {
     const minRaw = Number.isFinite(Config.chat && Config.chat.messageIntervalMinMs)
       ? Math.max(0, Math.round(Config.chat.messageIntervalMinMs))
-      : 8 * 60 * 1000;
+      : 5 * 60 * 1000;
     const maxRaw = Number.isFinite(Config.chat && Config.chat.messageIntervalMaxMs)
       ? Math.max(minRaw, Math.round(Config.chat.messageIntervalMaxMs))
-      : 20 * 60 * 1000;
+      : 15 * 60 * 1000;
     if (maxRaw <= minRaw) {
       return minRaw;
     }
@@ -120,7 +125,7 @@
     return "night";
   }
 
-  // AI CHANGED: Messages for one slot; fallback to legacy flat `Config.chat.messages` if present.
+  // AI CHANGED: Messages for one slot; optional legacy flat `Config.chat.messages` only if banks missing.
   function getChatSpammerMessagesForSlot(slot) {
     const m = Config.chat && Config.chat.messagesByTimeOfDay ? Config.chat.messagesByTimeOfDay : null;
     if (!m || typeof m !== "object") {
@@ -160,7 +165,12 @@
     }
     const rt = getAutoChatSpammerRuntime();
     let idx = Math.floor(Math.random() * messages.length);
-    if (messages.length > 1 && Number.isFinite(rt.lastMessageIndex) && idx === rt.lastMessageIndex) {
+    if (
+      messages.length > 1 &&
+      rt.lastChatSlot === slot &&
+      Number.isFinite(rt.lastMessageIndex) &&
+      idx === rt.lastMessageIndex
+    ) {
       idx = (idx + 1 + Math.floor(Math.random() * (messages.length - 1))) % messages.length;
     }
     return {
@@ -244,6 +254,8 @@
       rt.lastSendAt = Date.now();
       rt.lastMessage = picked.message;
       rt.lastMessageIndex = picked.index;
+      // AI CHANGED: Tie duplicate-avoid state to the slot used for this send.
+      rt.lastChatSlot = picked.slot || null;
       Logger.log("CHAT", "Auto local chat send complete", {
         sends: rt.sends,
         messageIndex: picked.index,
