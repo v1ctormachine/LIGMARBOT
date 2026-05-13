@@ -2106,13 +2106,18 @@
               lastLiveTargetHpPct: Number.isFinite(naturalLastLiveTargetHpPct) ? +naturalLastLiveTargetHpPct.toFixed(4) : null,
               lastLiveEnemyCount: naturalLastLiveEnemyCount,
               freshTargetHpPctMin: +resolveTestFreshTargetHpPctMin().toFixed(4),
+              // AI CHANGED: freshDecisionCountSeen increments only when evaluateFreshNaturalOpenerOpportunity was ok — another skill winning that window is valid.
+              acceptableFreshAlternative:
+                naturalReady && !naturalPicked && naturalFreshDecisionCountSeen > 0,
               skipped: !naturalPicked && naturalFreshDecisionCountSeen <= 0,
               lastReason: naturalLastReason,
               lastDetail: naturalLastDetail,
               reason: naturalReady
                 ? (naturalPicked
                   ? null
-                  : (naturalFreshDecisionCountSeen > 0 ? "not_picked_after_fresh_live_decision" : "no_fresh_post_force_opener_decision_observed"))
+                  : (naturalFreshDecisionCountSeen <= 0
+                    ? "no_fresh_post_force_opener_decision_observed"
+                    : "fresh_opener_other_skill_observed"))
                 : "not_ready_after_forced_soak"
             };
             Logger.log("TEST", "natural sniper probe", naturalSniperProbe);
@@ -2257,7 +2262,9 @@
         "planner_natural_sniper_shot",
         !!(
           naturalSniperProbe &&
-          (naturalSniperProbe.skipped || naturalSniperProbe.pickedNaturally)
+          (naturalSniperProbe.skipped ||
+            naturalSniperProbe.pickedNaturally ||
+            naturalSniperProbe.acceptableFreshAlternative)
         ),
         naturalSniperProbe
           ? Object.assign({}, naturalSniperProbe, {

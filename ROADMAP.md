@@ -17,7 +17,7 @@ Emergency **hotfix** (crash / wrong click): ship immediately, even if tiny.
 
 ## Done recently
 
-- **Charge micro-cancel first-wait widen (v0.3.179)** — tiny **`cancel_release`** uses **`chargeSkillReleaseTinyFractionProgressTimeoutMs`** (520) for first HP verify; **`chargeSkillReleaseLateTinyCancelCapMs`** lowered to **650**.
+- **TEST Natural Sniper Shot pass on fresh other-opener (v0.3.180)** — **`acceptableFreshAlternative`**: when a non-Sniper ranked skill wins the same calm fresh-window probe, **`planner_natural_sniper_shot`** passes (see **`TestSummary.md`** export / **`ARCHITECTURE.md`** TEST forced opener).
 - **Charge late-wait tuning (v0.3.178)** — default **`chargeSkillReleaseLateProgressTimeoutMs`** **2000**; **`chargeSkillReleaseLateTinyCancelCapMs`** / **`chargeSkillReleaseLateTinyFractionThreshold`** shorten extended HP polling for micro **`cancel_release`** so the bot does not sit silent ~3.5s after a tap cancel.
 - **Charge cancel late-wait + queue tick fix (v0.3.177)** — **`chargeSkillReleaseLateProgressTimeoutMs`** second progress wait before alternate openers; per-opener queue arm for alternates; **`queueAdvanceTick`** when queue **active** (not gated on first opener non-charge).
 - **STOP + COPY LOGS + Logger ring (v0.3.176)** — **`15-logger.js`** buffers last **200** formatted lines; panel **STOP + COPY LOGS** stops auto-farm (if ON) and copies last **30** to clipboard (**`---LIGMARBOT_ISSUE_LOG_CLIP_…`**); **`ligmarBot.copyIssueReportLogs()`**; TEST soft **`Logger ring`**.

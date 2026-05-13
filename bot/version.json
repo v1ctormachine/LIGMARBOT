@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.179",
-    "description":  "Combat: widen tiny cancel_release first verify + shorter tiny late cap",
-    "builtAt":  "2026-05-13T15:21:00.4862376+03:00",
+    "version":  "0.3.180",
+    "description":  "TEST: Natural Sniper pass when fresh window picks other opener",
+    "builtAt":  "2026-05-13T15:45:44.2481895+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.180",
+                        "description":  "TEST: Natural Sniper pass when fresh window picks other opener",
+                        "date":  "2026-05-13T15:45:44.2481895+03:00"
+                    },
                     {
                         "version":  "0.3.179",
                         "description":  "Combat: widen tiny cancel_release first verify + shorter tiny late cap",
@@ -247,11 +252,6 @@
                         "version":  "0.3.134",
                         "description":  "test: soften partial ranked soak timeout",
                         "date":  "2026-05-11T22:58:30.4041713+03:00"
-                    },
-                    {
-                        "version":  "0.3.133",
-                        "description":  "test: soften partial ranked soak timeout",
-                        "date":  "2026-05-11T22:58:23.2988777+03:00"
                     }
                 ]
 }
