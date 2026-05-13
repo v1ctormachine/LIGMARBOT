@@ -499,9 +499,16 @@
       missDiagnostics: {
         includeMissTexts:
           session && session.optionsUsed ? session.optionsUsed.includeMissTexts !== false : null,
+        hookCanvas2dCombatText:
+          session && session.optionsUsed ? session.optionsUsed.hookCanvas2dCombatText === true : null,
+        canvas2dCombatTextHookInstalled: !!Runtime.damage.canvas2dCombatTextHookInstalled,
         missTextEventCount:
           session && session.summary && Number.isFinite(session.summary.missTextEventCount)
             ? session.summary.missTextEventCount
+            : 0,
+        dodgeTextEventCount:
+          session && session.summary && Number.isFinite(session.summary.dodgeTextEventCount)
+            ? session.summary.dodgeTextEventCount
             : 0,
         hpDropEventCount:
           session && session.summary && Number.isFinite(session.summary.hpDropEventCount)

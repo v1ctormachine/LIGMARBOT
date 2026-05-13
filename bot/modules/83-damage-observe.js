@@ -39,6 +39,187 @@
     return false;
   }
 
+  // AI CHANGED: Classify canvas-drawn combat labels — prefer miss_text when both miss and dodge lists match the same string.
+  function dmgClassifyCanvasCombatTextKind(text, missSubs, dodgeSubs) {
+    if (typeof text !== "string") {
+      return null;
+    }
+    const raw = text.replace(/\u00a0/g, " ").trim();
+    if (!raw) {
+      return null;
+    }
+    if (dmgLeafTextMatchesMissSubstrings(raw, missSubs)) {
+      return "miss_text";
+    }
+    if (dodgeSubs && dodgeSubs.length > 0 && dmgLeafTextMatchesMissSubstrings(raw, dodgeSubs)) {
+      return "dodge_text";
+    }
+    return null;
+  }
+
+  // AI CHANGED: Canvas hook state — observeCombatDamage attaches { events, active }; dedupe map is bounded by pruning.
+  var dmgCanvasTextCapture = null;
+  var dmgCanvasTextDedupeAt = {};
+
+  function dmgCanvasPruneDedupeMap(nowMs, dedupeMs, store) {
+    const keys = Object.keys(store);
+    if (keys.length < 56) {
+      return;
+    }
+    const cutoff = nowMs - dedupeMs * 6;
+    for (let i = 0; i < keys.length; i += 1) {
+      const k = keys[i];
+      const t = store[k];
+      if (typeof t === "number" && t < cutoff) {
+        delete store[k];
+      }
+    }
+  }
+
+  function dmgCanvasShouldIgnoreCanvas(canvas, cfg) {
+    if (!canvas || typeof canvas.closest !== "function") {
+      return true;
+    }
+    const rootSel =
+      cfg && typeof cfg.scanRootSelector === "string" && cfg.scanRootSelector.trim()
+        ? cfg.scanRootSelector.trim()
+        : "app-game";
+    if (!canvas.closest(rootSel)) {
+      return true;
+    }
+    const ex =
+      cfg && Array.isArray(cfg.canvas2dExcludeCanvasClosestSelectors)
+        ? cfg.canvas2dExcludeCanvasClosestSelectors
+        : [];
+    for (let i = 0; i < ex.length; i += 1) {
+      const sel = ex[i];
+      if (typeof sel !== "string" || !sel.trim()) {
+        continue;
+      }
+      try {
+        if (canvas.closest(sel.trim())) {
+          return true;
+        }
+      } catch (err) {
+        // AI CHANGED: Bad exclude selector — skip entry.
+      }
+    }
+    return false;
+  }
+
+  function dmgCanvasPlausibleViewport(canvas, requireVp) {
+    if (!requireVp) {
+      return true;
+    }
+    try {
+      const r = canvas.getBoundingClientRect();
+      if (!r || r.width < 2 || r.height < 2) {
+        return false;
+      }
+      if (r.bottom < 0 || r.top > window.innerHeight || r.right < 0 || r.left > window.innerWidth) {
+        return false;
+      }
+    } catch (err) {
+      return true;
+    }
+    return true;
+  }
+
+  function dmgHandleCanvasDrawText(ctx, methodName, text) {
+    const cap = dmgCanvasTextCapture;
+    if (!cap || !cap.active || !cap.events) {
+      return;
+    }
+    const cfg = Config.damageObserver;
+    if (!cfg || cfg.hookCanvas2dCombatText === false) {
+      return;
+    }
+    const canvas = ctx && ctx.canvas ? ctx.canvas : null;
+    if (dmgCanvasShouldIgnoreCanvas(canvas, cfg)) {
+      return;
+    }
+    const requireVp = cfg.canvasCombatTextRequireInViewport !== false;
+    if (!dmgCanvasPlausibleViewport(canvas, requireVp)) {
+      return;
+    }
+    if (typeof text !== "string") {
+      return;
+    }
+    const raw = text.replace(/\u00a0/g, " ").trim();
+    const maxLen =
+      Number.isFinite(cfg.canvasCombatTextMaxDrawLength) && cfg.canvasCombatTextMaxDrawLength > 0
+        ? Math.round(cfg.canvasCombatTextMaxDrawLength)
+        : 48;
+    if (raw.length < 2 || raw.length > maxLen) {
+      return;
+    }
+    const missSubs =
+      cfg && Array.isArray(cfg.missTextSubstrings) && cfg.missTextSubstrings.length > 0
+        ? cfg.missTextSubstrings
+        : ["miss"];
+    const dodgeSubs =
+      cfg && Array.isArray(cfg.dodgeTextSubstrings) && cfg.dodgeTextSubstrings.length > 0
+        ? cfg.dodgeTextSubstrings
+        : [];
+    const kind = dmgClassifyCanvasCombatTextKind(raw, missSubs, dodgeSubs);
+    if (!kind) {
+      return;
+    }
+    const dedupeMs =
+      Number.isFinite(cfg.canvasCombatTextDedupeMs) && cfg.canvasCombatTextDedupeMs > 0
+        ? cfg.canvasCombatTextDedupeMs
+        : 420;
+    const now = Date.now();
+    const norm = raw.toLowerCase();
+    const dedupeKey = kind + "|" + norm;
+    const prev = dmgCanvasTextDedupeAt[dedupeKey];
+    if (typeof prev === "number" && now - prev < dedupeMs) {
+      return;
+    }
+    dmgCanvasTextDedupeAt[dedupeKey] = now;
+    dmgCanvasPruneDedupeMap(now, dedupeMs, dmgCanvasTextDedupeAt);
+    cap.events.push({
+      ts: now,
+      kind: kind,
+      text: raw,
+      source: "canvas2d",
+      method: typeof methodName === "string" ? methodName : "draw"
+    });
+    Logger.log("DMG", "canvas combat text", { kind: kind, text: raw, method: methodName });
+  }
+
+  // AI CHANGED: One-time prototype hook — observes attach via dmgCanvasTextCapture while includeMissTexts runs.
+  function ensureCanvas2dCombatTextHook() {
+    if (Runtime.damage.canvas2dCombatTextHookInstalled) {
+      return;
+    }
+    const proto = typeof CanvasRenderingContext2D !== "undefined" ? CanvasRenderingContext2D.prototype : null;
+    if (!proto || typeof proto.fillText !== "function") {
+      return;
+    }
+    const origFill = proto.fillText;
+    const origStroke = typeof proto.strokeText === "function" ? proto.strokeText : null;
+    proto.fillText = function dmgFillTextWrap(text, x, y, maxWidth) {
+      try {
+        dmgHandleCanvasDrawText(this, "fillText", text);
+      } catch (err) {
+        // AI CHANGED: Never break game paint — swallow hook errors.
+      }
+      return origFill.apply(this, arguments);
+    };
+    if (origStroke) {
+      proto.strokeText = function dmgStrokeTextWrap(text, x, y, maxWidth) {
+        try {
+          dmgHandleCanvasDrawText(this, "strokeText", text);
+        } catch (err) {
+          // AI CHANGED: Never break game paint — swallow hook errors.
+        }
+        return origStroke.apply(this, arguments);
+      };
+    }
+    Runtime.damage.canvas2dCombatTextHookInstalled = true;
+  }
+
   function dmgParseShortNumericText(text) {
     if (typeof text !== "string") {
       return null;
@@ -173,6 +354,7 @@
     let hpRiseCount = 0;
     let floatCount = 0;
     let missCount = 0;
+    let dodgeCount = 0;
     for (let i = 0; i < events.length; i += 1) {
       const e = events[i];
       if (e.kind === "hp_drop") {
@@ -184,6 +366,8 @@
         floatCount += 1;
       } else if (e.kind === "miss_text") {
         missCount += 1;
+      } else if (e.kind === "dodge_text") {
+        dodgeCount += 1;
       }
     }
     const validTargetSamples = samples.filter((s) => s.targetValid).length;
@@ -194,6 +378,7 @@
       hpRiseEventCount: hpRiseCount,
       floatTextEventCount: floatCount,
       missTextEventCount: missCount,
+      dodgeTextEventCount: dodgeCount,
       sampleCount: samples.length,
       eventCount: events.length,
       validTargetSamples: validTargetSamples
@@ -271,7 +456,8 @@
       lastError: Runtime.damage.lastError,
       observedAt: Runtime.damage.observedAt,
       hasSession: !!Runtime.damage.lastSession,
-      cachedSummary: loadDamageObserveSummaryFromStorage()
+      cachedSummary: loadDamageObserveSummaryFromStorage(),
+      canvas2dCombatTextHookInstalled: !!Runtime.damage.canvas2dCombatTextHookInstalled
     };
   }
 
@@ -314,6 +500,7 @@
     const jumpRatio = Number.isFinite(opts.suspiciousHpJumpRatio) ? opts.suspiciousHpJumpRatio : cfg.suspiciousHpJumpRatio;
 
     let sessionAttribution = null;
+    let dmgObserveCanvasCap = null;
     try {
       // AI CHANGED: Phase C4 slice 2 — freeze target identity at observe start for merge into enemy DB.
       const startSnap = readTargetProfileSnapshot();
@@ -324,6 +511,13 @@
           level: startSnap.level,
           maxHp: startSnap.targetHp.max
         };
+      }
+
+      // AI CHANGED: Canvas fillText/strokeText hook — captures Miss/Dodge particles drawn on 2D contexts under app-game.
+      if (includeMissTexts && cfg.hookCanvas2dCombatText !== false) {
+        ensureCanvas2dCombatTextHook();
+        dmgObserveCanvasCap = { events: events, active: true };
+        dmgCanvasTextCapture = dmgObserveCanvasCap;
       }
 
       // AI CHANGED: Poll until duration or sample cap; HP deltas need consecutive valid target HP reads.
@@ -497,6 +691,7 @@
         optionsUsed: {
           includeFloatingTexts: includeFloatingTexts,
           includeMissTexts: includeMissTexts,
+          hookCanvas2dCombatText: includeMissTexts && cfg.hookCanvas2dCombatText !== false,
           saveSummary: saveSummary,
           mergeToEnemyDb: mergeToEnemyDb
         },
@@ -552,5 +747,12 @@
       Logger.error("DMG", "observeCombatDamage failed", err);
       setBotStatus("idle", "damage observe failed");
       return failSession;
+    } finally {
+      if (dmgObserveCanvasCap) {
+        dmgObserveCanvasCap.active = false;
+      }
+      if (dmgCanvasTextCapture === dmgObserveCanvasCap) {
+        dmgCanvasTextCapture = null;
+      }
     }
   }

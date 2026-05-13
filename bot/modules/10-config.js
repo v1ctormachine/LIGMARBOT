@@ -487,7 +487,17 @@
       missTextSubstrings: ["miss", "промах"],
       missScanMaxLeafLength: 28,
       // AI CHANGED: When true (default), observeCombatDamage also scans for miss leaves unless opts.includeMissTexts === false.
-      includeMissTextsDefault: true
+      includeMissTextsDefault: true,
+      // AI CHANGED: Canvas 2D labels — many builds draw floating "Miss" / locale variants via fillText/strokeText instead of DOM leaves.
+      hookCanvas2dCombatText: true,
+      canvasCombatTextDedupeMs: 420,
+      canvasCombatTextMaxDrawLength: 48,
+      // AI CHANGED: If the canvas root matches closest(...) for any of these selectors, ignore (tune for map/minimap canvases that false-positive).
+      canvas2dExcludeCanvasClosestSelectors: [],
+      // AI CHANGED: When true, only accept text drawn on a canvas whose bounding box intersects the viewport (reduces offscreen buffer noise).
+      canvasCombatTextRequireInViewport: true,
+      // AI CHANGED: Dodge / evade labels — empty [] disables dodge_text events (recommended default: miss-only for outgoing hit-rate; dodge wording is often ambiguous).
+      dodgeTextSubstrings: []
     },
     // AI CHANGED: Phase C0 -- skill scanner timings + storage key. Scanner opens each action-bar
     // slot with a long-press, parses the description popup, then dismisses via close button.

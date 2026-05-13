@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.171",
-    "description":  "Combat: close map after verified find-enemy (configurable)",
-    "builtAt":  "2026-05-13T12:49:38.7742491+03:00",
+    "version":  "0.3.172",
+    "description":  "Canvas miss/dodge: hook fillText+strokeText for combat labels; optional dodge substrings; TEST Canvas miss hook",
+    "builtAt":  "2026-05-13T13:02:56.6117153+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.172",
+                        "description":  "Canvas miss/dodge: hook fillText+strokeText for combat labels; optional dodge substrings; TEST Canvas miss hook",
+                        "date":  "2026-05-13T13:02:56.6117153+03:00"
+                    },
                     {
                         "version":  "0.3.171",
                         "description":  "Combat: close map after verified find-enemy (configurable)",
@@ -247,11 +252,6 @@
                         "version":  "0.3.126",
                         "description":  "test: live natural sniper probe",
                         "date":  "2026-05-11T22:16:39.6192171+03:00"
-                    },
-                    {
-                        "version":  "0.3.125",
-                        "description":  "test: cooldown-aware natural sniper probe",
-                        "date":  "2026-05-11T22:10:04.0939446+03:00"
                     }
                 ]
 }
