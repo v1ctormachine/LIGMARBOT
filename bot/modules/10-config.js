@@ -509,6 +509,14 @@
         scanWhenLikelyBlind: true,
         scanWhenRankedButNoParsedSkills: true,
         readHeroCombatStatsWhenMissing: true
+      },
+      // AI CHANGED: First OOC AUTO cycle mirrors panel TEST readiness (probe + scan-if-needed + hero + skill master) without ranked soak or quickCalibrationSession / damage observe.
+      autoLikeTest: {
+        enabled: true,
+        probeSelectors: true,
+        skillScanLikePanelTest: true,
+        readHeroCombatStatsWhenMissing: true,
+        applySkillMaster: true
       }
     },
     // AI CHANGED: Added movement tuning for map exploration when idling on empty tiles.

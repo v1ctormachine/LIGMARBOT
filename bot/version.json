@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.220",
-    "description":  "AUTO: OOC skill scan + cache load; scanSkills allowDuringAutoFarm",
-    "builtAt":  "2026-05-14T13:16:06.1488446+03:00",
+    "version":  "0.3.221",
+    "description":  "AUTO: first OOC cycle runs TEST-like prep (probe, scan, hero, skill master) without soak or calibration",
+    "builtAt":  "2026-05-14T13:55:16.3014635+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.221",
+                        "description":  "AUTO: first OOC cycle runs TEST-like prep (probe, scan, hero, skill master) without soak or calibration",
+                        "date":  "2026-05-14T13:55:16.3014635+03:00"
+                    },
                     {
                         "version":  "0.3.220",
                         "description":  "AUTO: OOC skill scan + cache load; scanSkills allowDuringAutoFarm",
@@ -247,11 +252,6 @@
                         "version":  "0.3.172",
                         "description":  "Canvas miss/dodge: hook fillText+strokeText for combat labels; optional dodge substrings; TEST Canvas miss hook",
                         "date":  "2026-05-13T13:02:56.6117153+03:00"
-                    },
-                    {
-                        "version":  "0.3.171",
-                        "description":  "Combat: close map after verified find-enemy (configurable)",
-                        "date":  "2026-05-13T12:49:38.7742491+03:00"
                     }
                 ]
 }

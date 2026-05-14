@@ -4899,6 +4899,115 @@
     };
   }
 
+  // AI CHANGED: First OOC AUTO prep mirrors panel TEST readiness (probe + scan-if-needed + hero + skill master) without ranked soak, quickCalibrationSession, or damage observe.
+  async function runAutoFarmAutoLikeTestPrepIfNeeded(preState) {
+    const cfg = Config.farmLoop && Config.farmLoop.autoLikeTest;
+    if (!cfg || cfg.enabled === false) {
+      return;
+    }
+    if (!Runtime.autoFarm || !Runtime.autoFarm.running || Runtime.autoFarm.stopRequested) {
+      return;
+    }
+    const st =
+      preState && preState.combat && typeof preState.combat.enemyCount === "number"
+        ? preState
+        : readBasicState();
+    if (!(typeof st.combat.enemyCount === "number" && st.combat.enemyCount === 0)) {
+      return;
+    }
+    if (st.session && (st.session.dead === true || st.session.poorConnection === true)) {
+      return;
+    }
+    if (cfg.probeSelectors !== false && typeof probeSelectors === "function") {
+      try {
+        probeSelectors();
+      } catch (probeErr) {
+        Logger.warn("AUTO", "autoLikeTest prep: probeSelectors threw", probeErr);
+      }
+    }
+    if (!Runtime.autoFarm.running || Runtime.autoFarm.stopRequested) {
+      return;
+    }
+    await ensureSkillsAndHeroDataForAutoFarm(st, { phase: "auto_like_test_prep" });
+    if (!Runtime.autoFarm.running || Runtime.autoFarm.stopRequested) {
+      return;
+    }
+    const oocAfter = readBasicState();
+    if (
+      !(typeof oocAfter.combat.enemyCount === "number" && oocAfter.combat.enemyCount === 0) ||
+      (oocAfter.session && (oocAfter.session.dead === true || oocAfter.session.poorConnection === true))
+    ) {
+      return;
+    }
+    if (cfg.skillScanLikePanelTest !== false && typeof scanSkills === "function") {
+      const slotsNow = Runtime.skills && Array.isArray(Runtime.skills.slots) ? Runtime.skills.slots : [];
+      const slotCount = slotsNow.length;
+      const hasNonEmpty = slotsNow.some(function (s) {
+        return s && s.kind !== "empty";
+      });
+      const needsScan = slotCount === 0 || !hasNonEmpty;
+      if (needsScan) {
+        setBotStatus("scanning", "AUTO: skill bar (TEST-like prep)");
+        try {
+          await scanSkills({ allowDuringAutoFarm: true });
+        } catch (scanErr) {
+          Logger.warn("AUTO", "autoLikeTest prep: scanSkills threw", scanErr);
+        }
+      }
+    }
+    if (!Runtime.autoFarm.running || Runtime.autoFarm.stopRequested) {
+      return;
+    }
+    const oocHero = readBasicState();
+    if (
+      cfg.readHeroCombatStatsWhenMissing !== false &&
+      typeof readHeroCombatStats === "function" &&
+      (!Runtime.hero || !Runtime.hero.combatStats) &&
+      typeof oocHero.combat.enemyCount === "number" &&
+      oocHero.combat.enemyCount === 0 &&
+      !(oocHero.session && (oocHero.session.dead === true || oocHero.session.poorConnection === true))
+    ) {
+      try {
+        await readHeroCombatStats();
+      } catch (heroErr) {
+        Logger.warn("AUTO", "autoLikeTest prep: readHeroCombatStats threw", heroErr);
+      }
+    }
+    if (cfg.applySkillMaster !== false) {
+      if (!Runtime.autoFarm.running || Runtime.autoFarm.stopRequested) {
+        return;
+      }
+      try {
+        if (typeof plannerPickSkillOpeningPick === "function") {
+          plannerPickSkillOpeningPick({});
+        }
+        let diag = null;
+        if (typeof getPlannerOpeningPickDiagnostics === "function") {
+          diag = getPlannerOpeningPickDiagnostics();
+        }
+        const classHint =
+          diag &&
+          diag.classProfile &&
+          diag.classProfile.classKey
+            ? String(diag.classProfile.classKey).trim()
+            : "";
+        if (classHint && typeof Config !== "undefined" && Config.skills) {
+          Config.skills.masterClassKey = classHint;
+        }
+        if (typeof applySkillMasterToSlots === "function") {
+          if (classHint) {
+            applySkillMasterToSlots(classHint);
+          } else {
+            applySkillMasterToSlots();
+          }
+        }
+      } catch (masterErr) {
+        Logger.warn("AUTO", "autoLikeTest prep: skill master attach threw", masterErr);
+      }
+    }
+    Logger.log("AUTO", "autoLikeTest prep finished (no soak, no quickCalibrationSession / damage observe)");
+  }
+
   // AI CHANGED: Added controlled repeat runner with auto-stop on repeated failures.
   async function startAutoFarmLoop() {
     if (Runtime.autoFarm.running) {
@@ -4912,6 +5021,8 @@
     Runtime.autoFarm.consecutiveFailures = 0;
     Runtime.autoFarm.lastResult = null;
     Runtime.autoFarm.startedAt = Date.now();
+    // AI CHANGED: Fresh AUTO session — allow one TEST-like OOC prep pass when `Config.farmLoop.autoLikeTest` is enabled.
+    Runtime.autoFarm.autoLikeTestPrepDone = false;
     Runtime.autoFarm.reliability.noProgressStreak = 0;
     // AI CHANGED: Apply Fast/Safe/Easy before snapshot — planner localStorage can leave useRankedAttackSkillsInCombat false while combat mode is Fast/Safe; old order restored that false after every AUTO OFF and looked like "ON skips ranked until TEST".
     applyAutoFarmCombatMode();
@@ -4934,11 +5045,16 @@
       maxConsecutiveFailures: Config.farmLoop.maxConsecutiveFailures
     });
 
-    try {
-      const bootPeek = readBasicState();
-      await ensureSkillsAndHeroDataForAutoFarm(bootPeek, { phase: "loop_boot" });
-    } catch (bootEnsErr) {
-      Logger.warn("AUTO", "ensureSkillsAndHeroDataForAutoFarm (loop boot) threw", bootEnsErr);
+    const altFarmPrepBoot = Config.farmLoop && Config.farmLoop.autoLikeTest && Config.farmLoop.autoLikeTest.enabled !== false;
+    if (!altFarmPrepBoot) {
+      try {
+        const bootPeek = readBasicState();
+        await ensureSkillsAndHeroDataForAutoFarm(bootPeek, { phase: "loop_boot" });
+      } catch (bootEnsErr) {
+        Logger.warn("AUTO", "ensureSkillsAndHeroDataForAutoFarm (loop boot) threw", bootEnsErr);
+      }
+    } else {
+      Logger.log("AUTO", "loop boot: skipping ensureSkills — first OOC cycle uses autoLikeTest prep");
     }
 
     while (Runtime.autoFarm.running && !Runtime.autoFarm.stopRequested) {
@@ -4952,9 +5068,21 @@
       // AI CHANGED: slice 21 — fresh session flags each cycle so zoom flag tracks UI, not stale assumptions.
       resetZoomAssumptionIfSessionRisk(preCycleState.session);
       try {
-        await ensureSkillsAndHeroDataForAutoFarm(preCycleState, { phase: "cycle_start" });
+        const altFarmPrep = Config.farmLoop && Config.farmLoop.autoLikeTest && Config.farmLoop.autoLikeTest.enabled !== false;
+        const oocCycleStart =
+          typeof preCycleState.combat.enemyCount === "number" && preCycleState.combat.enemyCount === 0;
+        if (altFarmPrep && !Runtime.autoFarm.autoLikeTestPrepDone && oocCycleStart) {
+          try {
+            await runAutoFarmAutoLikeTestPrepIfNeeded(preCycleState);
+          } catch (prepErr) {
+            Logger.warn("AUTO", "autoLikeTest prep threw", prepErr);
+          }
+          Runtime.autoFarm.autoLikeTestPrepDone = true;
+        } else {
+          await ensureSkillsAndHeroDataForAutoFarm(preCycleState, { phase: "cycle_start" });
+        }
       } catch (cycleEnsErr) {
-        Logger.warn("AUTO", "ensureSkillsAndHeroDataForAutoFarm (cycle) threw", cycleEnsErr);
+        Logger.warn("AUTO", "ensureSkillsAndHeroDataForAutoFarm / autoLikeTest prep (cycle) threw", cycleEnsErr);
       }
       const preCycleRecovery = await maybeRecoverUnhealthySession(preCycleState, {
         reason: "cycle_start"
@@ -5137,6 +5265,8 @@
     }
 
     Runtime.autoFarm.running = false;
+    // AI CHANGED: Next AUTO ON may run TEST-like prep again.
+    Runtime.autoFarm.autoLikeTestPrepDone = false;
     if (exitReason === "unknown") {
       if (Runtime.autoFarm.lastResult && Runtime.autoFarm.lastResult.reason === "stop_requested") {
         exitReason = "user_stop";

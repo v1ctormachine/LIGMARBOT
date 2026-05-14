@@ -13,6 +13,8 @@
       combatMode: "fast",
       // AI CHANGED: Snapshot of planner combat flags taken when AUTO starts; restored on loop exit.
       plannerSnapshotBeforeAuto: null,
+      // AI CHANGED: One-shot per AUTO session — first OOC cycle can run TEST-like prep (`Config.farmLoop.autoLikeTest`); cleared when the loop ends.
+      autoLikeTestPrepDone: false,
       // AI CHANGED: Reliability counters for repeated combat no-progress loops.
       reliability: {
         noProgressStreak: 0,

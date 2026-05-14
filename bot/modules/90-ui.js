@@ -1771,6 +1771,25 @@
         addCheck("farm_loop_ensure_skills_config", false, { error: String(err && err.message ? err.message : err) }, false);
       }
 
+      // AI CHANGED: TEST self-check — `Config.farmLoop.autoLikeTest` mirrors panel TEST OOC prep on first AUTO cycle (no soak / calibration).
+      try {
+        const altc = Config.farmLoop && Config.farmLoop.autoLikeTest;
+        addCheck(
+          "farm_loop_auto_like_test_config",
+          !!(Config.farmLoop && altc && altc.enabled !== false),
+          {
+            enabled: !(altc && altc.enabled === false),
+            probeSelectors: altc && altc.probeSelectors,
+            skillScanLikePanelTest: altc && altc.skillScanLikePanelTest,
+            readHeroCombatStatsWhenMissing: altc && altc.readHeroCombatStatsWhenMissing,
+            applySkillMaster: altc && altc.applySkillMaster
+          },
+          false
+        );
+      } catch (err) {
+        addCheck("farm_loop_auto_like_test_config", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
       // AI CHANGED: Potion tooltips can show base (+upgrade) as plain text after DOM strip — parseSkillEffects sums for combat sustain / potion choice.
       try {
         if (typeof parseSkillEffects !== "function") {
