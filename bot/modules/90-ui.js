@@ -251,7 +251,12 @@
     try {
       const raw = window.localStorage.getItem("ligmarbot.plannerUi.v1");
       if (!raw) {
-        return { ok: true, fromStorage: false, planner: plannerPrefsSnapshot() };
+        const empty = { ok: true, fromStorage: false, planner: plannerPrefsSnapshot() };
+        // AI CHANGED: Fast/Safe must override stale plannerUi ranked=false even when no planner blob (console loadPlanner-only flows still get combat mode).
+        if (typeof applyAutoFarmCombatMode === "function") {
+          applyAutoFarmCombatMode();
+        }
+        return empty;
       }
       const p = JSON.parse(raw);
       if (typeof p.recordEnemyDbBeforeAttack === "boolean") {
@@ -269,14 +274,23 @@
       if (Number.isFinite(p.openerFollowUpSkillDepth) && p.openerFollowUpSkillDepth >= 0 && p.openerFollowUpSkillDepth <= 4) {
         Config.planner.openerFollowUpSkillDepth = Math.max(0, Math.min(4, Math.floor(p.openerFollowUpSkillDepth)));
       }
-      return { ok: true, fromStorage: true, planner: plannerPrefsSnapshot() };
+      const out = { ok: true, fromStorage: true, planner: plannerPrefsSnapshot() };
+      // AI CHANGED: Reconcile ranked / burst MP knobs with persisted AUTO combat mode so ligmarbot.plannerUi.v1 cannot leave ranked off while panel mode is Fast/Safe (TEST restores planner backup; loadPlanner alone must not strand false).
+      if (typeof applyAutoFarmCombatMode === "function") {
+        applyAutoFarmCombatMode();
+      }
+      return out;
     } catch (err) {
-      return {
+      const bad = {
         ok: false,
         fromStorage: false,
         error: String(err && err.message ? err.message : err),
         planner: plannerPrefsSnapshot()
       };
+      if (typeof applyAutoFarmCombatMode === "function") {
+        applyAutoFarmCombatMode();
+      }
+      return bad;
     }
   }
 
@@ -3785,6 +3799,10 @@
         Config.combat.chargeSkillDynamicReleaseEnabled = plannerBackup.chargeSkillDynamicReleaseEnabled !== false;
         Config.combat.chargeSkillReleaseFraction = plannerBackup.chargeSkillReleaseFraction;
         Config.combat.chargeSkillReleaseOverrideMs = plannerBackup.chargeSkillReleaseOverrideMs;
+      }
+      // AI CHANGED: TEST restores planner localStorage snapshot — re-apply Fast/Safe/Easy so AUTO ON is not left with useRanked false until another prefs load.
+      if (typeof applyAutoFarmCombatMode === "function") {
+        applyAutoFarmCombatMode();
       }
       if (resumeAfter && hadFarmOn && !Runtime.autoFarm.running) {
         Logger.log("TEST", "restarting auto-farm after TEST");

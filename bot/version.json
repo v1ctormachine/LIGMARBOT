@@ -1,8 +1,18 @@
 ﻿{
-    "version":  "0.3.213",
-    "description":  "AUTO: ranked snapshot after combat mode; wait for buff CD UI after prebuff/permanent taps",
-    "builtAt":  "2026-05-14T10:14:15.0659775+03:00",
+    "version":  "0.3.215",
+    "description":  "planner prefs reconcile ranked after load + TEST; idle MP topoff during OOC heal gate",
+    "builtAt":  "2026-05-14T10:50:09.6690943+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.215",
+                        "description":  "planner prefs reconcile ranked after load + TEST; idle MP topoff during OOC heal gate",
+                        "date":  "2026-05-14T10:50:09.6690943+03:00"
+                    },
+                    {
+                        "version":  "0.3.214",
+                        "description":  "AUTO: reconcile ranked after loadPlanner + TEST; idle regen MP top-off toward 90%",
+                        "date":  "2026-05-14T10:47:28.3410697+03:00"
+                    },
                     {
                         "version":  "0.3.213",
                         "description":  "AUTO: ranked snapshot after combat mode; wait for buff CD UI after prebuff/permanent taps",
@@ -242,16 +252,6 @@
                         "version":  "0.3.166",
                         "description":  "TEST export: compact JSON — prune huge planner arrays, keep head/tail samples",
                         "date":  "2026-05-13T12:00:40.6704832+03:00"
-                    },
-                    {
-                        "version":  "0.3.165",
-                        "description":  "TEST: open export in new tab + auto clipboard copy",
-                        "date":  "2026-05-13T11:48:16.0858673+03:00"
-                    },
-                    {
-                        "version":  "0.3.164",
-                        "description":  "TEST: self-test JSON export block + getLastTestExport for support handoff",
-                        "date":  "2026-05-13T11:42:31.5561134+03:00"
                     }
                 ]
 }

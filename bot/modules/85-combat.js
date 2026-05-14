@@ -2841,6 +2841,13 @@
       };
     }
     if (hp.pct >= thresholdPct) {
+      // AI CHANGED: HP gate already satisfied — still top MP during idle so regeneration wait is not HP-only (Fast path used to skip MP here entirely).
+      const mpTopCfg = Config.combat && Config.combat.idleRegenerationMpTopoffTargetPct;
+      if (mpTopCfg !== false && mpTopCfg !== 0) {
+        const mpTopTgt = Number.isFinite(mpTopCfg) && mpTopCfg > 0 && mpTopCfg <= 1 ? mpTopCfg : 0.9;
+        await tryUseOutOfCombatMpTopoff(state, mpTopTgt);
+      }
+      await tryUseOutOfCombatIdleLowManaPotion(state);
       return { ok: true, waited: false, thresholdPct: thresholdPct, hpPct: +hp.pct.toFixed(4) };
     }
     const startedAt = Date.now();
@@ -2908,6 +2915,11 @@
           sustainUses: sustainUses,
           detail: topoff.detail || null
         });
+      }
+      const mpTopCfgLoop = Config.combat && Config.combat.idleRegenerationMpTopoffTargetPct;
+      if (mpTopCfgLoop !== false && mpTopCfgLoop !== 0) {
+        const mpTopTgtLoop = Number.isFinite(mpTopCfgLoop) && mpTopCfgLoop > 0 && mpTopCfgLoop <= 1 ? mpTopCfgLoop : 0.9;
+        await tryUseOutOfCombatMpTopoff(state, mpTopTgtLoop);
       }
       await tryUseOutOfCombatIdleLowManaPotion(state);
       await sleep(pollMs, { bypassStop: true });

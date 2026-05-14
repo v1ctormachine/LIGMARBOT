@@ -126,6 +126,8 @@
       // AI CHANGED: When enemyCount===0 (idle), drink MP potions if mana falls below this fraction (then toward idleMpPotionTopOffTargetPct).
       idleMpPotionUseBelowPct: 0.25,
       idleMpPotionTopOffTargetPct: 0.5,
+      // AI CHANGED: During idle out-of-combat HP regen gate, also drink MP pots toward this pct when MP is below it (set false to skip only this top-off; idleMpPotionUseBelowPct path still runs).
+      idleRegenerationMpTopoffTargetPct: 0.9,
       // AI CHANGED: Avoid spamming repeated potion clicks into the same cooldown / latency window.
       combatPotionThrottleMs: 1200,
       // AI CHANGED: Brief settle after a potion click so the client can register the consumable before the next combat action.
