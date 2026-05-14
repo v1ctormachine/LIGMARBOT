@@ -606,10 +606,13 @@
       watchdog_surface: "Watchdog surface",
       chat_spammer_auto: "Chat spammer auto",
       support_buffs_surface: "Support buffs surface",
+      support_buff_post_cast_cooldown_wait_config: "Support buff post-cast CD wait",
       combat_sustain_policy: "Combat sustain",
       auto_farm_resume_policy: "Farm resume policy",
       auto_farm_reliability: "Combat reliability",
       auto_farm_session_summary: "Auto-farm session",
+      auto_combat_mode_fast_enables_ranked: "AUTO Fast enables ranked",
+      auto_combat_mode_easy_disables_ranked: "AUTO Easy disables ranked",
       field_validation_snapshot: "Field validation",
       // AI CHANGED: §6 — enemy DB merge exposes buff label signature for TEST export.
       enemy_buff_calibration_probe: "Enemy buff calibration",
@@ -1653,6 +1656,51 @@
       } catch (err) {
         Logger.warn("TEST", "probeSelectors threw", err);
         addCheck("probe_selectors", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Regression — planner localStorage can leave useRanked false; Fast/Safe must flip it on via applyAutoFarmCombatMode (same as AUTO ON / loop start).
+      try {
+        if (typeof applyAutoFarmCombatMode === "function" && Runtime.autoFarm) {
+          const prevMode = Runtime.autoFarm.combatMode;
+          Config.planner.useRankedAttackSkillsInCombat = false;
+          Runtime.autoFarm.combatMode = "fast";
+          applyAutoFarmCombatMode();
+          addCheck(
+            "auto_combat_mode_fast_enables_ranked",
+            Config.planner.useRankedAttackSkillsInCombat === true,
+            { mode: "fast", useRanked: Config.planner.useRankedAttackSkillsInCombat },
+            false
+          );
+          Runtime.autoFarm.combatMode = "easy";
+          applyAutoFarmCombatMode();
+          addCheck(
+            "auto_combat_mode_easy_disables_ranked",
+            Config.planner.useRankedAttackSkillsInCombat === false,
+            { mode: "easy", useRanked: Config.planner.useRankedAttackSkillsInCombat },
+            false
+          );
+          Runtime.autoFarm.combatMode = prevMode;
+          Config.planner.useRankedAttackSkillsInCombat = true;
+          Config.planner.skillMpReserve = 0;
+        } else {
+          addCheck("auto_combat_mode_fast_enables_ranked", false, { reason: "applyAutoFarmCombatMode_or_autoFarm_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "auto combat mode ranked regression check threw", err);
+        addCheck("auto_combat_mode_fast_enables_ranked", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      try {
+        const root = Config.supportBuffs;
+        const w = root && root.postBuffCastCooldownWait;
+        addCheck(
+          "support_buff_post_cast_cooldown_wait_config",
+          !!(root && w && w.enabled !== false && Number.isFinite(w.maxWaitMs) && w.maxWaitMs > 0),
+          { maxWaitMs: w && w.maxWaitMs, pollMs: w && w.pollMs, minSettleMs: w && w.minSettleMs },
+          false
+        );
+      } catch (err) {
+        addCheck("support_buff_post_cast_cooldown_wait_config", false, { error: String(err && err.message ? err.message : err) }, false);
       }
 
       try {
@@ -3836,6 +3884,10 @@
     const startButton = makeButton("ON", "#4bd97a", "#5fe48a", () => {
       if (startButton.disabled) {
         return;
+      }
+      // AI CHANGED: Re-apply Fast/Safe/Easy planner flags before loop start (same as loop body) so ranked is on even if plannerUi prefs were loaded false.
+      if (typeof applyAutoFarmCombatMode === "function") {
+        applyAutoFarmCombatMode();
       }
       startAutoFarmLoop();
       setTimeout(updateControlPanelStatus, 50);

@@ -2207,6 +2207,38 @@
     return merged.slice(0, maxTotal);
   }
 
+  // AI CHANGED: Poll action-bar cooldown after support buff click so find-enemy / next skill does not clip the cast.
+  async function waitForSupportBuffSlotCooldownAfterClick(slotIdx, meta) {
+    const root = Config.supportBuffs;
+    const w = root && root.postBuffCastCooldownWait;
+    if (!root || root.enabled === false || !w || w.enabled === false) {
+      const settle = Number.isFinite(Config.combat && Config.combat.postRankedSkillClickSettleMs)
+        ? Math.max(80, Config.combat.postRankedSkillClickSettleMs * 3)
+        : 120;
+      await sleep(settle);
+      return { ok: true, skipped: true, reason: "post_buff_wait_disabled" };
+    }
+    const minSettle = Number.isFinite(w.minSettleMs) ? Math.max(0, w.minSettleMs) : 100;
+    const maxWait = Number.isFinite(w.maxWaitMs) ? Math.max(150, w.maxWaitMs) : 4500;
+    const poll = Number.isFinite(w.pollMs) ? Math.max(40, w.pollMs) : 80;
+    if (minSettle > 0) {
+      await sleep(minSettle, { bypassStop: true });
+    }
+    const t0 = Date.now();
+    while (Date.now() - t0 < maxWait) {
+      if (Runtime.autoFarm && Runtime.autoFarm.stopRequested) {
+        return { ok: false, reason: "stop_requested" };
+      }
+      if (typeof isActionBarSlotShowingCooldown === "function" && isActionBarSlotShowingCooldown(slotIdx)) {
+        Logger.log("COMBAT", "support buff slot cooldown visible", Object.assign({ slot: slotIdx, waitedMs: Date.now() - t0 }, meta || {}));
+        return { ok: true, waitedMs: Date.now() - t0 };
+      }
+      await sleep(poll, { bypassStop: true });
+    }
+    Logger.warn("COMBAT", "support buff cooldown wait timed out (continuing)", Object.assign({ slot: slotIdx, maxWaitMs: maxWait }, meta || {}));
+    return { ok: false, reason: "cooldown_visible_timeout" };
+  }
+
   async function maybeApplySupportPrebuffsOnNewTile(liveState) {
     const root = Config.supportBuffs;
     const pb = root && root.prebuff;
@@ -2220,9 +2252,6 @@
     rt.prebuffCastCount = 0;
     const targets = buildOrderedNewTilePrebuffTargets();
     let used = 0;
-    const settleMs = Number.isFinite(Config.combat && Config.combat.postRankedSkillClickSettleMs)
-      ? Math.max(80, Config.combat.postRankedSkillClickSettleMs * 3)
-      : 120;
     for (let t = 0; t < targets.length; t++) {
       const one = targets[t];
       if (typeof isActionBarSlotShowingCooldown === "function" && isActionBarSlotShowingCooldown(one.slot)) {
@@ -2234,7 +2263,7 @@
       used += 1;
       rt.prebuffCastCount += 1;
       Logger.log("COMBAT", "New-tile prebuff cast", { name: one.name, assumedDurationSec: one.dur, slot: one.slot });
-      await sleep(settleMs);
+      await waitForSupportBuffSlotCooldownAfterClick(one.slot, { name: one.name, kind: "prebuff_new_tile" });
     }
     return { used: used, planned: targets.length };
   }
@@ -2268,9 +2297,6 @@
       await sleep(pollMs, { bypassStop: true });
     }
     const rt = getSupportBuffLineRuntime();
-    const settleMs = Number.isFinite(Config.combat && Config.combat.postRankedSkillClickSettleMs)
-      ? Math.max(80, Config.combat.postRankedSkillClickSettleMs * 3)
-      : 120;
     let cast = 0;
     for (let s = 0; s < shorts.length; s++) {
       const one = shorts[s];
@@ -2283,7 +2309,7 @@
       cast += 1;
       rt.prebuffCastCount += 1;
       Logger.log("COMBAT", "Safe mode short prebuff before explore", { name: one.name, dur: one.dur, slot: one.slot });
-      await sleep(settleMs);
+      await waitForSupportBuffSlotCooldownAfterClick(one.slot, { name: one.name, kind: "prebuff_safe_explore" });
     }
     return { cast: cast };
   }
@@ -2401,9 +2427,6 @@
     });
     const maxCast = Number.isFinite(perm.maxCastPerPass) ? Math.max(1, Math.floor(perm.maxCastPerPass)) : 6;
     let cast = 0;
-    const settleMs = Number.isFinite(Config.combat && Config.combat.postRankedSkillClickSettleMs)
-      ? Math.max(120, Config.combat.postRankedSkillClickSettleMs * 4)
-      : 180;
     for (let m = 0; m < metaList.length && cast < maxCast; m++) {
       const one = metaList[m];
       if (typeof isActionBarSlotShowingCooldown === "function" && isActionBarSlotShowingCooldown(one.slot)) {
@@ -2419,7 +2442,10 @@
         durSec: one.dur,
         slot: one.slot
       });
-      await sleep(settleMs);
+      await waitForSupportBuffSlotCooldownAfterClick(one.slot, {
+        name: one.row.name,
+        kind: allowEnemiesOnTile ? "permanent_self_pre_combat" : "permanent_self_ooc"
+      });
     }
     return { cast: cast, planned: metaList.length };
   }
@@ -4643,13 +4669,13 @@
     Runtime.autoFarm.lastResult = null;
     Runtime.autoFarm.startedAt = Date.now();
     Runtime.autoFarm.reliability.noProgressStreak = 0;
+    // AI CHANGED: Apply Fast/Safe/Easy before snapshot — planner localStorage can leave useRankedAttackSkillsInCombat false while combat mode is Fast/Safe; old order restored that false after every AUTO OFF and looked like "ON skips ranked until TEST".
+    applyAutoFarmCombatMode();
     Runtime.autoFarm.plannerSnapshotBeforeAuto = {
       useRankedAttackSkillsInCombat: !!Config.planner.useRankedAttackSkillsInCombat,
       useRankedSkillOnlyFirstBurstAfterFind: !!Config.planner.useRankedSkillOnlyFirstBurstAfterFind,
       skillMpReserve: Number.isFinite(Config.planner.skillMpReserve) ? Config.planner.skillMpReserve : 5
     };
-    // AI CHANGED: Apply Fast/Safe/Easy combat pipeline for this AUTO session (restored when loop exits).
-    applyAutoFarmCombatMode();
     resetAutoChatSpammerRuntime();
     resetAutoFarmHealthRuntime(Runtime.autoFarm.startedAt);
     resetAutoFarmRecoveryRuntime();

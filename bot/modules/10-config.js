@@ -176,6 +176,13 @@
         hpDropImmediateMaxFrac: 0.25,
         spikeSampleMaxDtSec: 1.5,
         minSpacingMs: 45000
+      },
+      // AI CHANGED: After prebuff/permanent-buff bar clicks, wait until cooldown UI appears (or timeout) so the next action does not cancel the cast.
+      postBuffCastCooldownWait: {
+        enabled: true,
+        maxWaitMs: 4500,
+        pollMs: 80,
+        minSettleMs: 100
       }
     },
     chat: {

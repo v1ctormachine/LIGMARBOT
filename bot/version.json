@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.212",
-    "description":  "Support DB taxonomy: permanent self-buffs OOC + pre-combat; exclude from prebuff",
-    "builtAt":  "2026-05-14T09:52:41.3338273+03:00",
+    "version":  "0.3.213",
+    "description":  "AUTO: ranked snapshot after combat mode; wait for buff CD UI after prebuff/permanent taps",
+    "builtAt":  "2026-05-14T10:14:15.0659775+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.213",
+                        "description":  "AUTO: ranked snapshot after combat mode; wait for buff CD UI after prebuff/permanent taps",
+                        "date":  "2026-05-14T10:14:15.0659775+03:00"
+                    },
                     {
                         "version":  "0.3.212",
                         "description":  "Support DB taxonomy: permanent self-buffs OOC + pre-combat; exclude from prebuff",
@@ -247,11 +252,6 @@
                         "version":  "0.3.164",
                         "description":  "TEST: self-test JSON export block + getLastTestExport for support handoff",
                         "date":  "2026-05-13T11:42:31.5561134+03:00"
-                    },
-                    {
-                        "version":  "0.3.163",
-                        "description":  "chat: uniform 1/6 pick — smart pair vs five slot bank lines",
-                        "date":  "2026-05-13T11:25:09.1207991+03:00"
                     }
                 ]
 }
