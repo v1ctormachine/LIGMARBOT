@@ -152,7 +152,7 @@
       shortPrebuffMaxSec: 120,
       permanentSelf: {
         enabled: true,
-        // AI CHANGED: Re-cast tracked long self-buffs when ≤ this many seconds of assumed duration remain (OOC + pre-combat pass).
+        // AI CHANGED: Re-cast tracked long self-buffs when ≤ this many seconds of assumed duration remain (OOC + pre-combat pass). When buffDurationTracking is enabled, runPermanentSelfLongBuffRefreshPass uses buffDurationTracking.recastMinRemainingSec instead.
         renewWhenRemainingSec: 20,
         // AI CHANGED: Cap casts per refresh pass so pre-combat prep cannot stall the secure loop indefinitely.
         maxCastPerPass: 6
@@ -185,6 +185,11 @@
         maxWaitMs: 4500,
         pollMs: 80,
         minSettleMs: 100
+      },
+      // AI CHANGED: After a support buff click, remember parsed/DB duration; skip re-casts until assumed remaining ≤ recastMinRemainingSec (e.g. 900s buff → renew only in last 30s). Applies to new-tile prebuff, Safe short prebuff, and permanent self when enabled. Set enabled:false to restore old prebuff behavior (bar CD only). Early dispel: `ligmarBot.clearSupportBuffAssumedDurationTracking()`.
+      buffDurationTracking: {
+        enabled: true,
+        recastMinRemainingSec: 30
       }
     },
     chat: {

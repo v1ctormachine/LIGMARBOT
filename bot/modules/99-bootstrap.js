@@ -130,6 +130,11 @@
         typeof listScannedSupportBuffClassifications === "function" ? listScannedSupportBuffClassifications : null,
       listSafetyLikeBuffsFromScannedSkills:
         typeof listScannedSkillsMatchingSafetyBuffHeuristic === "function" ? listScannedSkillsMatchingSafetyBuffHeuristic : null,
+      // AI CHANGED: assumed buff duration map (prebuff + permanent self) — clear after dispel / wrong assumptions.
+      clearSupportBuffAssumedDurationTracking:
+        typeof clearSupportBuffAssumedDurationTracking === "function" ? clearSupportBuffAssumedDurationTracking : null,
+      getSupportBuffAssumedDurationTrackingSnapshot:
+        typeof getSupportBuffAssumedDurationTrackingSnapshot === "function" ? getSupportBuffAssumedDurationTrackingSnapshot : null,
       waitForCondition: waitForCondition,
       clickFindEnemyVerified: clickFindEnemyVerified,
       clickLootOrActivateVerified: clickLootOrActivateVerified,

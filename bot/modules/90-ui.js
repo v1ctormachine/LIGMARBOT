@@ -621,6 +621,7 @@
       chat_spammer_auto: "Chat spammer auto",
       support_buffs_surface: "Support buffs surface",
       support_buff_post_cast_cooldown_wait_config: "Support buff post-cast CD wait",
+      support_buff_duration_tracking_config: "Support buff duration tracking",
       // AI CHANGED: Potion tooltip regression — base (+bonus) total heal/MP for sustain.
       potion_parse_heal_base_plus_bonus: "Potion heal parse (+bonus)",
       potion_parse_mp_base_plus_bonus: "Potion MP parse (+bonus)",
@@ -1739,6 +1740,18 @@
         );
       } catch (err) {
         addCheck("support_buff_post_cast_cooldown_wait_config", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      try {
+        const tr = Config.supportBuffs && Config.supportBuffs.buffDurationTracking;
+        addCheck(
+          "support_buff_duration_tracking_config",
+          !!(Config.supportBuffs && tr && tr.enabled !== false && Number.isFinite(tr.recastMinRemainingSec) && tr.recastMinRemainingSec >= 0),
+          { recastMinRemainingSec: tr && tr.recastMinRemainingSec, enabled: !(tr && tr.enabled === false) },
+          false
+        );
+      } catch (err) {
+        addCheck("support_buff_duration_tracking_config", false, { error: String(err && err.message ? err.message : err) }, false);
       }
 
       // AI CHANGED: Potion tooltips can show base (+upgrade) as plain text after DOM strip — parseSkillEffects sums for combat sustain / potion choice.

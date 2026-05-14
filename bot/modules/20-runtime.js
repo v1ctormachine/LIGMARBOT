@@ -73,7 +73,7 @@
         failures: 0,
         lastResult: null
       },
-      // AI CHANGED: Support-buff line — long self-buff assumed expiry map, safety cast spacing, prebuff telemetry.
+      // AI CHANGED: Support-buff line — `longSelfTracked` = assumed buff expiry by normalized skill name (permanent self renew + prebuff casts when `buffDurationTracking` is on); safety cast spacing; prebuff telemetry.
       supportBuffLine: {
         longSelfTracked: {},
         lastSafetyBuffCastAt: 0,

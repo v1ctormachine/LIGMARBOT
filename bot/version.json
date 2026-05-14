@@ -1,8 +1,18 @@
 ﻿{
-    "version":  "0.3.217",
-    "description":  "AUTO Safe: full in-fight planner like Fast; TEST asserts Safe planner flags",
-    "builtAt":  "2026-05-14T11:23:41.4652295+03:00",
+    "version":  "0.3.219",
+    "description":  "Support buffs: assumed duration tracking; recast when remaining at or below threshold",
+    "builtAt":  "2026-05-14T11:43:02.0989783+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.219",
+                        "description":  "Support buffs: assumed duration tracking; recast when remaining at or below threshold",
+                        "date":  "2026-05-14T11:43:02.0989783+03:00"
+                    },
+                    {
+                        "version":  "0.3.218",
+                        "description":  "Support buffs: track assumed duration; re-cast only when ≤30s left (configurable)",
+                        "date":  "2026-05-14T11:42:46.2602209+03:00"
+                    },
                     {
                         "version":  "0.3.217",
                         "description":  "AUTO Safe: full in-fight planner like Fast; TEST asserts Safe planner flags",
@@ -242,16 +252,6 @@
                         "version":  "0.3.170",
                         "description":  "TEST: calibration observes miss floats + missDiagnostics export",
                         "date":  "2026-05-13T12:25:59.3001156+03:00"
-                    },
-                    {
-                        "version":  "0.3.169",
-                        "description":  "Enemy DB: merge miss_text counts per key + observe merge on misses",
-                        "date":  "2026-05-13T12:21:03.4043659+03:00"
-                    },
-                    {
-                        "version":  "0.3.168",
-                        "description":  "Skill master: unique cross-class name fallback when class bucket misses",
-                        "date":  "2026-05-13T12:13:35.1771430+03:00"
                     }
                 ]
 }

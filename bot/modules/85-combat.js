@@ -1947,6 +1947,93 @@
     return null;
   }
 
+  // AI CHANGED: Normalized map key for support-buff duration tracking (shared with permanent-self renew).
+  function getSupportBuffNameKeyForRow(row) {
+    const rawName = row && typeof row.name === "string" ? row.name : "";
+    return typeof normalizeSkillName === "function" ? String(normalizeSkillName(rawName)) : String(rawName);
+  }
+
+  // AI CHANGED: Config.supportBuffs.buffDurationTracking — gate re-casts using assumed buff duration from last successful cast.
+  function isSupportBuffDurationTrackingEnabled() {
+    const tr = Config.supportBuffs && Config.supportBuffs.buffDurationTracking;
+    return !(tr && tr.enabled === false);
+  }
+
+  function getSupportBuffRecastMinRemainingSecForTracking() {
+    const tr = Config.supportBuffs && Config.supportBuffs.buffDurationTracking;
+    if (!isSupportBuffDurationTrackingEnabled()) {
+      return null;
+    }
+    const v = tr && tr.recastMinRemainingSec;
+    return Number.isFinite(v) ? Math.max(0, v) : 30;
+  }
+
+  function supportBuffShouldSkipRecastFromTracking(rt, row, assumedDurationSec, nowMs) {
+    if (!isSupportBuffDurationTrackingEnabled()) {
+      return false;
+    }
+    if (!Number.isFinite(assumedDurationSec) || assumedDurationSec <= 0) {
+      return false;
+    }
+    const thresh = getSupportBuffRecastMinRemainingSecForTracking();
+    if (!(thresh >= 0)) {
+      return false;
+    }
+    const nameKey = getSupportBuffNameKeyForRow(row);
+    const tracked = rt.longSelfTracked[nameKey];
+    if (!tracked || !Number.isFinite(tracked.expectedEndAt)) {
+      return false;
+    }
+    const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+    const remainSec = (tracked.expectedEndAt - now) / 1000;
+    return remainSec > thresh;
+  }
+
+  function recordSupportBuffAssumedDurationAfterCast(rt, row, assumedDurationSec, nowMs) {
+    if (!Number.isFinite(assumedDurationSec) || assumedDurationSec <= 0) {
+      return;
+    }
+    const nameKey = getSupportBuffNameKeyForRow(row);
+    const t = Number.isFinite(nowMs) ? nowMs : Date.now();
+    rt.longSelfTracked[nameKey] = {
+      expectedEndAt: t + Math.round(assumedDurationSec * 1000),
+      assumedDurationSec: assumedDurationSec
+    };
+  }
+
+  function clearSupportBuffAssumedDurationTracking() {
+    const rt = getSupportBuffLineRuntime();
+    rt.longSelfTracked = Object.create(null);
+    return { ok: true, cleared: true };
+  }
+
+  function getSupportBuffAssumedDurationTrackingSnapshot() {
+    const rt = getSupportBuffLineRuntime();
+    const now = Date.now();
+    const out = {};
+    const keys = Object.keys(rt.longSelfTracked || {});
+    for (let i = 0; i < keys.length; i++) {
+      const k = keys[i];
+      const ent = rt.longSelfTracked[k];
+      if (!ent || !Number.isFinite(ent.expectedEndAt)) {
+        continue;
+      }
+      const remainSec = (ent.expectedEndAt - now) / 1000;
+      out[k] = {
+        expectedEndAt: ent.expectedEndAt,
+        assumedDurationSec: ent.assumedDurationSec,
+        remainingSecApprox: +remainSec.toFixed(2)
+      };
+    }
+    return {
+      ok: true,
+      now: now,
+      recastMinRemainingSec: getSupportBuffRecastMinRemainingSecForTracking(),
+      trackingEnabled: isSupportBuffDurationTrackingEnabled(),
+      bySkillKey: out
+    };
+  }
+
   // AI CHANGED: Long self support (≥ longDurationMinSec, default 60s) — OOC renew + pre-combat refresh; never new-tile prebuff.
   function skillRowIsPermanentOocSelfLongBuff(row, classKey) {
     if (!row || row.kind !== "skill" || row.isAttack) {
@@ -2257,9 +2344,20 @@
       if (typeof isActionBarSlotShowingCooldown === "function" && isActionBarSlotShowingCooldown(one.slot)) {
         continue;
       }
+      if (supportBuffShouldSkipRecastFromTracking(rt, one.row, one.dur)) {
+        Logger.log("COMBAT", "prebuff skip — assumed buff still above recast window", {
+          name: one.name,
+          assumedDurationSec: one.dur,
+          nameKey: getSupportBuffNameKeyForRow(one.row),
+          recastMinRemainingSec: getSupportBuffRecastMinRemainingSecForTracking()
+        });
+        continue;
+      }
       if (!clickActionBarSlot(one.slot)) {
         continue;
       }
+      const castAt = Date.now();
+      recordSupportBuffAssumedDurationAfterCast(rt, one.row, one.dur, castAt);
       used += 1;
       rt.prebuffCastCount += 1;
       Logger.log("COMBAT", "New-tile prebuff cast", { name: one.name, assumedDurationSec: one.dur, slot: one.slot });
@@ -2303,9 +2401,19 @@
       if (typeof isActionBarSlotShowingCooldown === "function" && isActionBarSlotShowingCooldown(one.slot)) {
         continue;
       }
+      if (supportBuffShouldSkipRecastFromTracking(rt, one.row, one.dur)) {
+        Logger.log("COMBAT", "Safe mode short prebuff skip — assumed buff still above recast window", {
+          name: one.name,
+          assumedDurationSec: one.dur,
+          nameKey: getSupportBuffNameKeyForRow(one.row)
+        });
+        continue;
+      }
       if (!clickActionBarSlot(one.slot)) {
         continue;
       }
+      const castAt = Date.now();
+      recordSupportBuffAssumedDurationAfterCast(rt, one.row, one.dur, castAt);
       cast += 1;
       rt.prebuffCastCount += 1;
       Logger.log("COMBAT", "Safe mode short prebuff before explore", { name: one.name, dur: one.dur, slot: one.slot });
@@ -2393,7 +2501,13 @@
       return { cast: 0, skipped: true, reason: "not_clear_tile" };
     }
     const longMin = Number.isFinite(root.longDurationMinSec) ? root.longDurationMinSec : 60;
-    const renewRem = Number.isFinite(perm.renewWhenRemainingSec) ? perm.renewWhenRemainingSec : 20;
+    const trackRem = getSupportBuffRecastMinRemainingSecForTracking();
+    const renewRem =
+      trackRem !== null && trackRem !== undefined
+        ? trackRem
+        : Number.isFinite(perm.renewWhenRemainingSec)
+          ? perm.renewWhenRemainingSec
+          : 20;
     const classKey = typeof Config.skills.masterClassKey === "string" ? Config.skills.masterClassKey.trim() : "";
     const slots = Runtime.skills && Array.isArray(Runtime.skills.slots) ? Runtime.skills.slots : [];
     const rt = getSupportBuffLineRuntime();
@@ -2435,7 +2549,8 @@
       if (!clickActionBarSlot(one.slot)) {
         continue;
       }
-      rt.longSelfTracked[one.nameKey] = { expectedEndAt: now + Math.round(one.dur * 1000), assumedDurationSec: one.dur };
+      const castAt = Date.now();
+      recordSupportBuffAssumedDurationAfterCast(rt, one.row, one.dur, castAt);
       cast += 1;
       Logger.log("COMBAT", allowEnemiesOnTile ? "Permanent self-buff before combat" : "Long self-buff renew (OOC)", {
         name: one.row.name,
