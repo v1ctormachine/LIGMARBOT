@@ -631,6 +631,7 @@
       auto_farm_session_summary: "Auto-farm session",
       auto_combat_mode_fast_enables_ranked: "AUTO Fast enables ranked",
       auto_combat_mode_easy_disables_ranked: "AUTO Easy disables ranked",
+      auto_combat_mode_safe_full_planner_like_fast: "AUTO Safe = full planner bursts",
       field_validation_snapshot: "Field validation",
       // AI CHANGED: §6 — enemy DB merge exposes buff label signature for TEST export.
       enemy_buff_calibration_probe: "Enemy buff calibration",
@@ -1697,11 +1698,30 @@
             { mode: "easy", useRanked: Config.planner.useRankedAttackSkillsInCombat },
             false
           );
+          Runtime.autoFarm.combatMode = "safe";
+          applyAutoFarmCombatMode();
+          addCheck(
+            "auto_combat_mode_safe_full_planner_like_fast",
+            Config.planner.useRankedAttackSkillsInCombat === true &&
+              Config.planner.useRankedSkillOnlyFirstBurstAfterFind === false &&
+              Number.isFinite(Config.planner.skillMpReserve) &&
+              Config.planner.skillMpReserve === 0,
+            {
+              mode: "safe",
+              useRanked: Config.planner.useRankedAttackSkillsInCombat,
+              useRankedSkillOnlyFirstBurstAfterFind: Config.planner.useRankedSkillOnlyFirstBurstAfterFind,
+              skillMpReserve: Config.planner.skillMpReserve
+            },
+            false
+          );
           Runtime.autoFarm.combatMode = prevMode;
           Config.planner.useRankedAttackSkillsInCombat = true;
           Config.planner.skillMpReserve = 0;
         } else {
-          addCheck("auto_combat_mode_fast_enables_ranked", false, { reason: "applyAutoFarmCombatMode_or_autoFarm_missing" }, false);
+          const miss = { reason: "applyAutoFarmCombatMode_or_autoFarm_missing" };
+          addCheck("auto_combat_mode_fast_enables_ranked", false, miss, false);
+          addCheck("auto_combat_mode_easy_disables_ranked", false, miss, false);
+          addCheck("auto_combat_mode_safe_full_planner_like_fast", false, miss, false);
         }
       } catch (err) {
         Logger.warn("TEST", "auto combat mode ranked regression check threw", err);
@@ -4009,7 +4029,11 @@
     }
     const modeBtnFast = makeModeButton("Fast", "fast");
     const modeBtnSafe = makeModeButton("Safe", "safe");
+    modeBtnSafe.title =
+      "Full planner (ranked, horizon, openers, buffs). Between empty tiles: wait for HP/MP floors + short prebuffs before explore.";
     const modeBtnEasy = makeModeButton("Easy", "easy");
+    modeBtnEasy.title = "Basic attacks only — ranked planner path disabled.";
+    modeBtnFast.title = "Full planner; lighter idle gating between tiles than Safe.";
     autoModeRow.appendChild(modeBtnFast);
     autoModeRow.appendChild(modeBtnSafe);
     autoModeRow.appendChild(modeBtnEasy);

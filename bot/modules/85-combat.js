@@ -4605,7 +4605,7 @@
     };
   }
 
-  // AI CHANGED: AUTO panel combat mode — Fast (ranked every burst, min MP reserve), Safe (tile-to-tile resource gate + short prebuffs), Easy (basics only).
+  // AI CHANGED: AUTO panel combat mode — Fast and Safe both run the full planner (horizon, ranked openers, buffs, queue, episode); Safe adds OOC tile-to-tile HP/MP + short prebuff gates only. Easy = basics only (ranked off).
   function applyAutoFarmCombatMode() {
     const raw =
       Runtime.autoFarm && Runtime.autoFarm.combatMode ? String(Runtime.autoFarm.combatMode).toLowerCase() : "fast";
@@ -4617,16 +4617,15 @@
       return;
     }
     Config.planner.useRankedAttackSkillsInCombat = true;
+    // AI CHANGED: Safe used to throttle ranked to first burst + skillMpReserve 5 — that hid horizon/openers for most bursts; Safe now matches Fast in-fight and differs only on idle explore (see startAutoFarmLoop).
+    Config.planner.useRankedSkillOnlyFirstBurstAfterFind = false;
+    Config.planner.skillMpReserve = 0;
     if (mode === "fast") {
-      Config.planner.useRankedSkillOnlyFirstBurstAfterFind = false;
-      Config.planner.skillMpReserve = 0;
-      Logger.log("AUTO", "combat mode fast: ranked every burst, skillMpReserve 0 (max DPS)");
+      Logger.log("AUTO", "combat mode fast: full planner pipeline every burst; minimal idle gating between tiles");
     } else {
-      Config.planner.useRankedSkillOnlyFirstBurstAfterFind = true;
-      Config.planner.skillMpReserve = 5;
       Logger.log(
         "AUTO",
-        "combat mode safe: ranked first burst only, skillMpReserve 5; idle explore waits HP/MP floors (see combat.safeModeExplore*) then short prebuff CDs"
+        "combat mode safe: same ranked/horizon/openers as Fast; idle explore still waits HP/MP (combat.safeModeExplore*) + short prebuffs before next tile"
       );
     }
   }
