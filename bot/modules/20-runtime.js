@@ -145,9 +145,8 @@
       // AI CHANGED: 2-ring debug overlay refs (the SVG element + its auto-clear timer).
       secondRingOverlay: null,
       secondRingOverlayTimer: null,
-      // AI CHANGED: TEST (version) panel button — ref for disable-while-running (90-ui.js).
+      // AI CHANGED: Reserved refs (panel no longer mounts TEST); export JSON still uses `lastTestExport*` after console `runUiTestBundle`.
       testButton: null,
-      // AI CHANGED: one-line last TEST outcome under the TEST button (90-ui.js runUiTestBundle).
       testResultLine: null,
       // AI CHANGED: Last full TEST self-export JSON for support / AI analysis (90-ui.js).
       lastTestExportJson: null,

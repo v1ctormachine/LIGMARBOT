@@ -201,7 +201,7 @@
       // AI CHANGED: Last full TEST JSON export (same as green DevTools block) for copy without selecting console text.
       getLastTestExport: function () {
         if (!Runtime.ui || !Runtime.ui.lastTestExportJson) {
-          return { ok: false, reason: "no_test_export_yet", hint: "Run TEST from panel or ligmarBot.runUiTestBundle()" };
+          return { ok: false, reason: "no_test_export_yet", hint: "Run ligmarBot.runUiTestBundle() from the console (panel TEST removed)." };
         }
         return {
           ok: true,
@@ -217,7 +217,7 @@
         }
         return { ok: true, snapshot: buildFieldValidationSnapshotForTestExport() };
       },
-      // AI CHANGED: Soak issue clip — same as panel STOP+COPY LOGS (`lines`, `stopFarm`, `via`); returns Promise<{ ok, copied, … }>.
+      // AI CHANGED: Issue log clip — same as `ligmarBot.copyIssueReportLogs({ lines, stopFarm, via })` (Logger ring buffer).
       copyIssueReportLogs:
         typeof copyIssueReportLogsForSupport === "function" ? copyIssueReportLogsForSupport : null,
       // AI CHANGED: Phase C0 -- skill scanner public API. scanSkills() is the only "active" call;

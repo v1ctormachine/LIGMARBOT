@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.222",
-    "description":  "Explore: allow goblin map tiles; champion/boss tiles still hard-avoided",
-    "builtAt":  "2026-05-14T14:01:27.1446929+03:00",
+    "version":  "0.3.223",
+    "description":  "Panel: remove TEST and STOP+COPY LOGS; trim status footer (console TEST unchanged)",
+    "builtAt":  "2026-05-14T19:54:45.3628437+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.223",
+                        "description":  "Panel: remove TEST and STOP+COPY LOGS; trim status footer (console TEST unchanged)",
+                        "date":  "2026-05-14T19:54:45.3628437+03:00"
+                    },
                     {
                         "version":  "0.3.222",
                         "description":  "Explore: allow goblin map tiles; champion/boss tiles still hard-avoided",
@@ -247,11 +252,6 @@
                         "version":  "0.3.174",
                         "description":  "Remove DOM miss scan, miss_text, snapFloatingMissOnce; merge DB on hp_drop only; summary v5",
                         "date":  "2026-05-13T13:27:01.4319703+03:00"
-                    },
-                    {
-                        "version":  "0.3.173",
-                        "description":  "Remove canvas2d miss hook; keep DOM miss_text observe + DB merge",
-                        "date":  "2026-05-13T13:10:09.0584055+03:00"
                     }
                 ]
 }

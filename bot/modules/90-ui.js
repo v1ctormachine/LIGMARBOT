@@ -543,33 +543,10 @@
       : "unknown";
     const onMs = auto.running && Number.isFinite(auto.startedAt) ? (Date.now() - auto.startedAt) : 0;
     const onText = formatOnDuration(onMs);
-    const healthSummary = typeof evaluateAutoFarmHealth === "function"
-      ? evaluateAutoFarmHealth(state, {
-          readonly: true,
-          running: !!auto.running
-        })
-      : null;
-    const sessionText = state.session.dead
-      ? "dead"
-      : state.session.poorConnection
-        ? "poor-connection"
-        : state.session.coreUi && state.session.coreUi.missing
-          ? "ui-missing"
-          : "ok";
-    const healthState = healthSummary && healthSummary.severity ? healthSummary.severity : "unknown";
-    const recoverySoft = auto.recovery && Number.isFinite(auto.recovery.softAttempts) ? auto.recovery.softAttempts : 0;
-    const recoveryRefresh = auto.recovery && Number.isFinite(auto.recovery.refreshAttempts) ? auto.recovery.refreshAttempts : 0;
-    const lastVerifiedAt =
-      auto.health && Number.isFinite(auto.health.lastActionVerifiedAt)
-        ? auto.health.lastActionVerifiedAt
-        : auto.health && Number.isFinite(auto.health.lastProgressAt)
-          ? auto.health.lastProgressAt
-          : null;
+    // AI CHANGED: Minimal panel footer — watchdog/session/recovery detail stays in console `Logger` / `ligmarBot.getAutoFarmStatus()`.
     const lines = [
       `HP ${hpPct !== null ? hpPct + "%" : "?"} · MP ${mpPct !== null ? mpPct + "%" : "?"} · Ping ${state.network.pingMs !== null ? state.network.pingMs + "ms" : "?"}`,
       `Enemies: ${enemyText} · Coords: ${coordsText}`,
-      `Session: ${sessionText} · Health: ${healthState}${healthSummary && healthSummary.primaryReason ? " (" + healthSummary.primaryReason + ")" : ""}`,
-      `Recovery: soft ${recoverySoft} · refresh ${recoveryRefresh} · Last action: ${lastVerifiedAt ? formatAgo(Date.now() - lastVerifiedAt) + " ago" : "—"}`,
       `AUTO: ${auto.combatMode || "fast"} · Cycles: ${auto.cyclesCompleted} · Failures: ${auto.consecutiveFailures} · ON: ${onText}`
     ];
     Runtime.ui.statusNode.textContent = lines.join("\n");
@@ -3935,9 +3912,7 @@
     return bundleResult;
   }
 
-  // AI CHANGED: Streamlined control panel — version header, ON/OFF only, large phase indicator, compact stats footer.
-  // All previously-clickable debug buttons (Run 1 Cycle, Map prep, Scan Ring, Toggle Logs, Refresh) are still
-  // available via window.ligmarBot.* in the devtools console.
+  // AI CHANGED: Streamlined control panel — version header, ON/OFF, combat mode, chat promo toggle, phase + compact stats (no TEST / issue-clip buttons; use `ligmarBot.runUiTestBundle` / `ligmarBot.copyIssueReportLogs` from console).
   function createControlPanel() {
     if (Runtime.ui.panel) {
       return Runtime.ui.panel;
@@ -4114,97 +4089,7 @@
     chatSpamRow.appendChild(chatSpamLbl);
     panel.appendChild(chatSpamRow);
 
-    // AI CHANGED: TEST — one-click **`panel`** profile (full automated suite: soak, strict calibration, probes, resume farm). Console: `ligmarBot.runUiTestBundle({ testProfile: "quick" })` or `"release"`.
-    const testButton = makeButton(`TEST (${BotVersion.version})`, "#737fff", "#8f94ff", () => {
-      if (testButton.disabled) {
-        return;
-      }
-      testButton.disabled = true;
-      testButton.style.opacity = "0.45";
-      testButton.style.cursor = "wait";
-      Promise.resolve(runUiTestBundle({ testProfile: "panel" }))
-        .then(function (res) {
-          Logger.log("TEST", "finished", res);
-          // AI CHANGED: panel mirrors copy-paste `Test result:` line from console (per-step + OVERALL).
-          if (testResultLine) {
-            const line =
-              (res && res.testReportLine) ? res.testReportLine : (res && res.ok ? "Test result: OK (no report line)" : "Test result: failed");
-            testResultLine.textContent =
-              line + " — Export tab + JSON clipboard tried.";
-            testResultLine.style.color = res && res.ok ? "#7dffb3" : "#ff6b6b";
-            testResultLine.style.fontSize = "9px";
-          }
-        })
-        .catch(function (err) {
-          const errLine = "Test result: bundle error — " + String(err && err.message ? err.message : err);
-          Logger.log("TEST", errLine);
-          Logger.warn("TEST", "bundle rejected", err);
-          if (testResultLine) {
-            testResultLine.textContent = errLine;
-            testResultLine.style.color = "#ff6b6b";
-            testResultLine.style.fontSize = "9px";
-          }
-        })
-        .finally(function () {
-          testButton.disabled = false;
-          testButton.style.opacity = "1";
-          testButton.style.cursor = "pointer";
-          updateControlPanelStatus();
-        });
-    });
-    testButton.style.flex = "none";
-    testButton.style.width = "100%";
-    testButton.style.marginBottom = "4px";
-    panel.appendChild(testButton);
-
-    // AI CHANGED: last TEST pass/fail line — filled when runUiTestBundle resolves (no manual console steps).
-    const testResultLine = document.createElement("div");
-    testResultLine.textContent = "Test result: — (full suite via TEST)";
-    testResultLine.style.fontSize = "10px";
-    testResultLine.style.lineHeight = "1.35";
-    testResultLine.style.marginBottom = "8px";
-    testResultLine.style.opacity = "0.85";
-    testResultLine.style.wordBreak = "break-word";
-    panel.appendChild(testResultLine);
-
-    // AI CHANGED: Soak — one click stops auto-farm and copies last 30 Logger lines (paste to AI); no manual DevTools selection.
-    const issueStopCopyButton = makeButton("STOP + COPY LOGS", "#c94b7d", "#e06699", function () {
-      Promise.resolve(copyIssueReportLogsForSupport({ lines: 30, via: "panel" }))
-        .then(function (res) {
-          if (Runtime.ui.issueReportLine) {
-            const copied = res && res.copied;
-            Runtime.ui.issueReportLine.textContent = copied
-              ? "Issue clip: copied last 30 bot log lines (farm stop requested if it was ON)."
-              : "Issue clip: clipboard failed — click again or use ligmarBot.copyIssueReportLogs() after a user gesture.";
-            Runtime.ui.issueReportLine.style.color = copied ? "#9ecbff" : "#ff6b6b";
-            Runtime.ui.issueReportLine.style.fontSize = "9px";
-          }
-        })
-        .catch(function (err) {
-          Logger.warn("UI", "ISSUE_REPORT_CLIP rejected", err);
-          if (Runtime.ui.issueReportLine) {
-            Runtime.ui.issueReportLine.textContent =
-              "Issue clip: error — " + String(err && err.message ? err.message : err);
-            Runtime.ui.issueReportLine.style.color = "#ff6b6b";
-          }
-        })
-        .finally(function () {
-          setTimeout(updateControlPanelStatus, 50);
-        });
-    });
-    issueStopCopyButton.style.flex = "none";
-    issueStopCopyButton.style.width = "100%";
-    issueStopCopyButton.style.marginBottom = "4px";
-    panel.appendChild(issueStopCopyButton);
-
-    const issueReportLine = document.createElement("div");
-    issueReportLine.textContent = "Issue clip: — (use during soak if something looks wrong)";
-    issueReportLine.style.fontSize = "9px";
-    issueReportLine.style.lineHeight = "1.35";
-    issueReportLine.style.marginBottom = "8px";
-    issueReportLine.style.opacity = "0.8";
-    issueReportLine.style.wordBreak = "break-word";
-    panel.appendChild(issueReportLine);
+    // AI CHANGED: TEST / issue clip — use console only: `ligmarBot.runUiTestBundle(...)`, `ligmarBot.copyIssueReportLogs(...)`.
 
     // ---- Phase block (the "what is the bot doing right now" area) ------
     const phaseWrap = document.createElement("div");
@@ -4267,10 +4152,10 @@
     Runtime.ui.phaseNode = phaseNode;
     Runtime.ui.phaseDetailNode = phaseDetailNode;
     Runtime.ui.phaseSinceNode = phaseSinceNode;
-    Runtime.ui.testButton = testButton;
-    Runtime.ui.testResultLine = testResultLine;
-    Runtime.ui.issueStopCopyButton = issueStopCopyButton;
-    Runtime.ui.issueReportLine = issueReportLine;
+    Runtime.ui.testButton = null;
+    Runtime.ui.testResultLine = null;
+    Runtime.ui.issueStopCopyButton = null;
+    Runtime.ui.issueReportLine = null;
     Runtime.ui.combatGraceInput = null;
     Runtime.ui.chatSpammerCheckbox = chatSpamCb;
     Runtime.ui.autoFarmModeButtons = { fast: modeBtnFast, safe: modeBtnSafe, easy: modeBtnEasy };
