@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.221",
-    "description":  "AUTO: first OOC cycle runs TEST-like prep (probe, scan, hero, skill master) without soak or calibration",
-    "builtAt":  "2026-05-14T13:55:16.3014635+03:00",
+    "version":  "0.3.222",
+    "description":  "Explore: allow goblin map tiles; champion/boss tiles still hard-avoided",
+    "builtAt":  "2026-05-14T14:01:27.1446929+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.222",
+                        "description":  "Explore: allow goblin map tiles; champion/boss tiles still hard-avoided",
+                        "date":  "2026-05-14T14:01:27.1446929+03:00"
+                    },
                     {
                         "version":  "0.3.221",
                         "description":  "AUTO: first OOC cycle runs TEST-like prep (probe, scan, hero, skill master) without soak or calibration",
@@ -247,11 +252,6 @@
                         "version":  "0.3.173",
                         "description":  "Remove canvas2d miss hook; keep DOM miss_text observe + DB merge",
                         "date":  "2026-05-13T13:10:09.0584055+03:00"
-                    },
-                    {
-                        "version":  "0.3.172",
-                        "description":  "Canvas miss/dodge: hook fillText+strokeText for combat labels; optional dodge substrings; TEST Canvas miss hook",
-                        "date":  "2026-05-13T13:02:56.6117153+03:00"
                     }
                 ]
 }

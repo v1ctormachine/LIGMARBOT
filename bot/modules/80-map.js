@@ -471,8 +471,8 @@
     const enemies = Number.isFinite(tile.enemies) ? tile.enemies : 0;
     const allies = Number.isFinite(tile.allies) ? tile.allies : 0;
 
-    // AI CHANGED: Hard-avoid goblin/boss tiles.
-    if (lootKinds.includes("goblin") || lootKinds.includes("boss")) {
+    // AI CHANGED: Hard-avoid boss (champion) tiles only — goblin events are walkable targets like other loot.
+    if (lootKinds.includes("boss")) {
       return -500000;
     }
 
@@ -496,6 +496,9 @@
       base = 450000;
     } else if (lootKinds.includes("contract")) {
       base = 400000;
+    } else if (lootKinds.includes("goblin")) {
+      // AI CHANGED: Goblin events are allowed — rank above plain empty / mob-only neighbors so scan picks them when visible.
+      base = 350000;
     } else if (enemies > 0) {
       base = 300000;
     } else {
@@ -757,7 +760,7 @@
   }
 
   // AI CHANGED: Helper — does a 1-ring scan have any USEFUL loot? Useful = at least one walkable tile
-  // with non-empty loot icons that aren't goblin/boss (those are hard-avoided).
+  // with non-empty loot icons that isn't boss-only (boss tiles stay hard-avoided in scoring).
   function ringHasUsefulLoot(scanSnapshot) {
     if (!scanSnapshot || !scanSnapshot.ok || !Array.isArray(scanSnapshot.results)) {
       return false;
@@ -771,7 +774,7 @@
       if (kinds.length === 0) {
         continue;
       }
-      if (kinds.includes("goblin") || kinds.includes("boss")) {
+      if (kinds.includes("boss")) {
         continue;
       }
       return true;
@@ -795,10 +798,10 @@
   // AI CHANGED: Move by scan result first, fallback to old exploration if needed.
   // Order:
   //   1. Run 1-ring scan (popup-based, gives explicit loot icons + ally/enemy counts).
-  //   2. If 1-ring has any useful (non-goblin/boss) loot -> pick it via existing scoring.
+  //   2. If 1-ring has any useful (non-boss) loot -> pick it via existing scoring.
   //   3. Else -> run 2-ring visual scan for yellow-die markers (loot 2 tiles away).
   //      If a die is found, override target to the 1-ring tile in that direction
-  //      (only if that 1-ring tile is walkable and not goblin/boss).
+  //      (only if that 1-ring tile is walkable and not boss).
   //   4. Else -> fall back to existing scoring (covers empty-but-walkable tiles, allies-stacking, etc.).
   async function exploreByScan() {
     const now = readBasicState();
@@ -818,7 +821,7 @@
     if (ringHasUsefulLoot(scan)) {
       target = chooseBestScannedNeighbor(scan);
     } else {
-      // AI CHANGED: 1-ring is empty (or only goblin/boss). Visually probe the 2-ring for a yellow die hint.
+      // AI CHANGED: 1-ring is empty (or only boss). Visually probe the 2-ring for a yellow die hint.
       setBotStatus("scanning", "2-ring visual scan for yellow die");
       secondRing = await scanSecondRingForDie();
       if (secondRing && secondRing.ok && secondRing.best) {
@@ -833,7 +836,7 @@
             continue;
           }
           const kinds = parseLootKindsFromMarkers(tile.lootIcons || []);
-          if (kinds.includes("goblin") || kinds.includes("boss")) {
+          if (kinds.includes("boss")) {
             continue;
           }
           ringCandidates.push(tile);
