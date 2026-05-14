@@ -1,167 +1,257 @@
 ﻿{
-    "version":  "0.3.24",
-    "description":  "C4 slice 10: planner UI for first-burst-only ranked skill toggle",
-    "builtAt":  "2026-05-09T20:57:57.4434240+03:00",
+    "version":  "0.3.223",
+    "description":  "Panel: remove TEST and STOP+COPY LOGS; trim status footer (console TEST unchanged)",
+    "builtAt":  "2026-05-14T19:54:45.3628437+03:00",
     "history":  [
                     {
-                        "version":  "0.3.24",
-                        "description":  "C4 slice 10: planner UI for first-burst-only ranked skill toggle",
-                        "date":  "2026-05-09T20:57:57.4434240+03:00"
+                        "version":  "0.3.223",
+                        "description":  "Panel: remove TEST and STOP+COPY LOGS; trim status footer (console TEST unchanged)",
+                        "date":  "2026-05-14T19:54:45.3628437+03:00"
                     },
                     {
-                        "version":  "0.3.23",
-                        "description":  "Fix slice 9: re-find after kill when multi-mob pull continues",
-                        "date":  "2026-05-09T20:26:46.1904239+03:00"
+                        "version":  "0.3.222",
+                        "description":  "Explore: allow goblin map tiles; champion/boss tiles still hard-avoided",
+                        "date":  "2026-05-14T14:01:27.1446929+03:00"
                     },
                     {
-                        "version":  "0.3.22",
-                        "description":  "C4 slice 9: inner combat bursts after find-enemy; ranked opener first burst only",
-                        "date":  "2026-05-09T20:10:55.0184593+03:00"
+                        "version":  "0.3.221",
+                        "description":  "AUTO: first OOC cycle runs TEST-like prep (probe, scan, hero, skill master) without soak or calibration",
+                        "date":  "2026-05-14T13:55:16.3014635+03:00"
                     },
                     {
-                        "version":  "0.3.21",
-                        "description":  "C4 slice 8b: expose plannerSkillHasDirectDamageForOpener",
-                        "date":  "2026-05-09T20:00:24.0353131+03:00"
+                        "version":  "0.3.220",
+                        "description":  "AUTO: OOC skill scan + cache load; scanSkills allowDuringAutoFarm",
+                        "date":  "2026-05-14T13:16:06.1488446+03:00"
                     },
                     {
-                        "version":  "0.3.20",
-                        "description":  "C4 slice 8b: HP progress + skill opener basic fallback + opener damage filter",
-                        "date":  "2026-05-09T20:00:05.6903584+03:00"
+                        "version":  "0.3.219",
+                        "description":  "Support buffs: assumed duration tracking; recast when remaining at or below threshold",
+                        "date":  "2026-05-14T11:43:02.0989783+03:00"
                     },
                     {
-                        "version":  "0.3.19",
-                        "description":  "C4 slice 8: ranked opening skill + action bar click + plannerUi",
-                        "date":  "2026-05-09T19:53:04.2132219+03:00"
+                        "version":  "0.3.218",
+                        "description":  "Support buffs: track assumed duration; re-cast only when ≤30s left (configurable)",
+                        "date":  "2026-05-14T11:42:46.2602209+03:00"
                     },
                     {
-                        "version":  "0.3.18",
-                        "description":  "C4 slice 7: planner toggles on panel + plannerUi localStorage",
-                        "date":  "2026-05-09T19:44:21.5415188+03:00"
+                        "version":  "0.3.217",
+                        "description":  "AUTO Safe: full in-fight planner like Fast; TEST asserts Safe planner flags",
+                        "date":  "2026-05-14T11:23:41.4652295+03:00"
                     },
                     {
-                        "version":  "0.3.17",
-                        "description":  "C4 slice 6: planner hooks in secureTile (DB refresh + log)",
-                        "date":  "2026-05-09T19:35:18.3443738+03:00"
+                        "version":  "0.3.216",
+                        "description":  "parse potion HoT: base (+bonus) heal/MP; ligmarBot.parseSkillEffects",
+                        "date":  "2026-05-14T11:07:11.0562798+03:00"
                     },
                     {
-                        "version":  "0.3.16",
-                        "description":  "C4 slice 5: lastFoughtKey + quickCalibrationSession",
-                        "date":  "2026-05-09T19:34:03.5899977+03:00"
+                        "version":  "0.3.215",
+                        "description":  "planner prefs reconcile ranked after load + TEST; idle MP topoff during OOC heal gate",
+                        "date":  "2026-05-14T10:50:09.6690943+03:00"
                     },
                     {
-                        "version":  "0.3.15",
-                        "description":  "observeCombatDamage: optional mergeToEnemyDb + LS summary v3",
-                        "date":  "2026-05-09T19:24:39.3559128+03:00"
+                        "version":  "0.3.214",
+                        "description":  "AUTO: reconcile ranked after loadPlanner + TEST; idle regen MP top-off toward 90%",
+                        "date":  "2026-05-14T10:47:28.3410697+03:00"
                     },
                     {
-                        "version":  "0.3.14",
-                        "description":  "calibrateEnemyFromCombat: skip merge when zero hp_drop + hints",
-                        "date":  "2026-05-09T19:20:50.5699219+03:00"
+                        "version":  "0.3.213",
+                        "description":  "AUTO: ranked snapshot after combat mode; wait for buff CD UI after prebuff/permanent taps",
+                        "date":  "2026-05-14T10:14:15.0659775+03:00"
                     },
                     {
-                        "version":  "0.3.13",
-                        "description":  "C4 slice 4: calibrateEnemyFromCombat + rankAttackSkillsByHeuristic",
-                        "date":  "2026-05-09T19:17:30.6227556+03:00"
+                        "version":  "0.3.212",
+                        "description":  "Support DB taxonomy: permanent self-buffs OOC + pre-combat; exclude from prebuff",
+                        "date":  "2026-05-14T09:52:41.3338273+03:00"
                     },
                     {
-                        "version":  "0.3.12",
-                        "description":  "C4 slice 3: summarizeEnemyDbCalibration + getEnemyCalibrationRow",
-                        "date":  "2026-05-09T19:06:50.3009334+03:00"
+                        "version":  "0.3.211",
+                        "description":  "AUTO mode: Fast/Safe after Easy re-enables ranked skills (panel + prefs load)",
+                        "date":  "2026-05-14T09:17:35.5847740+03:00"
                     },
                     {
-                        "version":  "0.3.11",
-                        "description":  "C4 slice 2: observe attribution + merge hp_drop into enemy DB",
-                        "date":  "2026-05-09T19:02:39.7862504+03:00"
+                        "version":  "0.3.210",
+                        "description":  "idle MP pots below 25%; party prebuffs from DB; exclude safety skills from prebuff",
+                        "date":  "2026-05-14T01:04:53.1102280+03:00"
                     },
                     {
-                        "version":  "0.3.10",
-                        "description":  "Phase C4 slice 1: paper basic DPS + planner summary API",
-                        "date":  "2026-05-09T18:55:38.6622281+03:00"
+                        "version":  "0.3.209",
+                        "description":  "prebuff before find-enemy; HP-spike safety cancel+bypass; Safe explore HP/MP+short prebuff gate",
+                        "date":  "2026-05-14T00:36:03.5547408+03:00"
                     },
                     {
-                        "version":  "0.3.9",
-                        "description":  "Enemy DB: drop mob damageClass; cache v2; strip on load",
-                        "date":  "2026-05-09T18:54:34.3165338+03:00"
+                        "version":  "0.3.208",
+                        "description":  "support buffs: OOC renew, prebuff, Windy Dome safety; chat spammer toggle; MP floor 25%",
+                        "date":  "2026-05-13T23:48:50.6686449+03:00"
                     },
                     {
-                        "version":  "0.3.8",
-                        "description":  "Phase C3 enemy profile reader + enemy DB cache",
-                        "date":  "2026-05-09T18:45:00.9987871+03:00"
+                        "version":  "0.3.207",
+                        "description":  "MP potion: allow max-minus-heal top-off after preferred mana ok",
+                        "date":  "2026-05-13T22:42:00.9463596+03:00"
                     },
                     {
-                        "version":  "0.3.7",
-                        "description":  "Damage observer: coerce HP cur for lethal + non-finite guard",
-                        "date":  "2026-05-09T18:32:55.6690620+03:00"
+                        "version":  "0.3.206",
+                        "description":  "AUTO Fast/Safe/Easy combat modes, MP potion max-minus-heal threshold",
+                        "date":  "2026-05-13T22:41:14.7438419+03:00"
                     },
                     {
-                        "version":  "0.3.6",
-                        "description":  "Damage observer: count lethal 0 HP as hp_drop not suspicious",
-                        "date":  "2026-05-09T18:30:08.2545879+03:00"
+                        "version":  "0.3.205",
+                        "description":  "charge cancel: require cast bar skill name + cancel hint before tap",
+                        "date":  "2026-05-13T22:22:21.2309606+03:00"
                     },
                     {
-                        "version":  "0.3.5",
-                        "description":  "Phase C2 damage observer: HP deltas + floating text scan",
-                        "date":  "2026-05-09T18:24:42.3147217+03:00"
+                        "version":  "0.3.204",
+                        "description":  "quick TEST: disable charge-cancel UI taps for bundle scope",
+                        "date":  "2026-05-13T21:50:53.0036652+03:00"
                     },
                     {
-                        "version":  "0.3.4",
-                        "description":  "Hero stats: parse app-param-item rows + crit regex + click labels",
-                        "date":  "2026-05-09T18:19:38.4392794+03:00"
+                        "version":  "0.3.203",
+                        "description":  "remove ranked opener early-cancel wait; rename ms override to chargeSkillReleaseOverrideMs",
+                        "date":  "2026-05-13T21:23:40.4580196+03:00"
                     },
                     {
-                        "version":  "0.3.3",
-                        "description":  "Phase C1: hero combat stats reader + passive regen sampler",
-                        "date":  "2026-05-09T18:07:16.6513514+03:00"
+                        "version":  "0.3.202",
+                        "description":  "ligmarBot.summarizeEnemyBuffSigBuckets + TEST enemy_buff_sig_buckets_api",
+                        "date":  "2026-05-13T20:23:12.5852463+03:00"
                     },
                     {
-                        "version":  "0.3.2",
-                        "description":  "Console skill table: heal_hp vs heal_mp for potion rows",
-                        "date":  "2026-05-09T17:52:28.7394980+03:00"
+                        "version":  "0.3.201",
+                        "description":  "ligmarBot.summarizeEnemyBuffSigBuckets for buff pairing research",
+                        "date":  "2026-05-13T20:22:35.1181456+03:00"
                     },
                     {
-                        "version":  "0.3.1",
-                        "description":  "Skill parser: channel+gear%, stealth, mp/s drain, dodge, crit buff, Instantly cast, extra desc",
-                        "date":  "2026-05-09T17:40:56.5890172+03:00"
+                        "version":  "0.3.200",
+                        "description":  "fieldValidation buffSigTop adds signaturePreview for §6 exports",
+                        "date":  "2026-05-13T20:08:16.4691568+03:00"
                     },
                     {
-                        "version":  "0.3.0",
-                        "description":  "Phase C0: skill scanner (auto-discover skills, mana, cast/cooldown, effects)",
-                        "date":  "2026-05-09T17:30:00.0000000+03:00"
+                        "version":  "0.3.199",
+                        "description":  "fieldValidation: plannerUiPrefs snapshot for soak exports",
+                        "date":  "2026-05-13T20:03:11.6764812+03:00"
                     },
                     {
-                        "version":  "0.2.7",
-                        "description":  "Disable 2-ring overlay by default + speed up 1-ring scan (220ms wall timeout, 40ms poll)",
-                        "date":  "2026-05-09T14:49:27.6002205+03:00"
+                        "version":  "0.3.198",
+                        "description":  "plannerUi prefs persist openerFollowUpSkillDepth",
+                        "date":  "2026-05-13T19:49:39.8807686+03:00"
                     },
                     {
-                        "version":  "0.2.6",
-                        "description":  "Fix die-guided ally bias + hex sampling + tolerance 75 + ally penalty 5x",
-                        "date":  "2026-05-09T14:38:26.1740557+03:00"
+                        "version":  "0.3.197",
+                        "description":  "default openerFollowUpSkillDepth 2 for queue+horizon lookahead",
+                        "date":  "2026-05-13T19:42:59.2939481+03:00"
                     },
                     {
-                        "version":  "0.2.5",
-                        "description":  "Lower 2-ring yellow-die threshold 4% -\u003e 0.5% (match real signal at ~1.1%)",
-                        "date":  "2026-05-09T14:18:51.4229524+03:00"
+                        "version":  "0.3.196",
+                        "description":  "TEST: opener context check waives detail when horizon prefers basic",
+                        "date":  "2026-05-13T19:30:19.3660885+03:00"
                     },
                     {
-                        "version":  "0.2.4",
-                        "description":  "2-ring overlay + multi-candidate dirs (min-enemies tiebreak)",
-                        "date":  "2026-05-09T14:05:00.2088840+03:00"
+                        "version":  "0.3.195",
+                        "description":  "enemy DB: buff label signature + per-signature hp_drop buckets; TEST + fieldValidation",
+                        "date":  "2026-05-13T19:18:07.3816980+03:00"
                     },
                     {
-                        "version":  "0.2.3",
-                        "description":  "2-ring visual scan: yellow die (#f0b80c) detection guides moves when 1-ring is empty",
-                        "date":  "2026-05-09T13:44:33.7492117+03:00"
+                        "version":  "0.3.194",
+                        "description":  "queue v3: plannerBuildCombatQueueAction uses openerFollowUpSkillDepth lookahead; TEST queueScoreDepth",
+                        "date":  "2026-05-13T19:06:34.0289400+03:00"
                     },
                     {
-                        "version":  "0.2.2",
-                        "description":  "Cleaner GUI: ON/OFF only + live activity phase indicator",
-                        "date":  "2026-05-09T13:29:54.5130086+03:00"
+                        "version":  "0.3.193",
+                        "description":  "retarget: no cancel; queue first skill on game basic cast; post-retarget burst allowCombatQueue",
+                        "date":  "2026-05-13T18:56:26.2566231+03:00"
                     },
                     {
-                        "version":  "0.2.1",
-                        "description":  "Add local-file loader workflow + GUI version display",
-                        "date":  "2026-05-09T13:10:05.1869417+03:00"
+                        "version":  "0.3.192",
+                        "description":  "horizon: typed paper mob blend physical vs magic; instant arrow-tier regex; TEST Horizon typed paper mob calibration",
+                        "date":  "2026-05-13T18:22:48.6304947+03:00"
+                    },
+                    {
+                        "version":  "0.3.191",
+                        "description":  "horizon: blend mobFactor on instant/dot paper; full mf on basic_proc/channel; TEST Horizon paper mob calibration",
+                        "date":  "2026-05-13T18:13:40.7827949+03:00"
+                    },
+                    {
+                        "version":  "0.3.190",
+                        "description":  "horizon: DoT paper scales with mob calibration; TEST Horizon DoT calibration",
+                        "date":  "2026-05-13T17:52:38.3933158+03:00"
+                    },
+                    {
+                        "version":  "0.3.189",
+                        "description":  "calibration pressure v2: spread confidence, ratio ease, charge hold hard-only",
+                        "date":  "2026-05-13T17:45:02.0473454+03:00"
+                    },
+                    {
+                        "version":  "0.3.188",
+                        "description":  "calibration: hp_drop ratio adds opener pressure + charge hold when harder than paper",
+                        "date":  "2026-05-13T17:35:16.5609473+03:00"
+                    },
+                    {
+                        "version":  "0.3.187",
+                        "description":  "charge hold: incoming sustain penalty; pullTier on danger pressure; TEST channel hold risk",
+                        "date":  "2026-05-13T17:22:56.9835142+03:00"
+                    },
+                    {
+                        "version":  "0.3.186",
+                        "description":  "opener danger: sustain HP loss in pressure model, fresh sustain before opener pick, TEST + fieldValidation sample",
+                        "date":  "2026-05-13T17:13:27.3439974+03:00"
+                    },
+                    {
+                        "version":  "0.3.185",
+                        "description":  "horizon: unified live-target overkill cap helper for opener and charge",
+                        "date":  "2026-05-13T16:55:18.3884536+03:00"
+                    },
+                    {
+                        "version":  "0.3.184",
+                        "description":  "horizon: unify charge hold risk in opener context; reuse cooldown in scored rows",
+                        "date":  "2026-05-13T16:43:50.5405355+03:00"
+                    },
+                    {
+                        "version":  "0.3.183",
+                        "description":  "combat episode v1: snapshot opener+queue per burst, TEST + getCombatEpisode",
+                        "date":  "2026-05-13T16:31:58.2726428+03:00"
+                    },
+                    {
+                        "version":  "0.3.182",
+                        "description":  "Config: tighter verify + 25ms retarget/ranked settle",
+                        "date":  "2026-05-13T16:15:32.3290222+03:00"
+                    },
+                    {
+                        "version":  "0.3.181",
+                        "description":  "Combat: post-retarget cancel after find-enemy retarget too",
+                        "date":  "2026-05-13T15:55:19.9721273+03:00"
+                    },
+                    {
+                        "version":  "0.3.180",
+                        "description":  "TEST: Natural Sniper pass when fresh window picks other opener",
+                        "date":  "2026-05-13T15:45:44.2481895+03:00"
+                    },
+                    {
+                        "version":  "0.3.179",
+                        "description":  "Combat: widen tiny cancel_release first verify + shorter tiny late cap",
+                        "date":  "2026-05-13T15:21:00.4862376+03:00"
+                    },
+                    {
+                        "version":  "0.3.178",
+                        "description":  "Combat: shorter charge late-wait + tiny cancel_release cap",
+                        "date":  "2026-05-13T14:12:24.8105758+03:00"
+                    },
+                    {
+                        "version":  "0.3.177",
+                        "description":  "Combat: charge release late wait + queue tick + per-opener queue arm",
+                        "date":  "2026-05-13T14:01:18.5465236+03:00"
+                    },
+                    {
+                        "version":  "0.3.176",
+                        "description":  "Soak: STOP+COPY last 30 log lines, Logger ring buffer, TEST Logger ring check",
+                        "date":  "2026-05-13T13:49:01.7652840+03:00"
+                    },
+                    {
+                        "version":  "0.3.175",
+                        "description":  "Field validation: gameSnapshotEnd.fieldValidation + getFieldValidationSnapshot + TEST check",
+                        "date":  "2026-05-13T13:39:27.2610495+03:00"
+                    },
+                    {
+                        "version":  "0.3.174",
+                        "description":  "Remove DOM miss scan, miss_text, snapFloatingMissOnce; merge DB on hp_drop only; summary v5",
+                        "date":  "2026-05-13T13:27:01.4319703+03:00"
                     }
                 ]
 }

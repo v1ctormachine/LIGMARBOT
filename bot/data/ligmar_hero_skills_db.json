@@ -1,0 +1,1514 @@
+﻿{
+    "assassin":  [
+                     {
+                         "name":  "Blade Dance (6/10)",
+                         "tags":  [
+                                      "Attack",
+                                      "Target"
+                                  ],
+                         "description":  "Deals base physical damage and an additional 453 в†’ 531 of physical damage to the target.",
+                         "params":  {
+                                        "Range":  "Melee",
+                                        "Weapon":  "Any, Unarmed",
+                                        "Activation time":  "1 s",
+                                        "Cooldown":  "2.1 s",
+                                        "Mana cost":  "37 в†’ 44"
+                                    }
+                     },
+                     {
+                         "name":  "Artery Strike (6/10)",
+                         "tags":  [
+                                      "Attack",
+                                      "Target"
+                                  ],
+                         "description":  "Deals base physical damage, 80 в†’ 85% physical damage from gear and 2,147 в†’ 2,615 physical damage to the target for 9 s.",
+                         "params":  {
+                                        "Range":  "Melee",
+                                        "Weapon":  "Stiletto, Daggers",
+                                        "Activation time":  "2 s",
+                                        "Cooldown":  "6.2 s",
+                                        "Mana cost":  "29 в†’ 34"
+                                    }
+                     },
+                     {
+                         "name":  "Step into Darkness (5/10)",
+                         "tags":  [
+                                      "Support",
+                                      "Self"
+                                  ],
+                         "description":  "Visibility of the assassin is decreased to 0. Consumes 20 в†’ 19 mana every second.",
+                         "params":  {
+                                        "Range":  "Ranged",
+                                        "Weapon":  "Any",
+                                        "Activation time":  "3.5 s",
+                                        "Cooldown":  "60 s",
+                                        "Mana cost":  "20"
+                                    }
+                     },
+                     {
+                         "name":  "Undercut Tendons (4/10)",
+                         "tags":  [
+                                      "Attack",
+                                      "Target"
+                                  ],
+                         "description":  "Deals base physical damage and 712 в†’ 872 physical damage to the target. Slows the target by 38 в†’ 40% for 5 s.",
+                         "params":  {
+                                        "Range":  "Melee",
+                                        "Weapon":  "Stiletto, Daggers",
+                                        "Activation time":  "1.6 s",
+                                        "Cooldown":  "7.5 s",
+                                        "Mana cost":  "39 в†’ 47"
+                                    }
+                     },
+                     {
+                         "name":  "Taste of Death (3/10)",
+                         "tags":  [
+                                      "Support",
+                                      "Self"
+                                  ],
+                        "description":  "Increases the assassin's critical hit damage by 16 в†’ 18% for 30 s.",
+                         "params":  {
+                                        "Range":  "Ranged",
+                                        "Weapon":  "Any",
+                                        "Activation time":  "Instantly",
+                                        "Cooldown":  "60 s",
+                                        "Mana cost":  "30 в†’ 32"
+                                    }
+                     },
+                     {
+                         "name":  "Rush (3/10)",
+                         "tags":  [
+                                      "Support",
+                                      "Self"
+                                  ],
+                         "description":  "Accelerates the assassin by 65 в†’ 70% for 10 s.",
+                         "params":  {
+                                        "Range":  "Ranged",
+                                        "Weapon":  "Any",
+                                        "Activation time":  "Instantly",
+                                        "Cooldown":  "60 s",
+                                        "Mana cost":  "25 в†’ 30"
+                                    }
+                     },
+                     {
+                         "name":  "Sleep Spike (2/10)",
+                         "tags":  [
+                                      "Attack",
+                                      "Target"
+                                  ],
+                         "description":  "Deals base physical damage and 280 в†’ 330 of physical damage to the target. Sleeps the target for 87 в†’ 88% for 5 s.",
+                         "params":  {
+                                        "Range":  "Melee",
+                                        "Weapon":  "Stiletto, Daggers",
+                                        "Activation time":  "1.2 s",
+                                        "Cooldown":  "17.8 s",
+                                        "Mana cost":  "50 в†’ 60"
+                                    }
+                     },
+                     {
+                         "name":  "Predator Dexterity (2/10)",
+                         "tags":  [
+                                      "Support",
+                                      "Self"
+                                  ],
+                         "description":  "Gives the assassin a 9 в†’ 11% chance to dodge enemy skills for 33 s.",
+                         "params":  {
+                                        "Range":  "Ranged",
+                                        "Weapon":  "Any",
+                                        "Activation time":  "2 s",
+                                        "Cooldown":  "88.4 s",
+                                        "Mana cost":  "70 в†’ 77"
+                                    }
+                     },
+                     {
+                         "name":  "Knife Throwing (1/10)",
+                         "tags":  [
+                                      "Attack",
+                                      "Target"
+                                  ],
+                         "description":  "Deals base physical damage and 202 в†’ 246 of physical damage to the target. Interrupts skill activation with a 43 в†’ 46% chance.",
+                         "params":  {
+                                        "Range":  "Ranged",
+                                        "Weapon":  "Stiletto, Daggers",
+                                        "Activation time":  "1.1 s",
+                                        "Cooldown":  "14 s",
+                                        "Mana cost":  "15 в†’ 23"
+                                    }
+                     },
+                     {
+                         "name":  "Leg Sweep (0/10)",
+                         "tags":  [
+                                      "Attack",
+                                      "Target"
+                                  ],
+                         "description":  "Deals base physical damage to the target and additional 871 physical damage. Roots the target for 6.3 s.",
+                         "params":  {
+                                        "Range":  "Melee",
+                                        "Weapon":  "Stiletto, Daggers",
+                                        "Activation time":  "1.6 s",
+                                        "Cooldown":  "13.5 s",
+                                        "Mana cost":  "41"
+                                    }
+                     },
+                     {
+                         "name":  "Pressure Points (0/10)",
+                         "tags":  [
+                                      "Attack",
+                                      "Target"
+                                  ],
+                         "description":  "Deals base physical damage to the target, 55% of physical damage from gear and additionally 1,315 physical damage. Reduces the target\u0027s attack speed by 23% for 30 s.",
+                         "params":  {
+                                        "Range":  "Melee",
+                                        "Weapon":  "Stiletto, Daggers",
+                                        "Activation time":  "2.2 s",
+                                        "Cooldown":  "6.1 s",
+                                        "Mana cost":  "106"
+                                    }
+                     },
+                     {
+                         "name":  "Bloodthirst (0/10)",
+                         "tags":  [
+                                      "Support",
+                                      "Party"
+                                  ],
+                         "description":  "Applies an effect to the assassin and his allies that restores 2% of melee damage dealt for 450 s.",
+                         "params":  {
+                                        "Range":  "Ranged",
+                                        "Weapon":  "Stiletto, Daggers",
+                                        "Activation time":  "4.2 s",
+                                        "Cooldown":  "12.6 s",
+                                        "Mana cost":  "91"
+                                    }
+                     },
+                     {
+                         "name":  "Choking Gas (0/10)",
+                         "tags":  [
+                                      "Attack",
+                                      "Target"
+                                  ],
+                         "description":  "Deals base physical damage to the target, 55% physical damage from gear and additional 2,187 physical damage. Has a 86% chance to apply a silence effect on the target for 2.2 s.",
+                         "params":  {
+                                        "Range":  "Melee",
+                                        "Weapon":  "Stiletto, Daggers",
+                                        "Activation time":  "2.4 s",
+                                        "Cooldown":  "10 s",
+                                        "Mana cost":  "62"
+                                    }
+                     },
+                     {
+                         "name":  "On the Edge (0/10)",
+                         "tags":  [
+                                      "Support",
+                                      "Self"
+                                  ],
+                         "description":  "Allows the assassin to avoid fatal damage once during 120 s. Restores health equal to 20% of maximum health.",
+                         "params":  {
+                                        "Range":  "Ranged",
+                                        "Weapon":  "Any",
+                                        "Activation time":  "4.1 s",
+                                        "Cooldown":  "285.4 s",
+                                        "Mana cost":  "61"
+                                    }
+                     },
+                     {
+                        "name":  "Assassin's Gambit (0/10)",
+                         "tags":  [
+                                      "Support",
+                                      "Self"
+                                  ],
+                         "description":  "Reduces the assassin\u0027s attack speed by 55%, and also increases the assassin\u0027s attack by 12% for 900 s.",
+                         "params":  {
+                                        "Range":  "Ranged",
+                                        "Weapon":  "Any",
+                                        "Activation time":  "2 s",
+                                        "Cooldown":  "13.7 s",
+                                        "Mana cost":  "15"
+                                    }
+                     }
+                 ],
+    "archer":  [
+                   {
+                       "name":  "Rapid Fire (5/10)",
+                       "tags":  [
+                                    "Attack",
+                                    "Target"
+                                ],
+                       "description":  "Deals basic physical damage to the target and an additional 420 в†’ 508 physical damage.",
+                       "params":  {
+                                      "Range":  "Ranged",
+                                      "Weapon":  "Any, Unarmed",
+                                      "Activation time":  "1.6 s",
+                                      "Cooldown":  "2.4 s",
+                                      "Mana cost":  "33 в†’ 40"
+                                  }
+                   },
+                   {
+                       "name":  "Sniper Shot (4/10)",
+                       "tags":  [
+                                    "Attack",
+                                    "Target"
+                                ],
+                       "description":  "The Archer prepares to fire for up to 4.4 в†’ 4.2 seconds and deals base physical damage to the target and up to 210 в†’ 225% physical damage from gear.",
+                       "params":  {
+                                      "Range":  "Ranged",
+                                      "Weapon":  "Crossbow, Bow",
+                                      "Activation time":  "4.4 в†’ 4.2 s",
+                                      "Cooldown":  "2.4 s",
+                                      "Mana cost":  "40 в†’ 50"
+                                  }
+                   },
+                   {
+                       "name":  "Enchanted Arrows (3/10)",
+                       "tags":  [
+                                    "Support",
+                                    "Self"
+                                ],
+                       "description":  "Applies an effect to the archer that deals 19 в†’ 22% additional magical gear damage with each attack for 900 s.",
+                       "params":  {
+                                      "Range":  "Ranged",
+                                      "Weapon":  "Any",
+                                      "Activation time":  "3.8 s",
+                                      "Cooldown":  "2.2 s",
+                                      "Mana cost":  "72 в†’ 95"
+                                  }
+                   },
+                   {
+                       "name":  "Ice Shard (3/10)",
+                       "tags":  [
+                                    "Attack",
+                                    "Target"
+                                ],
+                       "description":  "Deals basic physical damage to the target and 461 в†’ 572 physical damage. Slows the target by 50% for 3.6 в†’ 3.8 s.",
+                       "params":  {
+                                      "Range":  "Ranged",
+                                      "Weapon":  "Crossbow, Bow",
+                                      "Activation time":  "1.6 s",
+                                      "Cooldown":  "2.8 s",
+                                      "Mana cost":  "33 в†’ 41"
+                                  }
+                   },
+                   {
+                       "name":  "Windy Dome (2/10)",
+                       "tags":  [
+                                    "Support",
+                                    "Self"
+                                ],
+                       "description":  "Places a barrier on the archer that absorbs 210 в†’ 285 incoming damage for 20 s.",
+                       "params":  {
+                                      "Range":  "Ranged",
+                                      "Weapon":  "Any",
+                                      "Activation time":  "1.3 s",
+                                      "Cooldown":  "35.8 s",
+                                      "Mana cost":  "76 в†’ 103"
+                                  }
+                   },
+                   {
+                       "name":  "Serpent Fang (1/10)",
+                       "tags":  [
+                                    "Attack",
+                                    "Target"
+                                ],
+                       "description":  "Deals basic physical damage to the target and additionally 734 в†’ 943 magic damage over 15 s.",
+                       "params":  {
+                                      "Range":  "Ranged",
+                                      "Weapon":  "Crossbow, Bow",
+                                      "Activation time":  "1.6 s",
+                                      "Cooldown":  "7.4 s",
+                                      "Mana cost":  "29 в†’ 36"
+                                  }
+                   },
+                   {
+                       "name":  "Thunder Strike (1/10)",
+                       "tags":  [
+                                    "Attack",
+                                    "Target"
+                                ],
+                       "description":  "Deals the target its base damage and an additional 445 в†’ 598 of magic damage.",
+                       "params":  {
+                                      "Range":  "Ranged",
+                                      "Weapon":  "Crossbow, Bow",
+                                      "Activation time":  "1.8 s",
+                                      "Cooldown":  "5.2 s",
+                                      "Mana cost":  "49 в†’ 68"
+                                  }
+                   },
+                   {
+                       "name":  "Distracting Shot (1/10)",
+                       "tags":  [
+                                    "Attack",
+                                    "Target"
+                                ],
+                       "description":  "Deals basic physical damage to the target and additionally 484 в†’ 610 physical damage. Resets the target to the monsters.",
+                       "params":  {
+                                      "Range":  "Ranged",
+                                      "Weapon":  "Crossbow, Bow",
+                                      "Activation time":  "1.6 s",
+                                      "Cooldown":  "11.4 s",
+                                      "Mana cost":  "34 в†’ 43"
+                                  }
+                   },
+                   {
+                       "name":  "Hunter's Tread (0/10)",
+                       "tags":  [
+                                    "Support",
+                                    "Party"
+                                ],
+                       "description":  "Applies an effect to the archer and his allies that increases evasion by 8% for 900 s.",
+                       "params":  {
+                                      "Range":  "Ranged",
+                                      "Weapon":  "Any",
+                                      "Activation time":  "5.1 s",
+                                      "Cooldown":  "1 s",
+                                      "Mana cost":  "35"
+                                  }
+                   },
+                   {
+                       "name":  "Fan Volley (0/10)",
+                       "tags":  [
+                                    "Attack",
+                                    "Close"
+                                ],
+                       "description":  "Deals base physical damage to nearby targets and additionally 597 physical damage.",
+                       "params":  {
+                                      "Range":  "Ranged",
+                                      "Weapon":  "Crossbow, Bow",
+                                      "Activation time":  "1.4 s",
+                                      "Cooldown":  "1.1 s",
+                                      "Mana cost":  "104"
+                                  }
+                   },
+                   {
+                       "name":  "Piercing Strike (0/10)",
+                       "tags":  [
+                                    "Attack",
+                                    "Target"
+                                ],
+                       "description":  "Deals base damage to the target and 1,006 as magic damage. Reduces the target\u0027s resistance by 23% for 15 s.",
+                       "params":  {
+                                      "Range":  "Ranged",
+                                      "Weapon":  "Crossbow, Bow",
+                                      "Activation time":  "2.3 s",
+                                      "Cooldown":  "6 s",
+                                      "Mana cost":  "126"
+                                  }
+                   },
+                   {
+                       "name":  "Nature\u0027s Bonds (0/10)",
+                       "tags":  [
+                                    "Attack",
+                                    "Target"
+                                ],
+                       "description":  "Deals base physical damage to the target and additional 1,061 physical damage. Has a 90% chance to immobilize for 5.3 s.",
+                       "params":  {
+                                      "Range":  "Ranged",
+                                      "Weapon":  "Crossbow, Bow",
+                                      "Activation time":  "1.6 s",
+                                      "Cooldown":  "21.6 s",
+                                      "Mana cost":  "98"
+                                  }
+                   },
+                   {
+                       "name":  "Bear Claw (0/10)",
+                       "tags":  [
+                                    "Attack",
+                                    "Target"
+                                ],
+                       "description":  "Deals base physical damage to the target and additionally 1,507 physical damage over 15 s.",
+                       "params":  {
+                                      "Range":  "Ranged",
+                                      "Weapon":  "Crossbow, Bow",
+                                      "Activation time":  "1.6 s",
+                                      "Cooldown":  "7.4 s",
+                                      "Mana cost":  "51"
+                                  }
+                   },
+                   {
+                       "name":  "Rupture Wave (0/10)",
+                       "tags":  [
+                                    "Attack",
+                                    "Close"
+                                ],
+                       "description":  "Deals base physical damage to nearby targets and additional 1,226 physical damage. Resets monster target.",
+                       "params":  {
+                                      "Range":  "Ranged",
+                                      "Weapon":  "Any",
+                                      "Activation time":  "2 s",
+                                      "Cooldown":  "5 s",
+                                      "Mana cost":  "176"
+                                  }
+                   },
+                   {
+                       "name":  "Stunning Flash (0/10)",
+                       "tags":  [
+                                    "Attack",
+                                    "Target"
+                                ],
+                       "description":  "Deals base physical damage to the target and additional 800 physical damage. Has a 45% chance to stun the target for 3 s.",
+                       "params":  {
+                                      "Range":  "Ranged",
+                                      "Weapon":  "Crossbow, Bow",
+                                      "Activation time":  "2.1 s",
+                                      "Cooldown":  "14.4 s",
+                                      "Mana cost":  "117"
+                                  }
+                   },
+                   {
+                       "name":  "Chain Charge (0/10)",
+                       "tags":  [
+                                    "Attack",
+                                    "Party"
+                                ],
+                       "description":  "Deals base physical damage to the target group and additionally 1,527 magic damage.",
+                       "params":  {
+                                      "Range":  "Ranged",
+                                      "Weapon":  "Crossbow, Bow",
+                                      "Activation time":  "3.3 s",
+                                      "Cooldown":  "7.2 s",
+                                      "Mana cost":  "165"
+                                  }
+                   }
+               ],
+    "mage":  [
+                 {
+                     "name":  "Magic Arrow (1/10)",
+                     "tags":  [
+                                  "Attack",
+                                  "Target"
+                              ],
+                     "description":  "Deals base magic damage, 130 в†’ 236 magic damage and 55 в†’ 60% magic damage from gear.",
+                     "params":  {
+                                    "Range":  "Ranged",
+                                    "Weapon":  "Any, Unarmed",
+                                    "Activation time":  "2.3 s",
+                                    "Cooldown":  "2.2 s",
+                                    "Mana cost":  "6 в†’ 21"
+                                }
+                 },
+                 {
+                     "name":  "Piercing Gaze (0/10)",
+                     "tags":  [
+                                  "Attack",
+                                  "Target"
+                              ],
+                     "description":  "Deals base magic damage, 174 magic damage and 55% magic damage from gear. Has a 65% chance to slow by 40% for 5.3 seconds.",
+                     "params":  {
+                                    "Range":  "Ranged",
+                                    "Weapon":  "Any",
+                                    "Activation time":  "2 s",
+                                    "Cooldown":  "2 s",
+                                    "Mana cost":  "9"
+                                }
+                 },
+                 {
+                     "name":  "Disrupting Beam (0/10)",
+                     "tags":  [
+                                  "Attack",
+                                  "Target"
+                              ],
+                     "description":  "Deals basic magic damage, 281 magic damage and 110% magic damage from equipment.",
+                     "params":  {
+                                    "Range":  "Ranged",
+                                    "Weapon":  "Any",
+                                    "Activation time":  "3.4 s",
+                                    "Cooldown":  "4.6 s",
+                                    "Mana cost":  "25"
+                                }
+                 },
+                 {
+                     "name":  "Magic Barrier (0/10)",
+                     "tags":  [
+                                  "Support",
+                                  "Self"
+                              ],
+                     "description":  "Increases resistance by 12% for 900 seconds.",
+                     "params":  {
+                                    "Range":  "Ranged",
+                                    "Weapon":  "Any",
+                                    "Activation time":  "2.2 s",
+                                    "Cooldown":  "2.1 s",
+                                    "Mana cost":  "31"
+                                }
+                 },
+                 {
+                     "name":  "Stone Skin (0/10)",
+                     "tags":  [
+                                  "Support",
+                                  "Self"
+                              ],
+                     "description":  "Increases physical defense by 10% for 900 seconds.",
+                     "params":  {
+                                    "Range":  "Ranged",
+                                    "Weapon":  "Any",
+                                    "Activation time":  "2.2 s",
+                                    "Cooldown":  "2.1 s",
+                                    "Mana cost":  "31"
+                                }
+                 },
+                 {
+                     "name":  "Regeneration Seal (0/10)",
+                     "tags":  [
+                                  "Support",
+                                  "Self"
+                              ],
+                     "description":  "Increases health regeneration by 2 for 900 seconds.",
+                     "params":  {
+                                    "Range":  "Ranged",
+                                    "Weapon":  "Any",
+                                    "Activation time":  "2.2 s",
+                                    "Cooldown":  "2.1 s",
+                                    "Mana cost":  "31"
+                                }
+                 },
+                 {
+                     "name":  "Frosty Plague (0/10)",
+                     "tags":  [
+                                  "Attack",
+                                  "Target"
+                              ],
+                     "description":  "Deals basic magic damage and 882 magic damage over 15 seconds. Slows by 15% for 15 seconds. Has a chance of 6% to immobilize for 3 seconds.",
+                     "params":  {
+                                    "Range":  "Ranged",
+                                    "Weapon":  "Any",
+                                    "Activation time":  "2 s",
+                                    "Cooldown":  "7 s",
+                                    "Mana cost":  "68"
+                                }
+                 },
+                 {
+                     "name":  "Ice Torrent (0/10)",
+                     "tags":  [
+                                  "Attack",
+                                  "Party"
+                              ],
+                     "description":  "Deals the basic magic damage and 447 magic damage to the target group. Has a 33% chance to immobilize the target group for 2.2 seconds.",
+                     "params":  {
+                                    "Range":  "Ranged",
+                                    "Weapon":  "Any",
+                                    "Activation time":  "3 s",
+                                    "Cooldown":  "10.8 s",
+                                    "Mana cost":  "58"
+                                }
+                 },
+                 {
+                     "name":  "Spear of Darkness (0/10)",
+                     "tags":  [
+                                  "Attack",
+                                  "Target"
+                              ],
+                     "description":  "Deals basic magic damage, 723 magic damage and 165% damage from gear.",
+                     "params":  {
+                                    "Range":  "Ranged",
+                                    "Weapon":  "Any",
+                                    "Activation time":  "4 s",
+                                    "Cooldown":  "2 s",
+                                    "Mana cost":  "75"
+                                }
+                 },
+                 {
+                     "name":  "Arcana of Healing (0/10)",
+                     "tags":  [
+                                  "Support",
+                                  "Target"
+                              ],
+                     "description":  "Restores health by 370 and 8% of the base magic damage.",
+                     "params":  {
+                                    "Range":  "Ranged",
+                                    "Weapon":  "Any",
+                                    "Activation time":  "5.7 s",
+                                    "Cooldown":  "1 s",
+                                    "Mana cost":  "180"
+                                }
+                 },
+                 {
+                     "name":  "Sorcerous Volley (0/10)",
+                     "tags":  [
+                                  "Attack",
+                                  "Close"
+                              ],
+                     "description":  "Every 3 seconds deals base magic damage to nearby enemies and an additional 1,342 magic damage. Consumes 120 mana and continues until mana runs out or is cancelled.",
+                     "params":  {
+                                    "Range":  "Melee",
+                                    "Weapon":  "Any",
+                                    "Activation time":  "1.2 s",
+                                    "Cooldown":  "20.7 s",
+                                    "Mana cost":  "180"
+                                }
+                 },
+                 {
+                     "name":  "Mana Surge (0/10)",
+                     "tags":  [
+                                  "Support",
+                                  "Self"
+                              ],
+                     "description":  "Increases the mage\u0027s maximum mana pool by 15% for 450 s.",
+                     "params":  {
+                                    "Range":  "Ranged",
+                                    "Weapon":  "Any",
+                                    "Activation time":  "Instantly",
+                                    "Cooldown":  "4.5 s",
+                                    "Mana cost":  "150"
+                                }
+                 },
+                 {
+                     "name":  "Astral Blink (0/10)",
+                     "tags":  [
+                                  "Support",
+                                  "Self"
+                              ],
+                     "description":  "Allows the mage to instantly hide from all enemies.",
+                     "params":  {
+                                    "Range":  "Ranged",
+                                    "Weapon":  "Any",
+                                    "Activation time":  "Instantly",
+                                    "Cooldown":  "47.5 s",
+                                    "Mana cost":  "55"
+                                }
+                 },
+                 {
+                     "name":  "Supernova (0/10)",
+                     "tags":  [
+                                  "Attack",
+                                  "Close"
+                              ],
+                     "description":  "Deals base magic damage to nearby targets, 1,537 magic damage and 55% magic damage from gear. Resets mob targets.",
+                     "params":  {
+                                    "Range":  "Melee",
+                                    "Weapon":  "Any",
+                                    "Activation time":  "2 s",
+                                    "Cooldown":  "7 s",
+                                    "Mana cost":  "176"
+                                }
+                 },
+                 {
+                     "name":  "Mind Haze (0/10)",
+                     "tags":  [
+                                  "Attack",
+                                  "Target"
+                              ],
+                     "description":  "Deals base magic damage to the target, 1,811 magic damage and 165% magic damage from gear. Reduces the enemy\u0027s accuracy by 23% for 10 s.",
+                     "params":  {
+                                    "Range":  "Ranged",
+                                    "Weapon":  "Any",
+                                    "Activation time":  "4 s",
+                                    "Cooldown":  "4.5 s",
+                                    "Mana cost":  "176"
+                                }
+                 },
+                 {
+                     "name":  "Mystic Echo (0/10)",
+                     "tags":  [
+                                  "Support",
+                                  "Party"
+                              ],
+                     "description":  "Applies an effect to the mage\u0027s party that deals 12% additional magic damage based on the gear damage with each attack for 900 s.",
+                     "params":  {
+                                    "Range":  "Ranged",
+                                    "Weapon":  "Any",
+                                    "Activation time":  "1.8 s",
+                                    "Cooldown":  "2 s",
+                                    "Mana cost":  "225"
+                                }
+                 }
+             ],
+    "guardian":  [
+                     {
+                         "name":  "Powerful Swing (1/10)",
+                         "tags":  [
+                                      "Attack",
+                                      "Target"
+                                  ],
+                         "description":  "Deals basic physical damage to the target and an additional 118 в†’ 174 physical damage.",
+                         "params":  {
+                                        "Range":  "Melee",
+                                        "Weapon":  "Any, Unarmed",
+                                        "Activation time":  "0.9 s",
+                                        "Cooldown":  "2.3 s",
+                                        "Mana cost":  "2 в†’ 7"
+                                    }
+                     },
+                     {
+                         "name":  "Burning Wound (0/10)",
+                         "tags":  [
+                                      "Attack",
+                                      "Target"
+                                  ],
+                         "description":  "Deals basic physical damage to the target and 180 physical damage over 15 s.",
+                         "params":  {
+                                        "Range":  "Melee",
+                                        "Weapon":  "Axe, Hammer",
+                                        "Activation time":  "1 s",
+                                        "Cooldown":  "7.2 s",
+                                        "Mana cost":  "2"
+                                    }
+                     },
+                     {
+                         "name":  "Iron Will (0/10)",
+                         "tags":  [
+                                      "Support",
+                                      "Self"
+                                  ],
+                         "description":  "Increases the maximum health value by 12%, accelerates the guardian by 23%, and reduces physical attack from equipment by 23%.",
+                         "params":  {
+                                        "Range":  "Melee",
+                                        "Weapon":  "Any, Iron Will",
+                                        "Activation time":  "Instantly",
+                                        "Cooldown":  "2 s",
+                                        "Mana cost":  "20"
+                                    }
+                     },
+                     {
+                         "name":  "Blood Call (0/10)",
+                         "tags":  [
+                                      "Attack",
+                                      "Target"
+                                  ],
+                         "description":  "Deals basic physical damage to the target and 333 physical damage over 15 s. Provokes monsters to attack the guardian for 6 s. Does not miss.",
+                         "params":  {
+                                        "Range":  "Melee",
+                                        "Weapon":  "Axe, Hammer, Iron Will",
+                                        "Activation time":  "1.2 s",
+                                        "Cooldown":  "2.2 s",
+                                        "Mana cost":  "8"
+                                    }
+                     },
+                     {
+                         "name":  "Steel Vortex (0/10)",
+                         "tags":  [
+                                      "Attack",
+                                      "Close"
+                                  ],
+                         "description":  "Deals basic physical damage to the nearest enemies and 267 physical damage.",
+                         "params":  {
+                                        "Range":  "Melee",
+                                        "Weapon":  "Axe, Hammer",
+                                        "Activation time":  "1.6 s",
+                                        "Cooldown":  "6.8 s",
+                                        "Mana cost":  "20"
+                                    }
+                     },
+                     {
+                         "name":  "Battle Song (0/10)",
+                         "tags":  [
+                                      "Support",
+                                      "Party"
+                                  ],
+                         "description":  "Increases the group\u0027s maximum health by 12% for 900 s.",
+                         "params":  {
+                                        "Range":  "Ranged",
+                                        "Weapon":  "Any",
+                                        "Activation time":  "2.5 s",
+                                        "Cooldown":  "1 s",
+                                        "Mana cost":  "95"
+                                    }
+                     },
+                     {
+                         "name":  "Gut Punch (0/10)",
+                         "tags":  [
+                                      "Attack",
+                                      "Target"
+                                  ],
+                         "description":  "Deals basic physical damage to the target and 408 physical damage. Interrupts the target\u0027s ability preparation.",
+                         "params":  {
+                                        "Range":  "Melee",
+                                        "Weapon":  "Axe, Hammer, Iron Will",
+                                        "Activation time":  "1 s",
+                                        "Cooldown":  "12.5 s",
+                                        "Mana cost":  "19"
+                                    }
+                     },
+                     {
+                         "name":  "Stone Judgment (0/10)",
+                         "tags":  [
+                                      "Attack",
+                                      "Target"
+                                  ],
+                         "description":  "Deals base physical damage and 337 physical damage to the target. Has a 23% chance to stun the target for 4 seconds. Does not miss.",
+                         "params":  {
+                                        "Range":  "Melee",
+                                        "Weapon":  "Axe, Hammer",
+                                        "Activation time":  "1.1 s",
+                                        "Cooldown":  "5.1 s",
+                                        "Mana cost":  "24"
+                                    }
+                     },
+                     {
+                         "name":  "Crushing Rift (0/10)",
+                         "tags":  [
+                                      "Attack",
+                                      "Target"
+                                  ],
+                         "description":  "Deals basic physical damage to the target and 538 physical damage. Reduces the target\u0027s physical defense by 12% for 10 s.",
+                         "params":  {
+                                        "Range":  "Melee",
+                                        "Weapon":  "Axe, Hammer",
+                                        "Activation time":  "0.9 s",
+                                        "Cooldown":  "2.4 s",
+                                        "Mana cost":  "31"
+                                    }
+                     },
+                     {
+                         "name":  "Ancestral Covenant (0/10)",
+                         "tags":  [
+                                      "Support",
+                                      "Self"
+                                  ],
+                         "description":  "Deals 12% additional magic damage from weapons with each attack for 900 s.",
+                         "params":  {
+                                        "Range":  "Ranged",
+                                        "Weapon":  "Iron Will",
+                                        "Activation time":  "3.5 s",
+                                        "Cooldown":  "13 s",
+                                        "Mana cost":  "78"
+                                    }
+                     },
+                     {
+                         "name":  "Tempered Hurricane (0/10)",
+                         "tags":  [
+                                      "Attack",
+                                      "Close"
+                                  ],
+                         "description":  "Deals base physical damage to nearby enemies and 110% physical gear damage and 891 magic damage over 15 s.",
+                         "params":  {
+                                        "Range":  "Melee",
+                                        "Weapon":  "Axe, Hammer",
+                                        "Activation time":  "2.5 s",
+                                        "Cooldown":  "19.5 s",
+                                        "Mana cost":  "48"
+                                    }
+                     },
+                     {
+                         "name":  "Crushing Assault (0/10)",
+                         "tags":  [
+                                      "Attack",
+                                      "Target"
+                                  ],
+                         "description":  "Deals base physical damage and 708 physical damage to the target. Reduces the target\u0027s physical defense by 23% for 10 s. Also reduces the target\u0027s attack by 1% for 4 s.",
+                         "params":  {
+                                        "Range":  "Melee",
+                                        "Weapon":  "Iron Will",
+                                        "Activation time":  "1.2 s",
+                                        "Cooldown":  "5.9 s",
+                                        "Mana cost":  "41"
+                                    }
+                     },
+                     {
+                        "name":  "War's Embrace (0/10)",
+                         "tags":  [
+                                      "Support",
+                                      "Self"
+                                  ],
+                         "description":  "Reduces the guardian\u0027s maximum health by 25% and increases accuracy by 110% for 900 s.",
+                         "params":  {
+                                        "Range":  "Ranged",
+                                        "Weapon":  "Any",
+                                        "Activation time":  "3 s",
+                                        "Cooldown":  "13 s",
+                                        "Mana cost":  "29"
+                                    }
+                     },
+                     {
+                         "name":  "Taunting Shout (0/10)",
+                         "tags":  [
+                                      "Curse",
+                                      "Party"
+                                  ],
+                         "description":  "Provokes all monsters to attack the guardian for 10.5 s..",
+                         "params":  {
+                                        "Range":  "Ranged",
+                                        "Weapon":  "Iron Will",
+                                        "Activation time":  "3 s",
+                                        "Cooldown":  "58 s",
+                                        "Mana cost":  "48"
+                                    }
+                     },
+                     {
+                         "name":  "Concussive Onslaught (0/10)",
+                         "tags":  [
+                                      "Attack",
+                                      "Close"
+                                  ],
+                         "description":  "Deals base physical damage and 1,001 physical damage to nearby enemies. Resets mob\u0027s target.",
+                         "params":  {
+                                        "Range":  "Melee",
+                                        "Weapon":  "Axe, Hammer",
+                                        "Activation time":  "1.5 s",
+                                        "Cooldown":  "6.9 s",
+                                        "Mana cost":  "59"
+                                    }
+                     },
+                     {
+                         "name":  "Earthquake (0/10)",
+                         "tags":  [
+                                      "Attack",
+                                      "Party"
+                                  ],
+                         "description":  "Deals base physical damage and 498 physical damage to the target group. Slows enemies by 50% for 4.4 s.",
+                         "params":  {
+                                        "Range":  "Ranged",
+                                        "Weapon":  "Iron Will",
+                                        "Activation time":  "1.4 s",
+                                        "Cooldown":  "7 s",
+                                        "Mana cost":  "59"
+                                    }
+                     },
+                     {
+                         "name":  "Overwhelming Presence (0/10)",
+                         "tags":  [
+                                      "Curse",
+                                      "Close"
+                                  ],
+                         "description":  "Reduces physical attack by 12% of the guardian\u0027s physical gear damage and attack speed by 23% of nearby enemies for 10 s.",
+                         "params":  {
+                                        "Range":  "Melee",
+                                        "Weapon":  "Axe, Hammer, Iron Will",
+                                        "Activation time":  "3 s",
+                                        "Cooldown":  "13 s",
+                                        "Mana cost":  "62"
+                                    }
+                     }
+                 ],
+    "warrior":  [
+                    {
+                        "name":  "Kick (1/10)",
+                        "tags":  [
+                                     "Attack",
+                                     "Target"
+                                 ],
+                        "description":  "Deals basic physical damage and 103 в†’ 172 physical damage.",
+                        "params":  {
+                                       "Range":  "Melee",
+                                       "Weapon":  "Any, Unarmed",
+                                       "Activation time":  "1.1 s",
+                                       "Cooldown":  "2.3 s",
+                                       "Mana cost":  "2 в†’ 9"
+                                   }
+                    },
+                    {
+                        "name":  "Cleaving Strike (0/10)",
+                        "tags":  [
+                                     "Attack",
+                                     "Target"
+                                 ],
+                        "description":  "Deals basic physical damage and 173 physical damage over 15 seconds.",
+                        "params":  {
+                                       "Range":  "Melee",
+                                       "Weapon":  "Melee",
+                                       "Activation time":  "0.9 s",
+                                       "Cooldown":  "7.3 s",
+                                       "Mana cost":  "3"
+                                   }
+                    },
+                    {
+                        "name":  "Vanguard (0/10)",
+                        "tags":  [
+                                     "Support",
+                                     "Party"
+                                 ],
+                        "description":  "Increases the group\u0027s physical defense by 15% for 900 s.",
+                        "params":  {
+                                       "Range":  "Ranged",
+                                       "Weapon":  "Any",
+                                       "Activation time":  "2.4 s",
+                                       "Cooldown":  "1.2 s",
+                                       "Mana cost":  "91"
+                                   }
+                    },
+                    {
+                        "name":  "Sprint (0/10)",
+                        "tags":  [
+                                     "Support",
+                                     "Self"
+                                 ],
+                        "description":  "Accelerates by 45% over 15 s.",
+                        "params":  {
+                                       "Range":  "Ranged",
+                                       "Weapon":  "Any",
+                                       "Activation time":  "Instantly",
+                                       "Cooldown":  "60 s",
+                                       "Mana cost":  "15"
+                                   }
+                    },
+                    {
+                        "name":  "Taunting Strike (0/10)",
+                        "tags":  [
+                                     "Attack",
+                                     "Target"
+                                 ],
+                        "description":  "Deals basic physical damage and 267 physical damage. Has a 35% chance to provoke the monster to attack the warrior for 10 s.",
+                        "params":  {
+                                       "Range":  "Melee",
+                                       "Weapon":  "Melee",
+                                       "Activation time":  "1.2 s",
+                                       "Cooldown":  "2.3 s",
+                                       "Mana cost":  "15"
+                                   }
+                    },
+                    {
+                        "name":  "Physical Defense Stance (0/10)",
+                        "tags":  [
+                                     "Support",
+                                     "Self"
+                                 ],
+                        "description":  "Increases physical defense by 30% and decreases magical resistance by 30% for 30 seconds.",
+                        "params":  {
+                                       "Range":  "Ranged",
+                                       "Weapon":  "Any",
+                                       "Activation time":  "Instantly",
+                                       "Cooldown":  "10 s",
+                                       "Mana cost":  "20"
+                                   }
+                    },
+                    {
+                        "name":  "Magic Resistance Stance (0/10)",
+                        "tags":  [
+                                     "Support",
+                                     "Self"
+                                 ],
+                        "description":  "Increases magic resistance by 30% and decreases physical defense by 30% for 30 seconds.",
+                        "params":  {
+                                       "Range":  "Ranged",
+                                       "Weapon":  "Any",
+                                       "Activation time":  "Instantly",
+                                       "Cooldown":  "10 s",
+                                       "Mana cost":  "20"
+                                   }
+                    },
+                    {
+                        "name":  "Stunning Roar (0/10)",
+                        "tags":  [
+                                     "Curse",
+                                     "Close"
+                                 ],
+                        "description":  "Stuns nearby enemies for 3.3 s.",
+                        "params":  {
+                                       "Range":  "Ranged",
+                                       "Weapon":  "Any",
+                                       "Activation time":  "2.4 s",
+                                       "Cooldown":  "26 s",
+                                       "Mana cost":  "53"
+                                   }
+                    },
+                    {
+                        "name":  "Guard Strike (0/10)",
+                        "tags":  [
+                                     "Attack",
+                                     "Target"
+                                 ],
+                        "description":  "Deals basic physical damage, 55% physical damage from gear and 389 physical damage. Has a 23% chance to stun for 3 s.",
+                        "params":  {
+                                       "Range":  "Melee",
+                                       "Weapon":  "Melee",
+                                       "Activation time":  "2.2 s",
+                                       "Cooldown":  "4.2 s",
+                                       "Mana cost":  "32"
+                                   }
+                    },
+                    {
+                        "name":  "Binding Slash (0/10)",
+                        "tags":  [
+                                     "Attack",
+                                     "Target"
+                                 ],
+                        "description":  "Deals base physical damage and 592 physical damage to the target. Has a 77% chance to slow the target by 42% for 10 s.",
+                        "params":  {
+                                       "Range":  "Melee",
+                                       "Weapon":  "Any",
+                                       "Activation time":  "1.3 s",
+                                       "Cooldown":  "2 s",
+                                       "Mana cost":  "36"
+                                   }
+                    },
+                    {
+                        "name":  "Thirst for Life (0/10)",
+                        "tags":  [
+                                     "Support",
+                                     "Self"
+                                 ],
+                        "description":  "Restores 20% health instantly and 250 health over 15 seconds.",
+                        "params":  {
+                                       "Range":  "Ranged",
+                                       "Weapon":  "Any",
+                                       "Activation time":  "Instantly",
+                                       "Cooldown":  "45 s",
+                                       "Mana cost":  "75"
+                                   }
+                    },
+                    {
+                        "name":  "Heavy Fist (0/10)",
+                        "tags":  [
+                                     "Attack",
+                                     "Target"
+                                 ],
+                        "description":  "Deals base physical damage and 947 physical damage to the target. Slows the target by 53% for 8 s.",
+                        "params":  {
+                                       "Range":  "Melee",
+                                       "Weapon":  "Fist, Unarmed",
+                                       "Activation time":  "1 s",
+                                       "Cooldown":  "21.4 s",
+                                       "Mana cost":  "62"
+                                   }
+                    },
+                    {
+                        "name":  "Interrupting Blow (0/10)",
+                        "tags":  [
+                                     "Attack",
+                                     "Target"
+                                 ],
+                        "description":  "Deals base physical damage to the target, 55% physical damage from gear, and 1,013 physical damage. Stuns the target for 3.3 s.",
+                        "params":  {
+                                       "Range":  "Melee",
+                                       "Weapon":  "Axe",
+                                       "Activation time":  "1.9 s",
+                                       "Cooldown":  "22 s",
+                                       "Mana cost":  "62"
+                                   }
+                    },
+                    {
+                        "name":  "Amputation (0/10)",
+                        "tags":  [
+                                     "Attack",
+                                     "Target"
+                                 ],
+                        "description":  "Deals base physical damage and 947 physical damage to the target. Increases the target\u0027s skill activation time by 50% for 3.5 s. Never misses.",
+                        "params":  {
+                                       "Range":  "Melee",
+                                       "Weapon":  "Sword",
+                                       "Activation time":  "1.1 s",
+                                       "Cooldown":  "21.4 s",
+                                       "Mana cost":  "62"
+                                   }
+                    },
+                    {
+                        "name":  "Wall of Blades (0/10)",
+                        "tags":  [
+                                     "Attack",
+                                     "Close"
+                                 ],
+                        "description":  "Deals base physical damage to nearby targets and an additional 631 physical damage.",
+                        "params":  {
+                                       "Range":  "Melee",
+                                       "Weapon":  "Any",
+                                       "Activation time":  "1 s",
+                                       "Cooldown":  "7.3 s",
+                                       "Mana cost":  "71"
+                                   }
+                    },
+                    {
+                        "name":  "Battle Sweep (0/10)",
+                        "tags":  [
+                                     "Attack",
+                                     "Close"
+                                 ],
+                        "description":  "Deals base physical damage to nearby targets, 55% physical damage from gear and 943 physical damage.",
+                        "params":  {
+                                       "Range":  "Melee",
+                                       "Weapon":  "Axe",
+                                       "Activation time":  "2.4 s",
+                                       "Cooldown":  "4 s",
+                                       "Mana cost":  "82"
+                                   }
+                    },
+                    {
+                        "name":  "Blade's Grace (0/10)",
+                        "tags":  [
+                                     "Attack",
+                                     "Target"
+                                 ],
+                        "description":  "Deals base physical damage to the target and 1,069 physical damage.",
+                        "params":  {
+                                       "Range":  "Ranged",
+                                       "Weapon":  "Sword",
+                                       "Activation time":  "1.7 s",
+                                       "Cooldown":  "5.1 s",
+                                       "Mana cost":  "55"
+                                   }
+                    },
+                    {
+                        "name":  "Upperut (0/10)",
+                        "tags":  [
+                                     "Attack",
+                                     "Target"
+                                 ],
+                        "description":  "Deals base physical damage and 1,069 physical damage to the target. Breaks skill activation.",
+                        "params":  {
+                                       "Range":  "Melee",
+                                       "Weapon":  "Fist, Unarmed",
+                                       "Activation time":  "1.4 s",
+                                       "Cooldown":  "10.8 s",
+                                       "Mana cost":  "66"
+                                   }
+                    },
+                    {
+                        "name":  "Wide Lunge (0/10)",
+                        "tags":  [
+                                     "Attack",
+                                     "Close"
+                                 ],
+                        "description":  "Deals base physical damage to nearby targets and an additional 960 physical damage.",
+                        "params":  {
+                                       "Range":  "Melee",
+                                       "Weapon":  "Any",
+                                       "Activation time":  "1.2 s",
+                                       "Cooldown":  "7.1 s",
+                                       "Mana cost":  "92"
+                                   }
+                    }
+                ],
+    "priest":  [
+                   {
+                       "name":  "Faith Arrow (1/10)",
+                       "tags":  [
+                                    "Attack",
+                                    "Target"
+                                ],
+                       "description":  "Deals base magical damage to the target, 55 в†’ 60% of gear damage and 124 в†’ 228 as physical damage.",
+                       "params":  {
+                                      "Range":  "Ranged",
+                                      "Weapon":  "Any, Unarmed",
+                                      "Activation time":  "2.5 s",
+                                      "Cooldown":  "1 s",
+                                      "Mana cost":  "5 в†’ 20"
+                                  }
+                   },
+                   {
+                       "name":  "Life Breath (0/10)",
+                       "tags":  [
+                                    "Support",
+                                    "Target"
+                                ],
+                       "description":  "Restores its own or the target\u0027s health by 84 and 3% of the base magical attack over 15 s.",
+                       "params":  {
+                                      "Range":  "Ranged",
+                                      "Weapon":  "Any",
+                                      "Activation time":  "2 s",
+                                      "Cooldown":  "1 s",
+                                      "Mana cost":  "27"
+                                  }
+                   },
+                   {
+                       "name":  "Flame Lash (0/10)",
+                       "tags":  [
+                                    "Attack",
+                                    "Target"
+                                ],
+                       "description":  "Deals basic magic damage to the target, 170 magic damage and 55% magic damage from gear. Has a 65% chance to slow the target by 40% for 5.3 s.",
+                       "params":  {
+                                      "Range":  "Ranged",
+                                      "Weapon":  "Any",
+                                      "Activation time":  "2 s",
+                                      "Cooldown":  "2 s",
+                                      "Mana cost":  "9"
+                                  }
+                   },
+                   {
+                       "name":  "Vital Light (0/10)",
+                       "tags":  [
+                                    "Support",
+                                    "Target"
+                                ],
+                       "description":  "Restores its own or the target\u0027s health by 80 and 2% of the base magic damage.",
+                       "params":  {
+                                      "Range":  "Ranged",
+                                      "Weapon":  "Any",
+                                      "Activation time":  "2.5 s",
+                                      "Cooldown":  "1 s",
+                                      "Mana cost":  "27"
+                                  }
+                   },
+                   {
+                       "name":  "Aegis (0/10)",
+                       "tags":  [
+                                    "Support",
+                                    "Self"
+                                ],
+                       "description":  "Absorbs 53% of incoming physical damage for 20 s. For each unit of damage, 20 mana is consumed.",
+                       "params":  {
+                                      "Range":  "Ranged",
+                                      "Weapon":  "Any",
+                                      "Activation time":  "1.5 s",
+                                      "Cooldown":  "33.4 s",
+                                      "Mana cost":  "12"
+                                  }
+                   },
+                   {
+                       "name":  "Battle Prayer (0/10)",
+                       "tags":  [
+                                    "Support",
+                                    "Party"
+                                ],
+                       "description":  "Increases the group\u0027s physical defense and resistance by 15% for 900 s.",
+                       "params":  {
+                                      "Range":  "Ranged",
+                                      "Weapon":  "Any",
+                                      "Activation time":  "1.5 s",
+                                      "Cooldown":  "1 s",
+                                      "Mana cost":  "48"
+                                  }
+                   },
+                   {
+                       "name":  "Solar Gift (0/10)",
+                       "tags":  [
+                                    "Support",
+                                    "Party"
+                                ],
+                       "description":  "Increases the group\u0027s health and mana regeneration speed by 2 per second for 900 s.",
+                       "params":  {
+                                      "Range":  "Ranged",
+                                      "Weapon":  "Any",
+                                      "Activation time":  "1.5 s",
+                                      "Cooldown":  "1 s",
+                                      "Mana cost":  "138"
+                                  }
+                   },
+                   {
+                       "name":  "Incineration (0/10)",
+                       "tags":  [
+                                    "Attack",
+                                    "Target"
+                                ],
+                       "description":  "Deals basic magic damage to the target and 889 magic damage over 15 s.",
+                       "params":  {
+                                      "Range":  "Ranged",
+                                      "Weapon":  "Any",
+                                      "Activation time":  "3.6 s",
+                                      "Cooldown":  "6.8 s",
+                                      "Mana cost":  "58"
+                                  }
+                   },
+                   {
+                       "name":  "Divine Touch (0/10)",
+                       "tags":  [
+                                    "Support",
+                                    "Target"
+                                ],
+                       "description":  "Revives the target. Reduces experience loss from death by 7%.",
+                       "params":  {
+                                      "Range":  "Ranged",
+                                      "Weapon":  "Any",
+                                      "Activation time":  "7 s",
+                                      "Cooldown":  "1 s",
+                                      "Mana cost":  "285"
+                                  }
+                   },
+                   {
+                       "name":  "Radiant Cascade (0/10)",
+                       "tags":  [
+                                    "Attack",
+                                    "Party"
+                                ],
+                       "description":  "Deals basic magic damage to the target\u0027s party, 643 magic damage and 110% magic damage from gear.",
+                       "params":  {
+                                      "Range":  "Ranged",
+                                      "Weapon":  "Any",
+                                      "Activation time":  "4 s",
+                                      "Cooldown":  "6.5 s",
+                                      "Mana cost":  "104"
+                                  }
+                   },
+                   {
+                       "name":  "Suppressing Chains (0/10)",
+                       "tags":  [
+                                    "Curse",
+                                    "Target"
+                                ],
+                       "description":  "Reduces its physical defense and resistance, as well as targets by 12% for 11 s.",
+                       "params":  {
+                                      "Range":  "Ranged",
+                                      "Weapon":  "Any",
+                                      "Activation time":  "2 s",
+                                      "Cooldown":  "2 s",
+                                      "Mana cost":  "57"
+                                  }
+                   },
+                   {
+                       "name":  "Purification (0/10)",
+                       "tags":  [
+                                    "Support",
+                                    "Target"
+                                ],
+                       "description":  "Removes all negative effects.",
+                       "params":  {
+                                      "Range":  "Ranged",
+                                      "Weapon":  "Any",
+                                      "Activation time":  "2 s",
+                                      "Cooldown":  "13 s",
+                                      "Mana cost":  "110"
+                                  }
+                   },
+                   {
+                       "name":  "Spiritual Majesty (0/10)",
+                       "tags":  [
+                                    "Support",
+                                    "Party"
+                                ],
+                       "description":  "Increases the magic attack of all party members by 25% for 900 s.",
+                       "params":  {
+                                      "Range":  "Ranged",
+                                      "Weapon":  "Any",
+                                      "Activation time":  "1.5 s",
+                                      "Cooldown":  "1 s",
+                                      "Mana cost":  "174"
+                                  }
+                   },
+                   {
+                       "name":  "Earth Tremor (0/10)",
+                       "tags":  [
+                                    "Attack",
+                                    "Close"
+                                ],
+                       "description":  "Deals base magic damage and 1,137 magic damage to nearby targets. Has a 50% chance to immobilize for 3 s.",
+                       "params":  {
+                                      "Range":  "Melee",
+                                      "Weapon":  "Any",
+                                      "Activation time":  "2 s",
+                                      "Cooldown":  "21 s",
+                                      "Mana cost":  "261"
+                                  }
+                   },
+                   {
+                       "name":  "Healing Moleben (0/10)",
+                       "tags":  [
+                                    "Support",
+                                    "Party"
+                                ],
+                       "description":  "Restores health to all party members in the amount of 530 and 11% of base magic damage.",
+                       "params":  {
+                                      "Range":  "Ranged",
+                                      "Weapon":  "Any",
+                                      "Activation time":  "4.5 s",
+                                      "Cooldown":  "2 s",
+                                      "Mana cost":  "475"
+                                  }
+                   },
+                   {
+                       "name":  "Seizuring Chains (0/10)",
+                       "tags":  [
+                                    "Curse",
+                                    "Target"
+                                ],
+                       "description":  "Immobilizes the target for up to 6 s. Reduces the priest\u0027s magic attack by 50% for 2.4 s.",
+                       "params":  {
+                                      "Range":  "Ranged",
+                                      "Weapon":  "Any",
+                                      "Activation time":  "2 s",
+                                      "Cooldown":  "20.9 s",
+                                      "Mana cost":  "194"
+                                  }
+                   },
+                   {
+                       "name":  "Fire Pillar (0/10)",
+                       "tags":  [
+                                    "Attack",
+                                    "Target"
+                                ],
+                       "description":  "Deals base magic damage to the target, 2,052 magic damage and 110% magic damage from gear.",
+                       "params":  {
+                                      "Range":  "Ranged",
+                                      "Weapon":  "Any",
+                                      "Activation time":  "3.7 s",
+                                      "Cooldown":  "4.8 s",
+                                      "Mana cost":  "264"
+                                  }
+                   }
+               ]
+}

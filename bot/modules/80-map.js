@@ -47,6 +47,22 @@
     return ensureMapZoomedOut();
   }
 
+  // AI CHANGED: slice 21 — game may reset camera zoom on death / poor connection; clear maxedOut so ensureMapZoomedOut runs again.
+  function resetZoomAssumptionIfSessionRisk(session) {
+    if (!session) {
+      return false;
+    }
+    const risky = !!(session.dead || session.poorConnection);
+    if (!risky) {
+      return false;
+    }
+    if (Runtime.zoom.maxedOut) {
+      Logger.log("ZOOM", "Cleared maxedOut (death or poor connection) — next scan will re-apply wheel zoom-out");
+    }
+    Runtime.zoom.maxedOut = false;
+    return true;
+  }
+
   // AI CHANGED: Added movement-state detector via yellow canvas condition bar "Moving".
   function isMovementInProgress() {
     const movingNode = document.querySelector(Config.selectors.movingBarValue);
@@ -180,7 +196,7 @@
         continue;
       }
       // AI CHANGED: Wait for coordinate change from previously selected tile, not just popup visibility.
-      const coordsChangedInTime = await waitForCondition(
+      let coordsChangedInTime = await waitForCondition(
         `scan ${point.key} coords change`,
         () => {
           const c = readCurrentCoordsFromPopup();
@@ -189,6 +205,29 @@
         // AI CHANGED: Use faster polling/timeout for quicker ring scan.
         { timeoutMs: Config.scan.tileTimeoutMs, pollMs: Config.scan.pollMs }
       );
+      // AI CHANGED: slice 14 — occasional slow popup misses 220ms window; one re-click + re-wait before marking blocked.
+      const coordRetries = Number.isFinite(Config.scan.tileCoordVerifyRetries)
+        ? Config.scan.tileCoordVerifyRetries
+        : 0;
+      if (!coordsChangedInTime && coordRetries > 0) {
+        const settle = Number.isFinite(Config.scan.tileRetrySettleMs) ? Config.scan.tileRetrySettleMs : 90;
+        for (let r = 0; r < coordRetries; r += 1) {
+          await sleep(settle);
+          Logger.log("SCAN", `scan ${point.key} coords change retry`, { attempt: r + 1, max: coordRetries });
+          clickMapRelative(point.dx, point.dy);
+          coordsChangedInTime = await waitForCondition(
+            `scan ${point.key} coords change`,
+            () => {
+              const c = readCurrentCoordsFromPopup();
+              return !!(c && (c.x !== lastObservedCoords.x || c.y !== lastObservedCoords.y));
+            },
+            { timeoutMs: Config.scan.tileTimeoutMs, pollMs: Config.scan.pollMs }
+          );
+          if (coordsChangedInTime) {
+            break;
+          }
+        }
+      }
       // AI CHANGED: Classify tiles by coordinate change only, independent of popup detail parsing.
       const currentCoords = readCurrentCoordsFromPopup() || lastObservedCoords;
       const details = readTilePopupDetails();
@@ -403,6 +442,21 @@
         kinds.push("grey_chest");
         continue;
       }
+      // AI CHANGED: Live recon — some grey/silver chest builds use a different fill or filename than #a5abb5.
+      if (
+        marker.includes("grey-chest") ||
+        marker.includes("greychest") ||
+        marker.includes("gray-chest") ||
+        marker.includes("silver-chest") ||
+        marker.includes("icon-src-chest") ||
+        (marker.includes("chest") &&
+          !marker.includes("purple") &&
+          !marker.includes("7b2dda") &&
+          !marker.includes("2d53da"))
+      ) {
+        kinds.push("grey_chest");
+        continue;
+      }
       kinds.push("other_loot");
     }
     return kinds;
@@ -417,13 +471,13 @@
     const enemies = Number.isFinite(tile.enemies) ? tile.enemies : 0;
     const allies = Number.isFinite(tile.allies) ? tile.allies : 0;
 
-    // AI CHANGED: Hard-avoid goblin/boss tiles.
-    if (lootKinds.includes("goblin") || lootKinds.includes("boss")) {
+    // AI CHANGED: Hard-avoid boss (champion) tiles only — goblin events are walkable targets like other loot.
+    if (lootKinds.includes("boss")) {
       return -500000;
     }
 
     // AI CHANGED: Apply exact loot ranking:
-    // purple chest > blue chest > broken cargo > altar > grey chest > contract > only mobs > empty/allies.
+    // purple chest > blue chest > broken cargo > altar > grey chest > unknown icon > contract > only mobs > empty/allies.
     let base = 0;
     if (lootKinds.includes("purple_chest")) {
       base = 900000;
@@ -435,8 +489,16 @@
       base = 600000;
     } else if (lootKinds.includes("grey_chest")) {
       base = 500000;
+    } else if (lootKinds.includes("other_loot")) {
+      // AI CHANGED: Icons we do not classify used to fall through to "mobs or empty" base — chest-only tiles
+      // often became 100000 while a 2-mob neighbor scored 300400, so the bot skipped real loot visually
+      // marked on the map. Tier sits below grey_chest (known hex) but above contract.
+      base = 450000;
     } else if (lootKinds.includes("contract")) {
       base = 400000;
+    } else if (lootKinds.includes("goblin")) {
+      // AI CHANGED: Goblin events are allowed — rank above plain empty / mob-only neighbors so scan picks them when visible.
+      base = 350000;
     } else if (enemies > 0) {
       base = 300000;
     } else {
@@ -698,7 +760,7 @@
   }
 
   // AI CHANGED: Helper — does a 1-ring scan have any USEFUL loot? Useful = at least one walkable tile
-  // with non-empty loot icons that aren't goblin/boss (those are hard-avoided).
+  // with non-empty loot icons that isn't boss-only (boss tiles stay hard-avoided in scoring).
   function ringHasUsefulLoot(scanSnapshot) {
     if (!scanSnapshot || !scanSnapshot.ok || !Array.isArray(scanSnapshot.results)) {
       return false;
@@ -712,7 +774,7 @@
       if (kinds.length === 0) {
         continue;
       }
-      if (kinds.includes("goblin") || kinds.includes("boss")) {
+      if (kinds.includes("boss")) {
         continue;
       }
       return true;
@@ -736,10 +798,10 @@
   // AI CHANGED: Move by scan result first, fallback to old exploration if needed.
   // Order:
   //   1. Run 1-ring scan (popup-based, gives explicit loot icons + ally/enemy counts).
-  //   2. If 1-ring has any useful (non-goblin/boss) loot -> pick it via existing scoring.
+  //   2. If 1-ring has any useful (non-boss) loot -> pick it via existing scoring.
   //   3. Else -> run 2-ring visual scan for yellow-die markers (loot 2 tiles away).
   //      If a die is found, override target to the 1-ring tile in that direction
-  //      (only if that 1-ring tile is walkable and not goblin/boss).
+  //      (only if that 1-ring tile is walkable and not boss).
   //   4. Else -> fall back to existing scoring (covers empty-but-walkable tiles, allies-stacking, etc.).
   async function exploreByScan() {
     const now = readBasicState();
@@ -759,7 +821,7 @@
     if (ringHasUsefulLoot(scan)) {
       target = chooseBestScannedNeighbor(scan);
     } else {
-      // AI CHANGED: 1-ring is empty (or only goblin/boss). Visually probe the 2-ring for a yellow die hint.
+      // AI CHANGED: 1-ring is empty (or only boss). Visually probe the 2-ring for a yellow die hint.
       setBotStatus("scanning", "2-ring visual scan for yellow die");
       secondRing = await scanSecondRingForDie();
       if (secondRing && secondRing.ok && secondRing.best) {
@@ -774,7 +836,7 @@
             continue;
           }
           const kinds = parseLootKindsFromMarkers(tile.lootIcons || []);
-          if (kinds.includes("goblin") || kinds.includes("boss")) {
+          if (kinds.includes("boss")) {
             continue;
           }
           ringCandidates.push(tile);

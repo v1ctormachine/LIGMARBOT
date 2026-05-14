@@ -42,15 +42,31 @@ Design principles:
 ### Current bot cycle (built from `bot/modules/*.js` into `bot/bot.user.js`)
 
 - **Start of each farm cycle**: `prepMapForCombatCycle()` only ensures the map is open (`ensureMapOpen`). There is no tactical ring scan here; neighbor scanning is **`scanNeighborRing()`** inside **`exploreByScan()`** after idle/no-loot.
-- **Find enemy verification**: success when **target HP** becomes valid (red condition bar text parsed as `cur / max`); enemy count is **not** used as a pre-attack signal. HP strings may include **thousands separators** (e.g. `1,399 / 1,399`); `parseFractionText` normalizes commas before parsing so verification is not stuck at `valid: false` while the bar is visible.
+- **Find enemy verification**: success when **target HP** becomes valid (red condition bar text parsed as `cur / max`); enemy count is **not** used as a pre-attack signal. HP strings may include **thousands separators** (e.g. `1,399 / 1,399`); `parseFractionText` normalizes commas before parsing so verification is not stuck at `valid: false` while the bar is visible. After a successful **`clickFindEnemyVerified()`** (including re-find fallback, but **not** the attackers-popup retarget path), **`closeMapIfOpenAfterFindEnemy()`** toggles the map closed when the center-map control is visible — **`Config.combat.closeMapAfterFindEnemy`** (default **true**) / **`closeMapAfterFindEnemySettleMs`**. Loot still calls **`ensureMapOpen()`** before recenter/tile click.
 - **Loot, when a loot button exists**: click loot → **`ensureMapOpen()`** → **`clickCenterMapVerified()`** → click **current map center tile** → wait until **`div.battle-event-button.highlight` stays absent** and the visible **`app-battle-status-bar span.value`** text is **not** a known busy label (`opening`, `activating`; extend via `Config.verification.lootInteractionBusySubstrings`) for a **stable window** (`Config.verification.lootSettleStableMs`, default ~400ms). This avoids treating post-click DOM flicker or mid-animation gaps as “done”.
 - **Movement gate**: actions that depend on a settled position wait until the moving-state UI bar (`Config.selectors.movingBarValue`) clears, so scan/ring code never sees mid-step state.
+- **Charge-skill opener**: parsed **`channel_gear`** skills are treated as **hold → release** actions. **`plannerBuildChargeReleasePlan()`** now performs a **dense hold search**: verified per-skill fractions and coarse candidates still participate, but the planner also sweeps the full hold range using **`Config.combat.chargeSkillDynamicSearchStepFraction`** (default **1%**). Normal healthy-target fights still pick the release with the best opener-horizon total, but low-target fights now have an explicit **execute** objective: if any charge release can kill the live target inside the execute window, the planner picks the **earliest lethal release** instead of the highest 5-second score. Charge candidates keep the same **context-aware** scoring as other openers (overkill cap, hold-risk under pressure, cooldown forecast, follow-up value), and the chosen charge plan is now carried all the way from planner pick to **`handleChargeSkillOpener()`** so runtime executes the exact release that won the comparison. Optional **`Config.combat.chargeSkillReleaseOverrideMs`** (> **0**) overrides fraction/dynamic search and sets the planned hold in milliseconds for debugging. **`attackUntilProgress`** waits through the chosen hold, releases via **`clickChargingSkillCancelUi({ expectedSkillName })`** (opener **`skillRecord.name`**) when needed, then verifies HP/count progress. Default **`Config.combat.chargeCancelRequireCastBarNameMatch`** (**true**): any cancel tap (map-gap or DOM) runs only when the cancel hint is visible **and** visible cast/progress bar text matches that expected name (**`readVisibleCombatCastBarTexts()`** via **`isCastBarShowingExpectedSkillNameForChargeCancel`**), reducing false cancels when a stale hint appears for a different cast. **`clickChargingSkillCancelUi({ dangerBypassNameMatch: true })`** skips that gate for emergency callers (HP-spike safety in **`processCombatSafetyHpSpikeIfNeeded`**) so cancel is attempted immediately before **Windy Dome**. Set **`false`** for legacy hint-only behavior on normal opener cancels (still prefers map-gap when configured). The **first** post-release verify window stays **aggressive** by default (**`chargeSkillReleaseProgressTimeoutMs`**, **250 ms**). For **`cancel_release`** when **`releaseFraction`** is below **`chargeSkillReleaseLateTinyFractionThreshold`**, the first window widens to **`chargeSkillReleaseTinyFractionProgressTimeoutMs`** (default **520 ms**, still capped by **`attackProgressTimeoutMs`**) so micro execute-style tap releases are less likely to false-timeout before HP updates. If that fast window still shows no progress for **`cancel_release`** or **`full_charge`**, a **second** wait runs for up to **`chargeSkillReleaseLateProgressTimeoutMs`** (default **2000 ms**, capped by **`attackProgressTimeoutMs`**) **before** alternate ranked openers. For **`cancel_release`** with **`releaseFraction`** below the same tiny threshold, the second wait is further capped by **`chargeSkillReleaseLateTinyCancelCapMs`** (default **650 ms**) so micro tap-cancels do not freeze combat for long silent polls while still absorbing latency after the first window. For full charge, the short window is only a **post-fire check**; there is no late cancel path after the shot already auto-fired. The older stuck-charge cancel/basic path remains a **fallback** for unparsed or desynced cases, not the normal model.
+- **TEST forced opener**: `runUiTestBundle()` still sets a **test-only** planner override `Runtime.planner.forcedOpenerSkillName` (default **`"Sniper Shot"`**) so the soak/diagnostic path can exercise charge logic even if the normal planner would rank another opener higher. By default TEST now uses the real dynamic charge policy and reports **`Charge release policy`**, **`Dynamic charge scoring`**, the new **`Execute policy`**, and **`Combat sustain`**. If you pass `forceChargeReleaseFraction`, TEST temporarily disables dynamic charge scoring and uses that exact fraction so manual verification of one specific release point still works. After the forced soak, TEST clears the override and runs a short **`Natural Sniper Shot`** probe window so one click shows both "forced works" and "natural planner picks it now / still not yet". That natural probe is **post-force cooldown aware**, **live-combat aware**, and **opportunity aware**: when TEST just forced `Sniper Shot`, it first waits for the skill to become planner-eligible again, then watches real opener runtime events for a short window **while auto-farm is still running**. It only scores **`pickedNaturally`** from a **fresh calm single-target opener opportunity** (healthy target HP, low pressure, real ranked opener detail). If another ranked skill wins that same qualified window, TEST records **`acceptableFreshAlternative`** and the check still **passes** (export **`reason`**: **`fresh_opener_other_skill_observed`**) so planner-valid choices do not force **`Natural Sniper Shot`** to soft-fail the suite. If the post-force window only sees later in-fight picks or half-spent targets, the check is reported as skipped instead of a misleading failure. The ranked soak is also more tolerant of near-miss runs: if there is **partial ranked activity** before the initial timeout but the event quota is still slightly short, TEST now gives the soak one extra window instead of failing immediately as a critical false negative. TEST also emits a compact **`Golden comparator`** payload that bundles the current opener decision, baseline / horizon context, enemy adaptation, execute/sustain policy, top candidates, runtime counters, and natural/forced `Sniper Shot` evidence into one always-on debug object. All overrides are restored when TEST ends and do **not** affect regular auto-farm policy.
+- **Ranked opener (Pack A + horizon v1)**: when **`Config.planner.useRankedAttackSkillsInCombat`** is on, **`plannerPickSkillOpeningPick()`** updates **`Runtime.planner`** on every attempt (`lastOpeningPickReason`, `lastOpeningPickDetail`, `lastOpeningPickAt`, **`lastOpenerHorizonSim`**). Ranked combat is now the **default production path** for the current build. **`useOpenerHorizonSim`** (default **true**): among MP/CD-feasible attack skills, compares a **closed-form** paper model over an **effective** horizon. **Horizon risk unification (v0.3.184+):** multi-mob and low–player-HP **channel-hold** penalties for charge releases are computed only in **`plannerComputeHorizonChannelHoldRisk`** (plus optional **`hold_incoming_pressure_penalty`** from **`incomingPressure`** when **`chargeSkillHoldIncomingPressureEnabled`**), folded into **`plannerComputeOpenerContextAdjustment`** (with **`hold_multimob_penalty` / `hold_low_hp_penalty`** parts) so charge candidate **`horizonDamage`** matches the same context ledger; generic **`pressure_cast_penalty`** is skipped for charge skills to avoid double-counting hold time against pressure. **`plannerPickSkillOpeningPick`** scored rows reuse each candidate’s **`score.cooldownForecast`** from **`plannerOpenerHorizonSkillPlusBasics`** instead of recomputing cooldown separately. The requested base window comes from **`openerHorizonSimMs`** (default **5000**), but when live target HP is visible and **`Config.planner.openerTargetTtkAwareHorizonEnabled`** is on, the planner can shrink that window toward estimated target TTK (with **`openerTargetTtkPaddingMs`** and a minimum floor from **`openerTargetTtkMinMs`**). Inside that effective horizon it values skill damage from parsed effects (DoT / instant / **`basic_proc`** / **`channel_gear`**) plus the best **follow-up action** in the remaining window. Runtime now consumes that follow-up output too: the planner returns a one-step queued-action suggestion (`queuedAction`) for non-charge/basic chaining, while the **first burst after a successful re-target** can mark a **post-retarget no-charge guard** that filters charge skills for that burst only. The comparison keeps basics and skill damage on the same enemy-adjusted scale: baseline / follow-up basic DPS uses the same enemy calibration ratio that direct skill effects already use; **`plannerSummarizeSkillPaperDamageShape`** applies full **`mobFactor`** to **`basic_proc`** / **`channel_gear`**. **`instant`** / **`dot`** multiply by **`1 + (mobFactor − 1) × w`** where **`w`** comes from **`Config.planner.horizonPaperMobBlendPhysicalWeight`** when effect **`damageType`** is **`physical`** (parsed from tooltip text), else **`horizonPaperMobBlendMagicWeight`** (fallback: **`horizonPaperMobBlendNonBasicWeight`**). Unknown/missing **`damageType`** uses the magic path. **`82-skills.js`** instant regex also matches **"additional N → M of physical damage"** so **`damageType`** is set on more skills. Enemy adaptation is **one-way safe by default**: a high observed ratio can lower the threshold and allow more aggressive opener picks, but a low ratio does not raise the threshold unless **`Config.planner.enemyAdaptiveRaiseThresholdWhenRatioLow`** is explicitly enabled. On top of that, generic skills can receive a **small runtime aggression credit**: when recent ranked telemetry shows large headroom above the current threshold and low fallback / no-progress rates, the planner lowers only the **generic** threshold by one bounded step. This is intentionally inserted **before** per-skill overrides, so verified gates like **`openerMinImprovementFractionByName.sniper shot`** still remain authoritative. The opener score itself is also **enemy-state aware** for both generic and charge-release candidates: under live fight pressure it penalizes long non-channel casts, gives extra value to **control** and **multi-target** openers, rewards **front-loaded / finisher** damage while discounting DoT-heavy openers against already-near-dead targets, adds a bounded **heavy-burst/setup bonus** for slow high-frontload openers in calm single-target fights, and applies a **fresh-target alpha preference** when the target is still near full HP. **`plannerComputeOpenerDangerPressure()`** centralizes a small **danger ledger** (extra live enemies, low player HP pressure, optional **incoming HP loss/sec** from **`Runtime.autoFarm.combatSustain.recentHpLossPerSec`** when enabled) reused by opener context scoring and diagnostics; it also exposes **`pullTier`** (**`none` / `solo` / `duo` / `pack`**) and **`pullEnemyCount`** for exports and TEST shape checks. When **`Config.planner.openerContextCalibrationPressureEnabled`** is on and **`dangerOpts.enemyKey`** matches a DB row with enough **`hp_drop`** samples, **`plannerComputeCalibrationPressureAddon`** may add **`calibrationPressureHard`** (ratio **<** paper, scaled by spread confidence) and/or **`calibrationPressureEase`** (ratio **>** paper within **`openerContextCalibrationEaseMaxRatio`**, gated the same way); net signed **`calibrationPressure`** feeds **`totalPressure`** (floored at 0). Wide **(max−min)/mean** spread above **`openerContextCalibrationSpreadHi`** skips calibration nudges (**`spread_too_wide`**). Charge **incoming-like** hold risk uses **hard only** (**`calibrationPressureHard`**), not ease, so easier-than-paper mobs are not double-counted with horizon **`mobFactor`**. On top of those soft bonuses, the planner now has an explicit **execute mode**: inside a low-target window (**`openerExecuteLowTargetBasicHitWindow`**), the earliest lethal action can beat a higher raw 5-second score. That execute chooser is shared by generic direct-damage skills and dense charge-release candidates, so quick lethal `Sniper Shot` releases and non-charge last-hits use the same decision contract. Charge-release candidates also carry the same structured context and execute breakdown into **`previewOpenerHorizonSim()`** / **`Golden comparator`** instead of bypassing that diagnostic path. The horizon remains **mildly cooldown-aware**: long-cooldown skills pay a small opportunity tax when their cooldown extends far beyond the simulated window, capped so it only nudges close decisions instead of overpowering the paper score. Generic opener scoring remains **live-target aware**: immediate skill damage can be capped to the current target HP so near-dead enemies do not overvalue long/large openers. Candidate selection is **threshold-aware per candidate**: the planner prefers the best skill that clears **its own** improvement threshold before falling back to basic, so a slightly higher raw-damage skill can no longer block a lower-threshold verified opener that actually qualifies. Verified per-skill gate overrides in **`Config.planner.openerMinImprovementFractionByName`** (currently **`"sniper shot": 0.01`**) therefore matter both for shortlist access and for the final pick decision. In conception-first mode, those same per-skill overrides also keep the skill inside the **conception shortlist**, so horizon DPS still gets to judge it instead of losing before the tie-break step. Else **`horizon_prefers_basic`** (opener = basic). No per-tick simulation loop — still **O(candidates)**, but with the new dense charge sweep confined to charge skills only. TEST now also verifies **`Opener context scoring`**, **`Execute policy`**, the **post-retarget no-charge guard**, and **combat queue** state so the user can confirm the runtime path without manual console work. Empty cache / filters / **`all_candidates_filtered`** unchanged; console **`ligmarBot.getPlannerOpeningPickDiagnostics()`**.
+- **Combat sustain / potions**: live combat now uses the **parsed potion payload**, not fixed generic percentages alone. HP potions read their total heal and duration from the tooltip parser (`effects[].type === "heal"`), assume the current-build **15s** potion cooldown, and track active HoT state in **`Runtime.autoFarm.combatSustain`**. The HP policy aims to keep HP as high as practical without blind waste: it compares **missing HP + short projected incoming damage - remaining active HoT** against the parsed potion value, uses a stricter efficiency bar when calm, and drinks much earlier under active combat pressure or emergency low-HP states. **MP potions:** when **`Config.combat.mpPotionForceUseBelowPct`** is set in **(0, 1]**, **`evaluateCombatMpPotionNeed`** returns **needed** at or below that MP fraction **before** the **`can_cast_any_attack_skill`** skip (always drink floor). After that gate, after the preferred-skill shortage check, when **`Config.combat.mpPotionUseWhenBelowMaxMinusHeal`** is on (default) and **`player.mp.max`** plus the largest bar MP potion heal are known, the bot drinks when **missing MP ≥ that heal** (equivalently **`mpCur + activeHoTRemain ≤ mpMax − heal`**), so each use can absorb roughly a full pot without always waiting for a low **%** floor; if max/heal are unknown, **`mpPotionUseBelowPct`** fallback still applies. **Idle explore heal gate:** when **`enemyCount === 0`** on the empty-tile idle path (before **`exploreByScan()`**), the auto-farm loop stays in **`waiting`** until HP reaches at least **`Config.combat.outOfCombatHealWaitHpPct`** (default **75%**): it repeatedly tries **ready** HP bar potions sized to the missing HP-to-threshold gap (**`tryUseOutOfCombatHpTopoff`**, `ignoreThrottle` for deliberate top-off while shared CD still applies), **each poll also runs** **`tryUseOutOfCombatMpTopoff`** toward **`idleRegenerationMpTopoffTargetPct`** (default **0.9**; set **`false`** or **`0`** to skip only that MP pass) plus **`tryUseOutOfCombatIdleLowManaPotion`** when MP is below **`idleMpPotionUseBelowPct`**, then polls passive regen. If HP is already ≥ threshold at gate entry, it still runs the MP passes before skipping the gate. **Fast post-kill retarget:** when a burst kills one enemy but the pull still has survivors, the combat loop now first tries the **attackers button + popup member card** to select the next enemy faster than `find enemy`; if that popup path is unavailable or fails, it falls back to the normal `find enemy` flow. On the attackers-popup success path, the popup verify stays the **HP>0** gate (**`waitForTargetAcquired`**). After any successful **mid-pull re-target** (attackers popup or find-enemy), the **game** typically winds its **default basic attack** on the new target — runtime does **not** tap **cancel** to interrupt that. On the **first burst** after retarget (**`attackUntilProgress(..., { firstBurstAfterRetarget: true })`**), for planner **non-charge** openers **`applyPostRetargetQueueOpenerPick`** skips the opener bar click and **arms the cast-bar queue** so the first skill queues **anchored to `Attack` / Basic Attack** while that auto-basic is casting; **charge** openers still use the normal tap + **`handleChargeSkillOpener`** path. **`disallowChargeSkillFirstBurstAfterRetarget`** remains: **post-retarget charge guard** until first verified HP/count progress on the new target. **Runtime queue v2 trigger:** not time-based — after an opener or queued action is accepted, the bot waits until **visible cast/progress bar text** matches the **anchor** (e.g. **`Sniper Shot`** or **`Attack`**), then clicks the pending follow-up. The queue state tracks anchor vs pending action, same-name reset (**basic → basic**), and revalidates target / stop / cooldown / MP / charge bans before each queued click. **`queueAdvanceTick`** runs while polling HP/count whenever the queue is **active** (including alternate non-charge opener arms after a **charge** opener). **Queueing stays disabled** only during an active **charge-release** segment inside **`attackUntilProgress`**. The combat loop still uses **`previewOpenerHorizonSim()`** for preferred-skill MP pressure when ranked combat is on. **AUTO combat mode (panel):** **`Runtime.autoFarm.combatMode`** **`fast` / `safe` / `easy`** is persisted in **`ligmarbot.autoFarmUi.v1`**. **`applyAutoFarmCombatMode()`** runs when the user picks a mode (even if **AUTO** is off) and after **`loadAutoFarmUiPrefs()`** so **Easy** does not leave **`useRankedAttackSkillsInCombat`** stuck **false** after switching back to **Fast**/**Safe**. While **AUTO** is running, the loop also reapplies the same planner flags each cycle. **Fast** — ranked on, **`useRankedSkillOnlyFirstBurstAfterFind: false`**, **`skillMpReserve: 0`**; **Safe** — **`useRankedSkillOnlyFirstBurstAfterFind: true`**, **`skillMpReserve: 5`**, plus an **idle explore gate** before **`exploreByScan()`** when **`enemyCount===0`**: **`waitForSafeModeExploreResourcesAndShortPrebuffs()`** enforces **`Config.combat.safeModeExploreMinHpPct`** / **`safeModeExploreMinMpPct`** (defaults **95%** / **50%**), then waits for **short** configured prebuffs to leave action-bar cooldown and casts them (**longest-short first**); **Easy** — **`useRankedAttackSkillsInCombat: false`** (basics only). **`startAutoFarmLoop`** calls **`applyAutoFarmCombatMode()`** **before** copying **`Runtime.autoFarm.plannerSnapshotBeforeAuto`** so **`restorePlannerAfterAutoFarmLoop`** does not persist a stale **`useRankedAttackSkillsInCombat: false`** from **`ligmarbot.plannerUi.v1`** after a Fast/Safe AUTO session (symptom: ranked skills only after running **TEST** once). Panel **ON** also invokes **`applyAutoFarmCombatMode()`** immediately before **`startAutoFarmLoop()`**. **`loadPlannerUiPrefs()`** calls **`applyAutoFarmCombatMode()`** after merging **`ligmarbot.plannerUi.v1`** (so **`ligmarBot.loadPlannerUiPrefs()`** alone cannot leave Fast/Safe with ranked off). TEST **`finally`** restores the pre-bundle planner snapshot then **re-applies** combat mode the same way. **`restorePlannerAfterAutoFarmLoop`** still restores the snapshot when the loop exits. TEST **`Combat sustain`** detail includes **`mpPotionUseWhenBelowMaxMinusHeal`** and **`autoCombatMode`**.
+- **AUTO local chat spammer**: while **AUTO ON** is running, runtime keeps a randomized **5-15 minute** (local browser clock) due window in **`Runtime.autoFarm.chatSpammer`**. Each due window **`pickAutoChatSpammerDispatch()`** rolls **uniform 1/6** among (**a**) the **smart pair** — opener **`smartLineOpener`** (universal; e.g. newbie ping), then **`sleep(smartLineFollowupDelayMs)`** (default **40s**, respects **`stopRequested`**), then **`smartLineFollowup`** — and (**b–f**) each of the **five** lines for the current **`getTimeOfDayChatSlot()`** slice from **`Config.chat.messagesByTimeOfDay`** (banks shorter than five are **cycled** to fill five dispatch slots). If smart is disabled, only bank picks run (**`pickAutoChatSpammerMessage()`** with duplicate-avoid). If the slot bank is empty but smart is configured, only the smart pair runs. Referral code stays **`v1ctory`** in scripted copy. Promo attempts only at **safe cycle boundaries** (no enemies, no death/poor-connection). **`lastChatSlot`** / **`lastMessageIndex`** still track bank sends; smart sends store index **-1**. **Panel + storage:** checkbox **Auto local chat promo spammer** mirrors **`Config.chat.autoLocalPromocodeSpammerEnabled`** and persists with combat mode in **`ligmarbot.autoFarmUi.v1`** (`autoLocalChatSpammerEnabled`). TEST flattens banks **plus** smart strings for the under-100 `.length` gate and the non-sending UI probe (spammer may be **off**; probe still must pass).
+- **Support buffs (`Config.supportBuffs`)**: Build emits **`88-support-classification.generated.js`** from **`bot/data/ligmar_hero_skills_db.json`** via **`bot/tools/generate-support-classification.mjs`** (Node): each **Support** skill (no **Attack** tag) gets **`scope`** (**self** vs **mass** from tags + ally wording), **`role`** (**protective** / **attacking** / **mixed** / **unknown** from description needles), **`durationBand`** (**long** ≥ **60 s** vs **short**), and flags **`permanentSelfOoc`** / **`excludeFromPrebuff`**. **`lookupSupportSkillClassificationFromGeneratedDb`**, **`listSupportSkillClassificationFromMasterDb`** (console **`ligmarBot.*`**). **Assumed buff duration (`supportBuffLine.longSelfTracked`):** after each successful **new-tile prebuff**, **Safe-mode short prebuff**, or **permanent-self** click with a resolved duration (**`resolveSupportBuffDurationSecPreferDb`**), runtime stores **`expectedEndAt = castTime + durationMs`**. When **`Config.supportBuffs.buffDurationTracking.enabled`** (default **true**), the bot skips another cast of that skill until assumed remaining ≤ **`buffDurationTracking.recastMinRemainingSec`** (default **30 s**). **`runPermanentSelfLongBuffRefreshPass`** uses the same threshold when tracking is on; when tracking is **off**, permanent renew uses **`permanentSelf.renewWhenRemainingSec`** (default **20 s**) and prebuffs ignore the clock gate. **`ligmarBot.clearSupportBuffAssumedDurationTracking()`** / **`getSupportBuffAssumedDurationTrackingSnapshot()`** for dispel / debug. **Permanent self line:** skills with **`permanentSelfOoc`** (long self, not safety-like absorb/incoming) use the same map — **`runPermanentSelfLongBuffRefreshPass`** on **idle empty tiles** (`maybeMaintainLongSelfSupportBuffsOutOfCombat`) and **before new-tile prebuffs** when **`enemyCount > 0`** (`maybeApplyPermanentSelfLongBuffsBeforeFindEnemy` inside **`secureTileAndLootOnce`**). Those **permanent self** skills are **excluded** from **`maybeApplySupportPrebuffsOnNewTile`** / safe-mode short prebuff idle gate (prebuff remains party/short/long **non**-permanent-self only, ordered as before). **`resolveSupportBuffDurationSecPreferDb`** prefers tooltip/FX parse then DB guess (also parses **"N seconds"** phrasing). **Never prebuff safety barriers:** **`isSupportSkillExcludedFromPrebuffSafetyPolicy`**. **Idle MP:** **`tryUseOutOfCombatIdleLowManaPotion`**. **Safety (HP spike):** **`processCombatSafetyHpSpikeIfNeeded`**. **Post-cast settle:** after each successful **new-tile prebuff**, **Safe-mode short prebuff**, or **permanent-self** bar click, **`waitForSupportBuffSlotCooldownAfterClick`** polls **`isActionBarSlotShowingCooldown(slot)`** until cooldown UI appears or **`Config.supportBuffs.postBuffCastCooldownWait`** times out (warn **`support buff cooldown wait timed out`**), reducing the next action (**`find enemy`**, opener) clipping the buff cast. Console: **`ligmarBot.listScannedSupportBuffClassifications()`** (optional **`supportDb`** snapshot per row), **`ligmarBot.listSafetyLikeBuffsFromScannedSkills()`**.
+- **Night resilience / watchdog**: unattended AUTO now treats bad session states as a staged recovery problem instead of only generic timeouts. `readBasicState()` now includes **core UI presence** (game root, action bar, map toggle, map canvas, find-enemy button). Runtime keeps **health** timestamps (`lastHealthyAt`, `lastActionVerifiedAt`, `poorConnectionSince`, `deadSince`, `missingCoreUiSince`, `highPingSince`, `staleSince`) plus **recovery** counters (`softAttempts`, `refreshAttempts`, last refresh reason). `waitForCondition()` can now abort early on **critical** session risk, and the auto-loop evaluates health at cycle boundaries: first it tries **soft recovery** (close transient UI, wait briefly, reopen map, re-center, re-check health), then escalates to a **hard refresh** when the session stays unhealthy too long or soft recovery keeps failing. Before refresh it persists an **AUTO resume token** in `localStorage`; boot reads that token, waits for a healthy game surface, and restarts AUTO automatically. The panel now shows `Session`, `Health`, `Recovery`, and `Last action`, and TEST includes **Session risk**, **Recovery policy**, **Auto-resume refresh**, and **Watchdog surface** checks so the user can validate the watchdog without manual console steps.
+- **Skill master DB bridge**: `applySkillMasterToSlots()` auto-detects the class from the profile icon, matches scanned `Runtime.skills.slots` against the embedded master DB by normalized skill name, and attaches `slot.master.conception` for matched skills. Lookup tries **`getSkillMasterEntry(detectedClass, name)`** first; if that misses, **`tryResolveUniqueSkillMasterAcrossClasses(name)`** walks every class bucket and attaches the row when **exactly one** class defines that normalized name (logs **`unique_cross_class`**, sets `slot.master.resolvedVia`); if two or more classes share the same normalized key, the bridge **skips** that attach and logs a warning. Name normalization is intentionally **lookup-oriented**: it strips level suffixes, folds punctuation/diacritic variants, and removes separator/encoding noise so scan names like `Hunter’s Tread` still match embedded DB names. The return/log payload includes `matched` / `totalSkills` / **`crossClassResolved`**, `unmatchedCount`, `unmatchedNames`, and `matchedSample`. The `TEST` `skill_master_db` check passes through the full `applied` object.
+- **Canonical skill DB cleanup**: the source file `bot/data/ligmar_hero_skills_db.json` is now the place where obvious mojibake skill names are corrected (for example `Hunter's Tread`, `Assassin's Gambit`, `War's Embrace`, `Blade's Grace`). Runtime normalization still stays defensive, but the preferred fix for bad embedded names is to repair the canonical DB so every generated consumer sees the clean text.
 - **Zoom gate before scanning**: `scanNeighborRing()` calls **`ensureMapZoomedOut()`** right after `ensureMapOpen()` succeeds. The helper dispatches `Config.movement.maxZoomOutBursts` (40) synthetic `WheelEvent`s with `deltaY=120` at the canvas center the **first time only** per session; the result is recorded in `Runtime.zoom.maxedOut`. This locks the map at minimum zoom so `Config.movement.neighborStepPx` (currently **30 px**, vertical `h = round(30 * 0.86) = 26 px`) lands on real tile centers. `forceZoomOut()` clears the flag and re-applies — useful after death or page reload.
+
+### Enemy DB: what it stores (and what it does not)
+
+- **Identity key:** `makeEnemyDbKey(name, level, maxHp)` → `name|level|maxHp`. Same species at different max HP or level becomes a different row (full HP bar text drives `maxHp`).
+- **Per-row fields:** name/level/maxHp, timestamps, optional note, **`statusLabelsLast`** — last snapshot of condition-bar **labels** (strings) from `readEnemyTargetStatusBars`, not structured buff IDs or magnitudes.
+- **Calibration:** `mergeLastDamageObserveIntoEnemyDb()` merges **`hp_drop`** statistics from the damage observer into **`observeCalAgg` / `observeCalLast`** so the planner can compare **observed** per-hit damage to **paper** expectations (`ratioObservedVsCurrentPaper`). Each merge also records **`statusLabelsSignature`** (sorted, normalized condition-bar label text), **`statusLabelsMergeSource`** (whether labels came from a live target snapshot vs the row cache), and rolls **`observeCalAgg.buffSigBuckets`** — per-signature running **`hp_drop`** min/max/mean/samples (oldest bucket pruned after **20** keys) so paired fights on the same mob key can be compared across buff states. Merge runs only when the session has at least one **`hp_drop`** event (after optional lethal filtering). Legacy cached rows may still carry **`observeMissAgg`** / **`observeMissLast`** from older builds; new merges no longer update those fields. Incoming damage from the mob is not separately decomposed; mitigation is reflected indirectly in observed drops.
+- **Buffs / debuffs:** the DB does **not** store numeric “+X% armor” — only label-derived **`statusLabelsSignature`** at merge time plus capped per-signature buckets. **`gameSnapshotEnd.fieldValidation.enemyBuffCalibration.buffSigTop`** includes **`signaturePreview`** (short text) for offline bucket triage. **Planned empirical path (roadmap):** fight two samples of the **same** mob key, one **without** relevant buffs and one **with** a known buff; compare **outgoing** damage (our hits via `hp_drop` / observe) and **incoming** damage patterns (player HP deltas under controlled conditions) to infer effective modifiers, then fold those into future planner math once stable.
 
 ### Repository layout
 
 - Git repo lives at the **project root** (`C:\Users\Victor\.cursor\projects\ligmarbot`).
-- Tracked files: `.gitignore`, `ARCHITECTURE.md`, `bot/build.ps1`, `bot/loader.user.js`, `bot/version.json`, `bot/bot.user.js`, `bot/modules/*.js`.
+- Tracked files: `.gitignore`, `ARCHITECTURE.md`, **`ROADMAP.md`** (prioritized next steps), `bot/build.ps1`, `bot/loader.user.js`, `bot/version.json`, `bot/bot.user.js`, `bot/modules/*.js`, **`bot/data/ligmar_hero_skills_db.json`** (canonical embedded skill master export; `build.ps1` falls back to legacy `bot/ligmar_hero_skills_db.json` if missing), **`bot/tools/*.js`** (standalone console helpers; not part of the concatenated bundle).
 - `bot/bot.user.js`, `bot/modules/05-version.js`, `bot/loader.user.js` (`@version` line), and `bot/version.json` are **build artifacts**. **Do not hand-edit them.** They are regenerated from `bot/modules/*.js` and the version state by `bot/build.ps1`.
 - `.gitignore` excludes Cursor tooling artifacts (`mcps/`, `terminals/`, `agent-transcripts/`) and editor scratch files. They live on disk for the IDE but never reach GitHub.
 
@@ -66,21 +82,21 @@ Filename order is the **only** thing that controls concat order. Numeric prefixe
 | `05-version.js`        | **AUTO-GENERATED.** `const BotVersion = { version, description, builtAt }`. Written by `build.ps1` on every build. |
 | `10-config.js`         | `Config` (selectors, timings, thresholds).                                                 |
 | `15-logger.js`         | `Logger` (timestamped, module-tagged `console.log/warn/error`).                            |
-| `20-runtime.js`        | `Runtime` (mutable state: autoFarm, exploration, zoom flag, UI refs).                      |
-| `30-utils.js`          | Pure helpers: `isGamePage`, `getCssPath`, `parseFractionText`, `parseFirstInt`, `sleep`, `toShortJson`, `isElementVisible`, `clickElementSafe`, `dispatchMouseAt`, `parseCoordsText`. |
-| `40-state.js`          | DOM state readers: `getFractionCandidates`, `inferFractionRoles`, `readBattleStatusBarText`, `isLootInteractionStatusBusy`, `readEnemyCount`, `readCurrentCoordsFromPopup`, `readTilePopupDetails`, `readBasicState`. |
+| `20-runtime.js`        | `Runtime` (mutable state: autoFarm, exploration, zoom flag, UI refs). **Pack A:** **`Runtime.planner`** holds the last ranked-opener pick outcome (`lastOpeningPickReason` / `lastOpeningPickDetail` / `lastOpeningPickAt`) plus **`lastOpenerHorizonSim`**, ranked/queue runtime telemetry, and log-throttle keys for `[PLANNER]` when no slot is eligible. **Queue v1:** `Runtime.autoFarm.combatQueue` stores one buffered follow-up action (`mode` / `slot` / `armedAt` / `firedAt` / `clearReason` / target snapshot). **Combat episode v1:** `Runtime.autoFarm.combatEpisode` stores the last burst’s ordered opener + optional queued follow-up snapshot (`plannerBuildCombatEpisodePlan`) for telemetry and future multi-step execution; cleared when the target fingerprint changes, at secure-cycle start, and after a mid-pull kill re-target. **Chat spammer:** `Runtime.autoFarm.chatSpammer` stores next due time, last promo line, send/fail counters, and the last send result for AUTO-mode local chat posting. **Support buff line:** `Runtime.autoFarm.supportBuffLine` stores assumed end times for long self-buffs (`longSelfTracked`), last **safety** cast timestamp, and prebuff cast count. **`Runtime.testBundle.disableChargeCancelUi`** — when **`true`**, **`clickChargingSkillCancelUi()`** is a no-op (quick **`runUiTestBundle`** profile only). |
+| `30-utils.js`          | Pure helpers: `isGamePage`, `getCssPath`, `parseFractionText`, `parseFirstInt`, **`sleep(ms, { bypassStop })`** (default: early exit when **`stopRequested`**; **`bypassStop: true`** for TEST idle-wait), `toShortJson`, `isElementVisible`, `clickElementSafe`, `dispatchMouseAt`, **`dispatchClickAt`**, `parseCoordsText`. |
+| `40-state.js`          | DOM state readers: `getFractionCandidates`, `inferFractionRoles`, `readBattleStatusBarText`, `isLootInteractionStatusBusy`, `readEnemyCount`, `readCurrentCoordsFromPopup`, `readTilePopupDetails`, `readBasicState`. **Session health:** `readBasicState()` now also reports core UI visibility (`gameRoot`, `actionBar`, `mapToggle`, `mapCanvas`, `findEnemy`) so the recovery ladder can detect stale/missing play UI. **Charge cancel:** `findChargingSkillCancelHintElement`, `getChargingSkillCancelClickTarget`, **`getChargeCancelMapGapClientPoint`**, **`clickChargeCancelViaMapToggleCanvasGap`**, **`normalizeChargeCancelSkillMatchKey`**, **`isCastBarShowingExpectedSkillNameForChargeCancel`**, `clickChargingSkillCancelUi` (optional **`expectedSkillName`**; honors **`chargeCancelRequireCastBarNameMatch`** unless **`dangerBypassNameMatch`** for emergency paths). |
 | `50-discover.js`       | Diagnostics: `probeSelectors`, `discoverFractionNodes`, `discoverButtons`.                 |
-| `60-actions.js`        | Raw clicks: `clickFindEnemy`, `clickLootOrActivate`, `clickCenterMap`, `clickMapToggle`, `closeHexPopupIfOpen`, `clickActionBarSlot`, `clickBasicAttack`, `isBasicAttackConfigured`, `setBasicAttackSelector`. |
-| `70-verify.js`         | Click-then-wait wrappers: `waitForCondition`, `waitForLootInteractionSettled`, `waitUntilNotMoving`, `waitForTargetAcquired`, `clickFindEnemyVerified`, `clickLootOrActivateVerified`, `clickCenterMapVerified`, `ensureMapOpen`. |
-| `80-map.js`            | Map/canvas + scan/move/explore: `getMapCanvas`, `ensureMapZoomedOut`, `forceZoomOut`, `isMovementInProgress`, `moveToMapPoint`, `clickMapCenterTile`, `clickMapRelative`, `getMapCenterClientPoint`, `scanNeighborRing`, `verifyMoveByCoordinates`, `getNextExplorationPoint`, `exploreIfIdle`, `parseLootKindsFromMarkers`, `scoreScannedTile`, `chooseBestScannedNeighbor`, `exploreByScan`. **2-ring visual scan**: `getSecondRingOffsets`, `scanSecondRingForColor`, `scanSecondRingForDie`, `ringHasUsefulLoot` -- canvas pixel-sampling fallback that fires when 1-ring has no useful loot; samples 12 patches around 2-hop tile centers for the yellow-die signature color and resolves the best 1-ring step toward it (min-enemies, min-allies tiebreak). |
+| `60-actions.js`        | Raw clicks + UI helpers: `clickFindEnemy`, `clickAttackersButton`, `getVisibleAttackersPopupCards`, `clickLootOrActivate`, `clickCenterMap`, `clickMapToggle`, chat helpers (`ensureChatDialogOpen`, `prepareLocalChatPromocodeMessage`, `sendLocalChatPromocodeMessage`, `probeLocalChatPromocodeUi`, `closeChatDialog`), **`closeTransientUiForRecovery()`** (chat / hex popup / skill info cleanup for soft recovery), `closeHexPopupIfOpen`, `clickActionBarSlot`, **`clickActionBarSlotHoldCast`** (slice 12), **`isActionBarSlotShowingCooldown`** (slice 11), `clickBasicAttack`, `isBasicAttackConfigured`, `setBasicAttackSelector`. |
+| `70-verify.js`         | Click-then-wait wrappers: `waitForCondition`, `waitForLootInteractionSettled`, `waitUntilNotMoving`, `waitForTargetAcquired`, `clickFindEnemyVerified`, `clickAttackersRetargetVerified`, `clickLootOrActivateVerified`, `clickCenterMapVerified`, `ensureMapOpen`, **`closeMapIfOpenAfterFindEnemy`**. **Retarget gate:** `find enemy` / `target acquired` now require **`targetHp.cur > 0`**, not only a valid bar shell, before combat continues. **Recovery hardening:** long waits can abort early on critical session risk, `ensureMapOpen()` / `clickCenterMapVerified()` now use bounded retries and transient-UI cleanup under lag. **Fast re-target:** after one kill in a multi-mob pull, the bot first tries the **attackers popup** and clicks the next visible member card; `find enemy` remains fallback. |
+| `80-map.js`            | Map/canvas + scan/move/explore: `getMapCanvas`, `ensureMapZoomedOut`, `forceZoomOut`, `isMovementInProgress`, `moveToMapPoint`, `clickMapCenterTile`, `clickMapRelative`, `getMapCenterClientPoint`, `scanNeighborRing`, `verifyMoveByCoordinates`, `getNextExplorationPoint`, `exploreIfIdle`, `parseLootKindsFromMarkers`, `scoreScannedTile` (**`other_loot` tier** + extended **grey chest** hints; **goblin** map events scored at **350000** base, not hard-avoided; **champion/boss** tiles stay **-500000**), `chooseBestScannedNeighbor`, `exploreByScan`. **2-ring visual scan**: `getSecondRingOffsets`, `scanSecondRingForColor`, `scanSecondRingForDie`, `ringHasUsefulLoot` -- canvas pixel-sampling fallback that fires when 1-ring has no useful loot; samples 12 patches around 2-hop tile centers for the yellow-die signature color and resolves the best 1-ring step toward it (min-enemies, min-allies tiebreak). |
 | `81-hero.js`           | **Phase C1 -- hero combat stats + regen.** `readHeroCombatStats` opens the profile sheet, switches to the Stats tab, then **prefers structured rows** (`app-param-item` with `.stat-item-name` / `.stat-item-value` inside the CDK overlay or body) and **merges** with a **regex fallback** on the flattened text blob (`mergeHeroCombatStats`) so labels like “Critical hit chance / damage” parse reliably; `parseStatNumber` strips `%` and commas. `clickHeroBattleFooter` restores the Battle view. `measurePassiveRegen` samples `readBasicState` over ~3.5s; cache payload `version: 2` includes optional `byName` debug map; `Runtime.hero.*`. |
-| `82-skills.js`         | **Phase C0 -- skill scanner.** `scanSkills` (top-level discovery), `openActionPopup` / `closeActionPopup` (long-press + close-button popup control), `parseActionPopup` / `parseSkillEffects` (DOM-to-record + description regex effect extraction), `classifyActionButton` (basic / potion / skill / empty from class + image URL), `loadSkillsFromCache` / `saveSkillsToCache` / `clearSkillsCache` (localStorage persistence keyed by `Config.skills.storageKey`). Recon-only: `Runtime.skills.slots` is populated but no combat logic consumes it yet. |
-| `83-damage-observe.js` | **Phase C2 -- damage observer.** `observeCombatDamage()` polls `readBasicState()` on `Config.damageObserver` cadence, emits **`hp_drop` / `hp_rise`** events from red target HP bar deltas (filters target swaps via max-change + large jump ratio), optionally records **new** short numeric leaf text under `app-game` (warmup tick avoids static HUD spam). `snapFloatingDamageOnce()` for ad-hoc DOM recon. Summary persisted to `localStorage[Config.damageObserver.storageKey]`; full session on `Runtime.damage.lastSession`. |
-| `84-enemy.js`          | **Phase C3 + C4 slice 2.** Target profile reader + `recordTargetToEnemyDb()` as before. **`mergeLastDamageObserveIntoEnemyDb()`** rolls **`hp_drop`** samples from **`Runtime.damage.lastSession`** into DB rows (`observeCalAgg` / `observeCalLast`). |
-| `85-combat.js`         | Combat + auto-farm runner: `attackUntilProgress` (**enemy kill** or **target HP drop** vs baseline; skill opener → **basic fallback** if no verify), `secureTileAndLootOnce` (**slice 9:** inner **attack bursts** after each find-enemy until tile clear / no progress / burst cap; **re-find after a kill** when enemies remain; ranked skill opener only on **first burst after find** when `useRankedSkillOnlyFirstBurstAfterFind`), `prepMapForCombatCycle`, `prepareAndScanOnce`, `runPreparedSecureCycle`, `getAutoFarmStatus`, `stopAutoFarmLoop`, `startAutoFarmLoop`. **C4 auto-farm (optional):** `Config.planner.*` hooks as before. **`Config.combat.attackProgressTimeoutMs`**, **`Config.combat.maxCombatAttackBurstsPerFind`**. |
-| `86-planner.js`        | **Phase C4 -- paper + calibration + heuristics.** Paper/calibration APIs; **slice 4** `calibrateEnemyFromCombat`, `rankAttackSkillsByHeuristic`, `plannerSkillEffectHeuristicScore`. |
-| `90-ui.js`             | In-page panel: ON/OFF, phase block, stats; **Planner (auto-farm)** checkboxes (`recordEnemyDbBeforeAttack`, `logPlannerAfterSecureTile`, `useRankedAttackSkillsInCombat`, **`useRankedSkillOnlyFirstBurstAfterFind`**) + `ligmarbot.plannerUi.v1` persistence. |
-| `99-bootstrap.js`      | `start()`, `window.ligmarBot` debug API (includes `BotVersion`, hero + skills + C2/C3 + **C4** `summarizePlannerInputs`), IIFE close, `start()` invocation. |
+| `82-skills.js`         | **Phase C0 -- skill scanner.** `scanSkills`, `openActionPopup` / `closeActionPopup`, `parseActionPopup` / `parseSkillEffects` (**`ligmarBot.parseSkillEffects`** for console/TEST strings), **`inferSkillConception`** / **`normalizeSkillName`** — each skill slot gets a **conception** object: `effectTypes`, boolean **flags** (dot/slow/stun/stealth/channel/…), **tacticalRoles**, **delivery**, **usageHints**, **rangeBucket** / **castShape** / **targetKind**, plus **descShape** (e.g. self attack-speed tradeoff) from **word patterns** on the description — **not** from upgrade-tier numbers. Tooltip **Requirements** (level, status, silver) are **never** read or stored. Parsed **effects** still hold magnitudes for **paper DPS** (`openerHorizonSim`); **`Config.planner.skillRankUseConception`** switches heuristic **rank order** to magnitude-free **conception** scores. `classifyActionButton`, **`readActionBarLayoutFingerprint`** (slice 13), `loadSkillsFromCache` / `saveSkillsToCache` / `clearSkillsCache` (cache backfills **conception** if missing). |
+| `83-damage-observe.js` | **Phase C2 -- damage observer.** `observeCombatDamage()` polls `readBasicState()` on `Config.damageObserver` cadence, emits **`hp_drop` / `hp_rise`** events from red target HP bar deltas (filters target swaps via max-change + large jump ratio), and optionally records **new** short numeric leaf text under `app-game` (warmup tick avoids static HUD spam). **`snapFloatingDamageOnce()`** for ad-hoc DOM recon. Persisted summary payload **version 5** (no **`missTextEventCount`**); summary in `localStorage[Config.damageObserver.storageKey]`; full session on `Runtime.damage.lastSession`. |
+| `84-enemy.js`          | **Phase C3 + C4 slice 2.** Target profile reader + `recordTargetToEnemyDb()` as before. **`mergeLastDamageObserveIntoEnemyDb()`** rolls **`hp_drop`** samples from **`Runtime.damage.lastSession`** into DB rows (`observeCalAgg` / `observeCalLast`). Rows store **`statusLabelsLast`** from visible condition-bar **text**; each merge adds **`statusLabelsSignature`**, **`statusLabelsMergeSource`**, and **`observeCalAgg.buffSigBuckets`** (capped per-signature aggregates) for empirical buff pairing — **no** parsed mapping from labels to numeric atk/def/res modifiers yet; calibration remains **empirical hp_drop vs paper hit** until §7 math lands. **§6 research:** **`summarizeEnemyBuffSigBuckets({ key? })`** (console **`ligmarBot.summarizeEnemyBuffSigBuckets`**) lists per-bucket **`signaturePreview`**, means, and samples for one mob key (defaults to **`lastFoughtKey`**). TEST **`enemy_buff_sig_buckets_api`**. |
+| `85-combat.js`         | Combat + auto-farm runner: `attackUntilProgress` (**enemy kill** or **target HP drop** vs baseline; parsed charge skills use a dedicated **hold → release** path before generic fallback; **post-retarget:** **`applyPostRetargetQueueOpenerPick`** — no cancel tap; game default basic first, queue non-charge opener skill on **Attack** cast bar; **combat episode v1:** snapshot to `Runtime.autoFarm.combatEpisode`), `secureTileAndLootOnce` (inner bursts, re-find after kill, **first-burst-after-retarget no-charge guard**, ranked gating), **combat sustain** helpers for HP/MP potions (**`mpPotionForceUseBelowPct`** — always request MP pot at/below that pct, before **`can_cast_any_attack_skill`** skip), runtime queue helpers (`armCombatActionQueue`, `fireCombatActionQueue`, `clearCombatActionQueue`), AUTO chat-spammer schedulers (`getAutoChatSpammerRuntime`, `scheduleNextAutoChatSpammer`, `maybeRunAutoChatSpammer`), **support buffs** (`Config.supportBuffs`: **`maybeApplyPermanentSelfLongBuffsBeforeFindEnemy`** then **`maybeApplySupportPrebuffsOnNewTile`** before find-enemy when enemies present; **`waitForSupportBuffSlotCooldownAfterClick`** after each support buff bar tap; **`runPermanentSelfLongBuffRefreshPass`** / **`maybeMaintainLongSelfSupportBuffsOutOfCombat`** for long self buffs per **`88-support-classification.generated.js`** + scan; **`waitForSafeModeExploreResourcesAndShortPrebuffs`** on idle empty-tile path when **Safe** mode, **`maybeCombatSafetyBuffInterrupt`** / **`processCombatSafetyHpSpikeIfNeeded`** — HP-spike **Windy Dome** with emergency cancel bypass), **night watchdog / recovery** helpers (`evaluateAutoFarmHealth`, `maybeRecoverUnhealthySession`, `performSoftSessionRecovery`, persisted refresh-resume token helpers, `resumeAutoFarmAfterRecoveryBootIfNeeded`), **`waitForOutOfCombatHealBeforeExplore` / `tryUseOutOfCombatHpTopoff`** (idle tile: HP to **`outOfCombatHealWaitHpPct`** before **`exploreByScan`** when **`enemyCount===0`**), `prepMapForCombatCycle`, `prepareAndScanOnce`, `runPreparedSecureCycle`, `getAutoFarmStatus`, `stopAutoFarmLoop`, `startAutoFarmLoop`. **`Config.combat.*`**, **`Config.chat.*`**, **`Config.supportBuffs.*`**, **`Config.recovery.*`**, **`Config.planner.*`**. Console: **`listScannedSupportBuffClassifications`**, **`listScannedSkillsMatchingSafetyBuffHeuristic`** (same names on **`ligmarBot`**, if loaded). |
+| `86-planner.js`        | **Phase C4 -- paper + calibration + heuristics + openerHorizonSim.** `calibrateEnemyFromCombat`, `rankAttackSkillsByHeuristic`, `plannerSkillEffectHeuristicScore`, **`plannerBuildChargeReleasePlan`** (shared charge hold/release semantics, dense search, explicit execute selection), **`plannerPickSkillOpeningPick`** (horizon paper window vs basic when **`useOpenerHorizonSim`**; reasons include **`horizon_prefers_basic`**, `ranked_disabled`, `empty_cache`, `no_attack_skills_for_ranker`, `picked`, `all_candidates_filtered`), **`plannerBuildCombatQueueAction`** / **`plannerResolveCombatQueueScoreDepth`** (runtime next-queue pick uses **`openerFollowUpSkillDepth`** lookahead — same **`plannerBestFollowUpActionValue`** contract as opener horizon; default depth **2**; still one client queue slot per step), **`plannerBuildCombatEpisodePlan`** (combat episode v1 — target fingerprint + ordered opener/queue steps snapshot), **`plannerComputeHorizonChannelHoldRisk`** / unified charge hold terms inside **`plannerComputeOpenerContextAdjustment`** (hold snapshot includes **`incomingHoldPenalty`** when sustain / **hard** calibration signal is hot), **`plannerHorizonResolveLiveTargetHpCur`** / **`plannerHorizonCapSkillDamageToTargetHp`** (shared live-target overkill cap for generic opener vs charge release), **`plannerComputeOpenerDangerPressure`** / **`plannerComputeCalibrationPressureAddon`** (live-fight pressure; DB **`hp_drop`** spread confidence; **hard** vs **ease** ratio nudges; **`pullTier`** / **`pullEnemyCount`**), **`plannerSummarizeSkillPaperDamageShape`** (**`mobFactor`**: full on **`basic_proc`** / **`channel_gear`**; **`instant`**/**`dot`** typed blend via **`damageType`** + **`horizonPaperMobBlendPhysicalWeight`** / **`horizonPaperMobBlendMagicWeight`**), **`previewOpenerHorizonSim`**, **`plannerMaybeLogOpeningPickFailure`**, **`getPlannerOpeningPickDiagnostics`**, **`plannerOpenerHoldCastMs`**, **`plannerPickSkillSlotToCast`**, cooldown gate **`isActionBarSlotShowingCooldown`**. |
+| `90-ui.js`             | In-page panel: **ON/OFF**, **AUTO combat mode** (Fast/Safe/Easy), **auto local chat** checkbox, **phase** block (status + detail + “Xs ago”), compact **footer** (HP/MP/Ping, enemies, coords, AUTO mode / cycles / failures / ON duration). Full automated **`runUiTestBundle`** suite and self-test JSON export run from the **console** (`ligmarBot.runUiTestBundle`, default **`testProfile: "panel"`** unless overridden; **`quick`** / **`release`** profiles unchanged). Logs **`Test result:`** + **`[TEST] SUMMARY`** + **`emitTestSelfTestPackage`** as before; **`ligmarBot.getLastTestExport()`** / **`getFieldValidationSnapshot()`**. Issue log clip: **`ligmarBot.copyIssueReportLogs`**. Boot **`loadPlannerUiPrefs()`** from **`ligmarbot.plannerUi.v1`**. |
+| `99-bootstrap.js`      | `start()`, `window.ligmarBot` debug API (prefs: **`saveAllUiPrefs` / `loadAllUiPrefs`** + per-key helpers), chat smoke/send helpers, **`listScannedSupportBuffClassifications`** / **`listSafetyLikeBuffsFromScannedSkills`** (support-buff teaching / Windy Dome–style heuristic list), watchdog/recovery helpers, **`getPlannerOpeningPickDiagnostics`**, **`previewOpenerHorizonSim`**, boot warn if ranked combat on with empty skill cache, auto-resume after recovery refresh, IIFE close, `start()` invocation. |
 
 ### Versioning and the local-file loader
 
@@ -101,6 +117,8 @@ The bot is delivered to Tampermonkey via a thin loader userscript that points at
 
 `-Description` is required for a normal build so every shipped change carries a human-readable note. The patch number auto-increments (e.g. `0.2.1 -> 0.2.2`); manual major/minor edits to `version.json` are allowed for milestone resets.
 
+**Ship rule (bot code changes):** Any patch that changes **`bot/modules/*.js`** (or anything that should change what runs in the game) **must** finish with **`.\bot\build.ps1 -Description "…"`** — **not** `-NoBump` — so **`version.json`**, **`bot/modules/05-version.js`**, **`bot/loader.user.js`** (`@version`), and **`bot/bot.user.js`** stay in sync. Then **commit and push** those artifacts. The user should only need to **refresh the game tab** (Tampermonkey reloads the `@require` bundle when the loader’s `@version` bumps). Reserve **`-NoBump`** for rare cases where the bundle did not change (e.g. docs-only edits under the repo root with no module touch).
+
 **One-time Tampermonkey setup (Chrome, per machine):**
 
 1. `chrome://extensions/` → Tampermonkey → **Details** → enable **"Allow access to file URLs"**.
@@ -109,12 +127,29 @@ The bot is delivered to Tampermonkey via a thin loader userscript that points at
 4. Disable or delete the legacy "Ligmar Bot" script if it was installed previously.
 5. Reload `https://ligmar.io/game/...` — the control panel header should show `Ligmar Bot v0.2.x`.
 
-**Per-change loop after that:** I edit modules → I run `.\bot\build.ps1 -Description "..."` → you press F5 on the game tab → new version is live.
+**Per-change loop after that:** edit modules → **`.\bot\build.ps1 -Description "..."`** (version bump) → commit/push → **F5** on the game tab → new version is live. The agent/maintainer runs the bumping build; the player only refreshes.
+
+**Release batching (bigger steps — default from 2026-05):** Avoid shipping **one-tweak** versions (single API return shape, one-line log, copy-only) as their **own** patch. **Batch** work until at least one of: (1) **player-visible** behavior change in combat/loot/map/planner, (2) **≥ ~50 lines** or **≥ 2 modules** touched for a coherent feature, or (3) a **named milestone** in **`ROADMAP.md`** (e.g. “loot settle v2”). Micro-fixes may accumulate on a **working branch** and ship as **one** `build.ps1 -Description` with a **headline** summary. Docs-only edits use **`-NoBump`** when the bundle is unchanged.
+
+**TEST on every ship (behavior changes):** If a version changes something that should be verified in-game, **`runUiTestBundle`** in **`90-ui.js`** must be extended so a console **`ligmarBot.runUiTestBundle()`** run still covers it automatically: add an **`addCheck`** and a **human label** in **`buildTestBundleHumanReport`** / **`getTestBundleHumanLabels()`**, then ship — the console prints a **highlighted** line starting with **`Test result:`** (CSS-styled `console.log("%c…")`). That exact line is what you copy-paste back for patch verification. Also **`[TEST] SUMMARY`** + **`console.table`**. After the suite, **`emitTestSelfTestPackage`** opens a **new browser tab** with the full JSON (summary line + scrollable `<pre>` + **Copy JSON** button), attempts **automatic clipboard** copy of the same JSON, prints a **green bordered DevTools block** between **`---LIGMAR_TEST_EXPORT_BEGIN---`** and **`---LIGMAR_TEST_EXPORT_END---`**, logs **`[TEST] SELF_TEST_JSON`**, and stores **`Runtime.ui.lastTestExportJson`**; **`ligmarBot.getLastTestExport()`** returns **`{ json }`**. The JSON **`gameSnapshotEnd`** object includes **`fieldValidation`** — compact **ROADMAP #2** telemetry (reliability, health, recovery, combat sustain, combat queue, chat spammer, last session summary, planner opener event counters, **`lastFoughtEnemyKey`**, optional **`openerDangerPressureSample`** from **`plannerComputeOpenerDangerPressure`**, optional **`enemyBuffCalibration`** from the last-fought enemy DB row after merges, optional **`plannerUiPrefs`** — snapshot of **`ligmarbot.plannerUi.v1`** fields including **`openerFollowUpSkillDepth`**) for soak triage; same data anytime via **`ligmarBot.getFieldValidationSnapshot()`**. **`planner_opener_context_scoring`** treats **`horizon_prefers_basic`** as satisfied when horizon preview rows carry context fields even if the basic pick leaves **`lastDetail.contextAdjustment`** unset. If popups are blocked, use the console block or **`getLastTestExport()`**. **Soak issue clip:** **`Logger`** keeps an in-memory ring (**`15-logger.js`**, last **200** lines); use **`ligmarBot.copyIssueReportLogs({ lines: 30, stopFarm: true })`** (markers **`---LIGMARBOT_ISSUE_LOG_CLIP_START---`** / **`END`**) to stop auto-farm when needed and copy lines. TEST includes soft **`Logger ring`**. **Profiles:** **`panel`** (default when `runUiTestBundle()` opts omitted) is the full routine validator; **`quick`** shortens soak windows; **`release`** maximizes soak and forces a fresh skill scan.
+
+**TEST scope rule (maintainer policy):** TEST must contain only checks relevant to the current patch train. Legacy checks stay **off by default** once the feature is stable (e.g. charge-cancel smoke moved to on-demand `runUiTestBundle({ fireChargeCancelIfHint: true })`). Add/re-enable steps only when that behavior is being patched or regressed.
+
+### Permanent skill database (planned)
+
+- **Today:** Each browser already stores **`scanSkills`** output in **`localStorage[Config.skills.storageKey]`** (per machine / profile). That is a **personal** skill DB, not a repo-wide source of truth.
+- **When to freeze a shared “master” DB:** After **effect parsers** and **planner consumers** (`openerHorizonSim`, ranking) are stable for your main build — otherwise bulk imports bake in bad parses. Good trigger: one release notes “skill schema vN locked,” then export.
+- **Console collector (skill tree → master export):** **`bot/tools/skill-master-collector-console.js`** is **not** a Tampermonkey script — paste it only into **DevTools → Console** on **`ligmar.io/game/`** (with the bot loaded so **`ligmarBot.parseSkillEffects`** / **`Config.selectors`** match **`82-skills.js`**). After paste you get **`lmcOne`**, **`lmcAll`**, **`lmcDownload`** on **`window`**:
+  - **One class:** Open **Character → Skills** (or let the script open them). Run `await lmcOne("assassin")` (string = class label you are on). JSON is **`console.log`**’d and returned. The script **resolves the game `document`**: it walks **nested same-origin `iframe`s** and picks the doc that contains **`.skills-tree`** (DevTools’ top-level console often targets the parent shell, where the game DOM does not exist). **`lmcProbe()`** lists each frame’s URL and whether **`hasSkillsTree`**; **`lmcSetDoc(iframe.contentDocument)`** forces a doc if auto-detection fails (cross-origin iframes cannot be walked). Popup detection: **`app-modal`** with **`.dialog-action app-action-info`**; header **“Skill”** is optional (i18n). Clicks use **pointer + mouse** sequence for **`apptap`**. **`getComputedStyle` / synthetic events** use the element’s **`ownerDocument.defaultView`** (correct for iframe). Parsing still uses **`.action-name` / `app-param-item-new`** fallbacks when Config selectors are rooted wrong.
+  - **All six:** Start on the hero for index **`0`** (assassin) … **`5`** (priest). Run `await lmcAll(0)`. Between classes it uses **Town → Buildings → Hall of Heroes → class tab → Select**, then **Character → Skills** again. Save with `lmcDownload(await lmcAll(0))` or copy from the console. Edit **`MS`** at the top of the pasted file if your UI is slow.
+- **Workflow you suggested (repo file):** Merge collector JSON into **`bot/data/ligmar_hero_skills_db.json`** (canonical; embedded at build into **`87-skill-master.generated.js`**, and **`88-support-classification.generated.js`** via **`bot/tools/generate-support-classification.mjs`**) → offline review / diffs on game patches → planner weights and missing effect patterns. **`scanSkills`** on the action bar remains the fast per-build check; the tree collector captures **full class skill lists** (including un-slotted nodes) with the same effect pipeline when the bot is present.
+- **Conception vs Requirements (hero DB):** Exported JSON may include **Requirements** (level, status, silver) for humans — the bot **does not** ingest them for combat or planning. For automation, each scanned slot gets **`inferSkillConception()`**: roles like **control**, **channeled**, **self_tradeoff**, **stealth**, and **usageHints** (e.g. interrupt risk, mana-over-time cost) derived from **effect types** and **description shape**, not from **“453 → 531”** style numbers. Match cross-level rows with **`ligmarBot.normalizeSkillName("Blade Dance (6/10)")` → `"Blade Dance"`**. Optional **`Config.planner.skillRankUseConception = true`** makes opener **rank order** follow those roles instead of parsed magnitudes; **`openerHorizonSim`** still uses magnitudes unless you turn it off.
+- **Benefit:** Consistent combat tuning, regression tests (“skill X parsed”), and optional **fallback load** when `localStorage` empty (future).
 
 **Why this layout (and not ES modules / `@require` from GitHub):**
 
 - Tampermonkey's most reliable distribution shape is a single self-contained file. ES module imports inside a userscript add CSP/loader friction we don't need.
-- Function declarations are hoisted within the closure, so concat order doesn't change behavior — only readability. We keep the prefix order purely as documentation.
+- **`function` declarations** are hoisted inside the shared IIFE, so two modules can call each other’s functions regardless of numeric order **as long as the call happens at runtime** (not from another file’s top-level `const` initializer). **`const` / `let` / `class` run in strict filename order** (e.g. `15-logger.js` before `20-runtime.js`); keep cross-file dependencies inside functions or reorder the module file.
 - `@require` from GitHub raw URLs hits a sticky CDN cache and forces network at every game load; local file `@require` is instant and offline.
 - Build time is effectively zero (one file write); no watcher needed for a typical edit/reload cycle.
 
@@ -127,14 +162,79 @@ The bot is delivered to Tampermonkey via a thin loader userscript that points at
 - ✅ **2-ring yellow-die threshold calibration (v0.2.5)**: with patch size 28x28 px, target color `#f0b80c`, and tolerance 35 (RGB Euclidean), a real die centered in a sample patch produces a measured match ratio of **~1.1%** (Victor's overlay reading). The original guessed threshold of 4% was far above realistic signal and produced false negatives; threshold lowered to **0.5% (`Config.scan.secondRing.minMatchRatio = 0.005`)**.
 - ✅ **2-ring hex sampling + tolerance bump (v0.2.6)**: at v0.2.5 the same die produced 0.4-1.2% across multiple readings (variance from corner-pixel leakage in the 28x28 square sampling neighbor tiles, plus tight tolerance missing anti-aliased edges). Switched to a **hex-shaped sample mask** matching the actual game tile (pointy-top hex, circumradius `r = step / sqrt(3)` ~= 17.32 px) inside a 36x36 bounding box (`sampleHalfSizePx: 18`); only pixels passing the hex inequality contribute to the ratio, so corner leakage is eliminated. Tolerance also raised **35 -> 75** (still ~3x below the distance to any green/red/brown/blue, so no risk of triggering on terrain). Threshold kept at 0.005. The overlay was updated to draw hex outlines so the user can visually confirm we sample the tile shape itself.
 - ✅ **Tile-scoring policy fixes (v0.2.6)**: bot was observed walking through an ally-only tile toward a 2-ring yellow die when mob-only neighbor tiles led to the same die. Root cause: the die-guided branch in `exploreByScan` used a separate "min enemies, then min allies" tiebreak which inverted the farm preference (treating mobs as obstacles). Fixed by sorting die-candidate tiles via the same `scoreScannedTile()` ranking the non-die path uses. Also bumped per-enemy bonus (50 -> 200) and per-ally penalty (400 -> 2000) so allies dominate the tiebreak ("1 ally is worth ~10 enemies of avoidance"). Net effect: `1 enemy + 0 allies` now beats `2 enemies + 1 ally` in any tier, matching how a farming bot should actually rank moves.
+- ✅ **Grey / unknown loot vs mob-only neighbors (v0.3.25)**: `parseLootKindsFromMarkers` only recognized grey chests via `#a5abb5`; many assets fell through to `other_loot`, and `scoreScannedTile` had **no** tier for `other_loot` — those tiles used the **empty** base (100000) while a **2-mob** neighbor scored **300400**, so ring scans could pick **mobs over visible chests**. Fix: broader grey-chest URL/class hints + explicit **`other_loot` base 450000** (below **`grey_chest` 500000**, above mob-only **300000**).
+- ✅ **Goblin tiles no longer avoided (v0.3.222)**: **`scoreScannedTile`** used to return **-500000** for **`goblin`** markers alongside **champion/boss**; **`ringHasUsefulLoot`** and the yellow-die **`ringCandidates`** filter skipped both. **Goblin** steps are now normal loot targets (**base 350000**, between **contract-only** and **mob-only**); **boss** (champion icon) stays hard-avoided. **`80-map.js`**, **`ARCHITECTURE.md`**, **`ROADMAP.md`**.
+- ✅ **Skills DB vs class / bar swap (v0.3.30) + strict load (slice 16)**: `saveSkillsToCache` stores **`actionBarFingerprint`** from live `app-action-button` rows (class + icon + optional **`data-test` / `aria-label` / `title`** hints per slot). When **`Config.skills.invalidateCacheOnBarMismatch`** is true, **`loadSkillsFromCache`** requires a **non-empty** saved fingerprint (older saves **without** one are **deleted**), requires the **live** bar fingerprint (**skips** load if the bar is not in the DOM yet — **`99-bootstrap`** **retries once** after **1.5s**), then compares; mismatch **removes** stale `localStorage` so another hero’s scanned names (e.g. wrong skill labels in **`[PLANNER]`** logs) cannot stick after a class change.
+- ✅ **In-game two-skill queue (player mechanic, now partially automated)**: While skill **A** is **charging/casting**, you may press **B** early — **B** is **queued** and starts when **A** finishes. Only **two** skills in this relationship (you cannot queue a **third** immediately). The bot now models a **runtime queue v1**: one buffered **non-charge/basic** follow-up action can be armed from planner follow-up scoring and fired with revalidation, but there is still **no deeper multi-step rotation engine** beyond that single buffered action.
 - ✅ **1-ring scan speedup (v0.2.7)**: per-tile wall timeout reduced `760ms -> 220ms` and poll cadence reduced `95ms -> 40ms`. All-walls 6-tile scan goes from ~4.56s to ~1.32s; all-walkable goes from ~570ms to ~240ms. Justification: local popup coord updates resolve in ~30-80ms after click (no server roundtrip needed since coords are click-position derived); 220ms keeps ~3x safety margin against jitter. The polling structure is preserved (vs. a single-read after fixed delay) so occasional slow popup updates still classify correctly. Also disabled the auto-render of the 2-ring scan overlay (`Config.debug.showSecondRingOverlay: true -> false`) now that detection is calibrated -- re-enable from console for future debugging.
-- ✅ **Phase C0: skill scanner (v0.3.0)**: foundation for the upcoming combat planner. `ligmarBot.scanSkills()` (manual, console-only; refuses to run with auto-farm ON) iterates every `app-action-button` slot in `app-battle-action-bar`, classifies it (basic / potion-hp / potion-mp / skill-attack / skill-support / empty) from the slot's class + image URL, then for non-empty slots: dispatches `mousedown`, holds 450ms past the long-press threshold, polls for the `app-action-info` modal, parses name + level (`"Rapid Fire (4/10)"` -> name + 4 + 10), tags (`Attack/Target`, `Support/Self`, etc), description text, and `app-param-item-new` rows (`Activation time`, `Cooldown`, `Mana cost`, `Range`, `Weapon`). Description text is run through ordered regex patterns to extract typed effects: `dot` ("X damage over Y s"), `slow` ("Slows the target by N% for T s"), `stun` ("Stuns the target for T s" -- guessed pattern, will refine with real recon), `damage_buff` ("N% additional KIND damage with each attack for T s"), `heal_hp` / `restore_mp`, plus a generic "additional N damage" fallback when no DoT was already captured, and a `basic_proc` flag whenever "Deals basic ... damage to the target" is present. Closes via `app-icon.modal-header-close`, then dispatches `mouseup` on `document.body` (NOT on the button) so we never accidentally fire a `click` that casts the slot. Result is cached to `localStorage[Config.skills.storageKey]` and re-loaded on boot so the scan only happens once per character/build. No combat logic consumes `Runtime.skills.slots` yet -- this is recon-only data the user verifies before later phases (C1: hero stats, C2: damage observer, C3: enemy DB, C4: combat planner) build on it.
+- ✅ **Ring scan coord verify retry (v0.3.31)**: if **`waitForCondition`** for neighbor coords **times out**, **`scanNeighborRing`** re-clicks the same offset and waits again (**`Config.scan.tileCoordVerifyRetries`**, default **1**; **`tileRetrySettleMs`**). Cuts spurious **`scan R coords change timed out`** when the popup is briefly slow; true walls still classify blocked after the extra attempt.
+- ✅ **Phase C0: skill scanner (v0.3.0)**: foundation for the upcoming combat planner. `ligmarBot.scanSkills()` (manual, console-only; refuses to run with auto-farm ON) iterates every `app-action-button` slot in `app-battle-action-bar`, classifies it (basic / potion-hp / potion-mp / skill-attack / skill-support / empty) from the slot's class + image URL, then for non-empty slots: dispatches `mousedown`, holds 450ms past the long-press threshold, polls for the `app-action-info` modal, parses name + level (`"Rapid Fire (4/10)"` -> name + 4 + 10), tags (`Attack/Target`, `Support/Self`, etc), description text, and `app-param-item-new` rows (`Activation time`, `Cooldown`, `Mana cost`, `Range`, `Weapon`). Description text is run through ordered regex patterns to extract typed effects: `dot` ("X damage over Y s"), `slow` ("Slows the target by N% for T s"), `stun` ("Stuns the target for T s" -- guessed pattern, will refine with real recon), `damage_buff` ("N% additional KIND damage with each attack for T s"), `heal_hp` / `restore_mp` (**potion HoT:** merged plain text like **restores 405 (+52) health over 10 seconds** yields one **`heal`** effect whose **`value`** is base + parenthetical bonus, e.g. **457**; **`over N seconds`** accepted as well as **`over N s`**), plus a generic "additional N damage" fallback when no DoT was already captured, and a `basic_proc` flag whenever "Deals basic ... damage to the target" is present. **`ligmarBot.parseSkillEffects(description)`** runs the same pattern pass for ad-hoc strings (TEST + console). Closes via `app-icon.modal-header-close`, then dispatches `mouseup` on `document.body` (NOT on the button) so we never accidentally fire a `click` that casts the slot. Result is cached to `localStorage[Config.skills.storageKey]` and re-loaded on boot so the scan only happens once per character/build. No combat logic consumes `Runtime.skills.slots` yet -- this is recon-only data the user verifies before later phases (C1: hero stats, C2: damage observer, C3: enemy DB, C4: combat planner) build on it.
 - ✅ **Skill parser extensions (v0.3.1)**: `.header-description` is merged with `.header-additional-description` (e.g. interrupt hints) for regex input; `descriptionAdditional` is stored separately on each slot. `Activation time` value `Instantly` maps to `castTimeSec: 0`. New effect types from live HTML recon: `channel_gear` (channel max seconds + base physical + up-to-N% gear damage -- Sniper Shot), `mana_drain_per_sec` (Step into Darkness), `stealth` (visibility decreased to 0), `dodge_buff` (Predator Dexterity), `crit_damage_buff` (Taste of Death). `basic_proc` also matches `deals base ... damage to the target` but is suppressed when `channel_gear` already matched (avoid duplicate proc). Saved cache payload `version` field bumped to 2.
-- ✅ **Potion effect labeling (v0.3.2)**: HP and MP potions both use `effects[].type === "heal"` with `effects[].resource === "hp"` or `"mp"` so logic never has to guess from the name string; `scanSkills` `console.table` prints `heal_hp` / `heal_mp` in the effects column for human readability.
+- ✅ **Potion effect labeling (v0.3.2)**: HP and MP potions both use `effects[].type === "heal"` with `effects[].resource === "hp"` or `"mp"` so logic never has to guess from the name string; `scanSkills` `console.table` prints **`heal_hp:<total>@<dur>s`** / **`heal_mp:…`** (totals include **(+N)** upgrade lines in the tooltip text) for human readability vs sustain math.
 - ✅ **Phase C1: hero stats + passive regen (v0.3.3)**: `ligmarBot.readHeroCombatStats()` opens the profile (`app-profile-avatar` / fallback `.profile-avatar app-profile-avatar`), clicks the `app-tab` whose `.tab-content` is `Stats`, regex-extracts Physical attack, attack speed, crit chance, crit damage from overlay text (`.cdk-overlay-container` preferred), persists to `localStorage[ligmarbot.heroStats.v1]`, returns via the `Battle` footer (`.footer-button` + `Battle` text or `.icon-src-swords`). `ligmarBot.measurePassiveRegen()` samples HP/MP cur through `readBasicState` over configurable duration (default ~3.5s) and estimates HP/s and MP/s. **Regen caveat**: HP regen is often invisible while at **full** HP — take a small amount of damage first if you need a non-zero HP slope; MP may sit at max too. Crit stats are optional for v1 planner math (nice-to-have for EV); physical attack + attack speed anchor basic-attack DPS estimates once combined with skill tooltips.
-- 🟡 **Phase C4: combat planner (in progress)** — **slice 1**: `summarizePlannerInputs()` / `estimatePaperBasicAttackDps()` + `listAttackSkillsForPlanner()`. **slice 2**: `observeCombatDamage()` **`attribution`** at session start; `mergeLastDamageObserveIntoEnemyDb()` → **`observeCalAgg`** / **`observeCalLast`**. **slice 3**: `summarizeEnemyDbCalibration({ key? })` / `getEnemyCalibrationRow(key)`. **slice 4**: `await calibrateEnemyFromCombat(...)`; `rankAttackSkillsByHeuristic` + `plannerSkillEffectHeuristicScore`. **slice 5**: `Runtime.enemy.lastFoughtKey`; `getLastFoughtEnemyKey()`; **`await quickCalibrationSession(...)`**. **slice 6**: **`Config.planner`** hooks in **`secureTileAndLootOnce`**. **slice 7**: GUI checkboxes + **`ligmarbot.plannerUi.v1`** persistence (`90-ui.js`). **slice 8**: **`useRankedAttackSkillsInCombat`** — `plannerPickSkillSlotToCast()` + **`clickActionBarSlot(i)`**; **`attackUntilProgress`** opening click tries ranked **`kind==="skill"`** attack (MP gate: **`skillMpReserve`**), else **`clickBasicAttack()`** (`60-actions.js`, `85-combat.js`, `86-planner.js`). **slice 8b**: progress = **`enemyCount`** down **or** red **`targetHp.cur`** down (same **`max`**); skill opener with no progress → **basic retry**; opener skips skills whose parsed **`effects`** lack direct damage (`dot` / `instant` / `channel_gear` / `basic_proc`); **`plannerSkillHasDirectDamageForOpener`** (`86-planner.js`). **slice 9**: **`secureTileAndLootOnce`** — after each successful **find-enemy**, **inner loop** calls **`attackUntilProgress`** repeatedly (cap **`maxCombatAttackBurstsPerFind`**) so multi-mob pulls need fewer **find-enemy** passes; **`useRankedSkillOnlyFirstBurstAfterFind`** (default **true**) keeps **ranked skill** on the **first burst only** after each find, follow-up bursts **basic-only**. **slice 9b (fix)**: when a burst **lowers `enemyCount`** but the pull is **not** clear, run **`clickFindEnemyVerified`** + **`waitForTargetAcquired`** before the next burst so the UI/target bar matches the next mob (avoids long **`attackProgressTimeoutMs`** stalls and redundant outer find spam). **slice 10**: **`useRankedSkillOnlyFirstBurstAfterFind`** exposed on the **Planner** panel and persisted in **`ligmarbot.plannerUi.v1`** (`90-ui.js`, `20-runtime.js`).
+- ✅ **slice 24b (charge skill cancel UI, v0.3.44)**: Charge skills (e.g. Sniper Shot) **do not start cooldown** until **cancel** or **full charge shot**. After the **first** ranked opener progress wait fails, if **`isChargingSkillCancelHintVisible()`**, the bot calls **`clickChargingSkillCancelUi()`**. **Primary:** **`dispatchClickAt`** on the viewport midpoint **between** **`Config.selectors.mapToggleButton`** and **`Config.selectors.mapCanvas`** (empty UI strip; reliable cancel). **Fallback:** **`clickElementSafe`** on **`getChargingSkillCancelClickTarget()`** (optional **`chargingCancelClickSelectors`**, else DOM walk from hint). **Not** a second action-bar tap. Toggles: **`rankedOpenerClickCancelUiIfChargeStuck`**, **`chargingCancelPreferMapGapClick`**. Debug: **`ligmarBot.clickChargingSkillCancelUi()`**, **`getChargingSkillCancelClickTarget()`**.
+- ✅ **slice 24c (v0.3.45)**: **`runUiTestBundle`** / **`TEST (version)`** panel button, compact hint, **`fireChargeCancelIfHint`** smoke cancel path, **`dispatchClickAt`**, **`getChargeCancelMapGapClientPoint`** on **`ligmarBot`**, **`ROADMAP.md`**, ship rule: **bump `build.ps1 -Description` on every module change** so refresh-only updates work.
+- ✅ **slice 24d (v0.3.46)**: Panel checkbox **Cancel smoke on TEST** + **`ligmarbot.testUi.v1`** (removed again in **slice 28** — TEST is one-click only).
+- ✅ **slice 25 (v0.3.47)**: **`rankedOpenerChargeGraceMs`** — extra sleep after ranked tap + settle before first HP/count wait (slow charge wind-up). ~~**`rankedOpenerEarlyCancelIfHintAfterMs`** partial-wait early cancel~~ **removed** — first wait is a single window; stuck cancel after full wait remains (`85-combat.js`).
+- ✅ **slice 26 (v0.3.48)**: Panel **Opener timing (ms)** — **Grace** / **Early cancel** number inputs → **`Config.combat`**, persisted **`localStorage[ligmarbot.combatUi.v1]`**; **`loadCombatUiPrefs`** on panel create; early value clamped below **`rankedOpenerFirstProgressTimeoutMs`** (`90-ui.js`). **Update:** panel opener inputs later removed; **early-cancel wait mechanic** removed entirely in favor of **`chargeSkillReleaseOverrideMs`** naming for planner-only ms override + **`loadCombatUiPrefs`** migration from the old storage key.
+- ✅ **slice 27 (v0.3.49)**: Panel checkbox **Calib on TEST** + shared **`testUi.v1`** (removed again in **slice 28**).
+- ✅ **slice 28 (v0.3.50)**: **One-click TEST** — **`async` `runUiTestBundle`**: if auto-farm was **ON**, **`stopAutoFarmLoop()`** then wait (up to **120s**) until **`Runtime.autoFarm.running`** is false; probes; **`clickChargingSkillCancelUi`** when cancel hint visible; **`await quickCalibrationSession()`** by default. No TEST checkboxes, no **`ligmarbot.testUi.v1`**, no **`Config.ui`** block. Opt out from console: **`ligmarBot.runUiTestBundle({ runQuickCalibration: false })`**, **`{ fireChargeCancelIfHint: false }`** (`90-ui.js`, `10-config.js`, `20-runtime.js`).
+- ✅ **slice 29 (v0.3.51)**: **Planner panel checkboxes removed** — **`Config.planner.*`** only via console or pre-existing **`ligmarbot.plannerUi.v1`** on load; **`quickCalibrationSession`** passes **`mergeOpts: { excludeLethal: false }`** so a kill inside the observe window still merges **`hp_drop`** into the enemy DB (`86-planner.js`, `90-ui.js`, `20-runtime.js`).
+- ✅ **slice 30 (v0.3.52)**: **TEST timing** — panel hint + playbook table: when to press **TEST** (calibration in combat vs cancel mid-charge vs probes anytime) (`90-ui.js`, `ARCHITECTURE.md`).
+- ✅ **slice 31 (v0.3.53)**: **TEST resumes auto-farm** — if the loop was **running** when **TEST** started, **`runUiTestBundle`** calls **`startAutoFarmLoop()`** again after the bundle (unless **`ligmarBot.runUiTestBundle({ resumeAutoFarm: false })`**) (`90-ui.js`).
+- ✅ **slice 32 (v0.3.54)**: **Default `rankedOpenerChargeGraceMs` → 200** — ranked opener gets a small pre-poll pause to cut false no-progress. Manual charge hold override is **`chargeSkillReleaseOverrideMs`** (default **0**; was `rankedOpenerEarlyCancelIfHintAfterMs` before rename) (`10-config.js`, `ARCHITECTURE.md`).
+- ✅ **slice 33 (v0.3.55)**: **TEST hint + docs** — panel and playbook spell out that **charge-cancel smoke deliberately ends** your channel when the hint is visible; opt out via **`fireChargeCancelIfHint: false`** (`90-ui.js`, `ARCHITECTURE.md`).
+- ✅ **slice 34 (v0.3.56) — grouped**: **Planner persistence from console** — **`ligmarBot.savePlannerUiPrefs()`** / **`loadPlannerUiPrefs()`** (`90-ui.js`, `99-bootstrap.js`); **`[BOOT]` warn** when **`useRankedAttackSkillsInCombat`** but skill cache empty (points to **`scanSkills`** + **`savePlannerUiPrefs`**).
+- ✅ **slice 35 (v0.3.57)**: **`ligmarBot.saveCombatUiPrefs()`** / **`loadCombatUiPrefs()`** — same pattern as slice 34 for **Opener timing (ms)** / **`ligmarbot.combatUi.v1`** (`99-bootstrap.js`).
+- ✅ **slice 36 (v0.3.58)**: **Prefs helpers return values** — **`savePlannerUiPrefs` / `loadPlannerUiPrefs` / `saveCombatUiPrefs` / `loadCombatUiPrefs`** return **`{ ok, … }`** (not `undefined`); **`ligmarBot.saveAllUiPrefs()`** / **`loadAllUiPrefs()`** (latter calls **`updateControlPanelStatus`**) (`90-ui.js`, `99-bootstrap.js`).
+- ✅ **TEST includes horizon preview (v0.3.65)**: When **`useRankedAttackSkillsInCombat`**, **`runUiTestBundle`** runs **`previewOpenerHorizonSim()`** and adds soft check **`planner_opener_horizon_preview`**. **`.cursor/rules/ligmarbot-ship-version.mdc`** — ship rule: extend TEST for any new testable behavior.
+- ✅ **Planner v2 conception-first opener (v0.3.78)**: `10-config.js` enables `planner.skillRankUseConception` by default. `86-planner.js` resolves conception from `slot.master.conception` first (fallback: scanned conception) and, when conception rank mode is active, applies a conception gate (`conceptionOpenerGateDelta`) before `openerHorizonSim` paper-DPS tie-break. This keeps role-consistent picks while still using numeric horizon as secondary chooser. `90-ui.js` adds TEST check `planner_conception_path` and includes its status in the one-line `Test result` (**v0.3.79** refinement: this check is now `skipped` when ranked combat is OFF, so it reflects exercised behavior rather than config-only state).
+- ✅ **Ranked-opener runtime telemetry (v0.3.80)**: `85-combat.js` records ranked opener runtime events (`ranked_pick`, `ranked_progress`, `ranked_alt_pick`, `basic_fallback_after_ranked`, `ranked_no_progress`, etc.) into `Runtime.planner.openerRuntime` for soak validation. `86-planner.js` exposes `getPlannerRuntimeTelemetry()` and `resetPlannerRuntimeTelemetry()` and includes telemetry in `getPlannerOpeningPickDiagnostics()`. `90-ui.js` adds TEST check `planner_ranked_runtime` (`Ranked runtime`) — skipped when ranked is OFF or no events yet; otherwise reports event counters.
+- ✅ **Ranked decision quality detail (v0.3.81)**: `86-planner.js` enriches `lastOpeningPickDetail` with action-grade metrics: `bestSkillVsBaselinePct`, `thresholdPct`, `bestCandidate`, and `filteredOut` buckets (`cooldown`, `mpGate`, `noDirectDamage`, `excluded`) for both `picked` and `horizon_prefers_basic` paths. `90-ui.js` adds TEST check `planner_ranked_reason_quality` (`Ranked reason quality`) to verify diagnostics are actionable (and not just a reason label).
+- ✅ **Ranked tuning hint (v0.3.82)**: `86-planner.js` adds diagnostics-only `plannerBuildRankedTuningHint()` using runtime telemetry (`openerRuntime`) + latest horizon detail to suggest `openerHorizonMinImprovementFraction` adjustments (no auto-write). `10-config.js` adds `planner.autoTuneHints` (default `true`). `90-ui.js` adds TEST check `planner_ranked_tuning_hint` (`Ranked tuning hint`) with `ok/skipped` semantics based on available runtime signal.
+- ✅ **GUI ON timer (v0.3.83)**: `90-ui.js` footer now shows live `ON: <duration>` while auto-farm is running (computed from `Runtime.autoFarm.startedAt`), so session runtime is visible in panel without extra console commands.
+- ✅ **GUI footer live-refresh fix (v0.3.84)**: `90-ui.js` now uses a single-instance refresh ticker (`ensureControlPanelRefreshTicker`) with guarded callback and removes stale references to deleted opener-input vars, fixing frozen footer values (HP/MP/Ping/ON timer/cycles only updating after OFF). `20-runtime.js` adds `Runtime.ui.statusRefreshTimer`.
+- ✅ **Auto-farm session summary in TEST (v0.3.85)**: `85-combat.js` captures `Runtime.autoFarm.lastSessionSummary` at loop exit (`onDurationMs`, `cyclesCompleted`, `consecutiveFailures`, `exitReason`, `lastStage`, timestamps). `90-ui.js` reports this via TEST check `auto_farm_session_summary` (`Auto-farm session`) as soft diagnostics (`skipped` when no completed ON session exists yet).
+- ✅ **No-skip ranked TEST mode (v0.3.86)**: `90-ui.js` adds `strictRankedChecks` option to `runUiTestBundle`. In strict mode, ranked-related checks (`planner_ranked_preflight`, conception/runtime/horizon/reason/tuning) fail when ranked combat is OFF instead of reporting `skipped`. Use this for patch sign-off to avoid silently bypassing important combat validation.
+- ✅ **One-click TEST auto-soak (v0.3.87)**: `runUiTestBundle` now self-enables ranked combat settings for test scope, runs a short auto-farm soak to generate real ranked opener telemetry, then executes strict ranked checks. New check `planner_ranked_soak` ensures the soak actually produced ranked picks before diagnostics. This enforces the policy: after a patch, user presses only **TEST**; no manual setup toggles required.
+- ✅ **Ranked soak false-fail guard (v0.3.88)**: `planner_ranked_soak` now accepts a valid stop-requested state while auto-farm is winding down (`stopIssued` + `stopAccepted`) instead of requiring loop fully stopped within the wait window. Prevents false critical failures when picks were recorded but cycle teardown took longer.
+- ✅ **TEST auto-soak hang fix + stop policy (v0.3.89)**: fixed `runUiTestBundle` auto-soak to start auto-farm **without awaiting** the long-running loop promise (previously could hang until manual OFF). TEST now defaults to **not resuming** auto-farm after completion (`resumeAutoFarm` must be explicitly `true`).
+- ✅ **Per-class planner profiles (v0.3.90)**: `10-config.js` adds `planner.classProfiles` defaults (default + archer/assassin/mage/guardian/warrior/priest). `86-planner.js` auto-detects class from `app-icon.profile-class` (`icon-src-*`), applies profile knobs at runtime (`skillMpReserve`, `openerHorizonMinImprovementFraction`, `openerExtraRankedSkills`, `conceptionOpenerGateDelta`), and exposes applied profile in diagnostics. `90-ui.js` adds TEST check `planner_class_profile` (`Class profile`).
+- ✅ **Enemy-aware opener adaptation (v0.3.91)**: `86-planner.js` now adapts opener threshold from enemy calibration ratio (`ratioObservedVsCurrentPaper`) via `plannerComputeEnemyAdaptiveMinFrac()` and stores the snapshot in diagnostics (`enemyAdaptive`). `10-config.js` adds tuning knobs: `enemyAdaptiveOpenerThreshold`, `enemyAdaptiveRatioLow/High`, `enemyAdaptiveThresholdStep`. `90-ui.js` adds TEST check `planner_enemy_adaptation` (`Enemy adaptation`).
+- ✅ **Mid-fight rotation control (v0.3.92)**: `10-config.js` adds `planner.rankedBurstsPerFind` (default raised to **`3`** in **v0.3.107** for multi-mob skill cadence). `85-combat.js` now allows a configurable number of ranked bursts per find/re-find cycle (`getRankedBurstsPerFindEffective`) instead of hard opener-only behavior; ranked allowance resets on re-find after kill. `86-planner.js` exposes `rankedBurstsPerFindEffective` in diagnostics. `90-ui.js` adds TEST check `planner_rotation_policy` (`Rotation policy`).
+- ✅ **TEST graceful soak stop (v0.3.93)**: auto-soak in `runUiTestBundle` waits for a safe stop window (enemy count cleared) before issuing `stopAutoFarmLoop`, with timeout fallback (`rankedSoakSafeStopWaitMs`). This prevents mid-fight interruption when TEST ends.
+- ✅ **Combat reliability hardening (v0.3.94)**: `85-combat.js` tracks repeated combat no-progress failures (`Runtime.autoFarm.reliability`) and applies cooldown backoff (`farmLoop.noProgressCooldownThreshold`, `farmLoop.noProgressCooldownMs`) before the next cycle to reduce tight fail loops. `90-ui.js` adds TEST check `auto_farm_reliability` (`Combat reliability`) and `lastSessionSummary` now includes reliability snapshot.
+- ✅ **TEST profiles (v0.3.95)**: `runUiTestBundle` supports `testProfile: "quick" | "release"`. Release profile enforces strict ranked+calibration checks, forces skill rescan, and extends ranked soak window (default 3–6 minutes) for deeper validation, while default quick profile remains fast one-click.
+- ✅ **TEST stability fixes (v0.3.96)**: `planner_ranked_soak` now treats ranked activity as either `ranked_pick` or `ranked_progress` (avoids false fail when opener activity exists but pick counter path is sparse). `skill_master_db` check now uses class hint from `plannerOpeningPickDiagnostics.classProfile` and syncs `Config.skills.masterClassKey` before apply, preventing assassin→archer sequential test mismatches.
+- ✅ **DevTools TEST detail policy (v0.3.97)**: `90-ui.js` now always logs a deterministic per-check detail map (`[TEST] DETAILS`) plus enriched `console.table` columns (`skipped`, `reason/error`) so every test report contains precise debug context needed for patch triage.
+- ✅ **Ranked soak criterion alignment (v0.3.98)**: `planner_ranked_soak` now treats any ranked runtime event as valid soak activity (not only `ranked_pick` / `ranked_progress`) and emits explicit `reason` in detail payload (`no_ranked_activity_before_timeout`, etc.) to avoid opaque failures.
+- ✅ **Quick soak retry hardening (v0.3.99)**: quick `testProfile` now auto-extends soak once when initial ranked activity is absent, and records retry diagnostics (`attemptCount`, `retryUsed`, `retryReason`, `retryExtensionMs`) in `[TEST] DETAILS`.
+- ✅ **Mid-session soak continuity (v0.3.100)**: release-profile `TEST` now defaults `resumeAutoFarmAfterTest=true` and emits `auto_farm_resume_policy` so long-soak validation can run via stop → validate → resume without manual toggle churn.
+- ✅ **Soak telemetry budget gate (v0.3.101)**: `planner_ranked_soak` now waits for a minimum runtime event budget (`rankedSoakMinEvents`, quick/release defaults) before passing, and reports `targetMinEvents`/`minEventsReached` plus timeout reason (`insufficient_ranked_events_before_timeout`) to stabilize tuning-hint diagnostics.
+- ✅ **Tuning-hint telemetry basis fix (v0.3.102)**: `plannerBuildRankedTuningHint()` now computes `totalEvents` from full ranked runtime counters (not only pick/no-progress/fallback trio), preventing false `insufficient_runtime_events` skips after a ranked-soak pass.
+- ✅ **Multi-mob channel rank deprioritization (v0.3.106)**: `rankAttackSkillsByHeuristic` subtracts **`conceptionChannelMultiMobPenalty`** from channel-style attack skills when live **`enemyCount` > `conceptionMultiMobEnemyCountThreshold`** (conception **`flags.channel`** or **`channel_gear`** effect). Diagnostics: **`multiMobChannelRank`** on `getPlannerOpeningPickDiagnostics()`; TEST **`Multi-mob channel rank`** (soft). Class profiles may override the two knobs via `plannerApplyClassProfile`.
+- ✅ **Full-charge verify no longer cancels late (v0.3.112)**: after a charge skill reaches full charge and auto-fires, `attackUntilProgress` now uses only a short post-fire verify window (**`chargeSkillFullChargeProgressTimeoutMs`**, default **650ms**). It does **not** wait ~2.2s and then try a cancel click after the shot has already fired.
+- ✅ **Sniper Shot uses 75% release in normal combat (v0.3.114)**: `Config.combat.chargeSkillReleaseFractionsByName` now sets normalized **`"sniper shot"`** to **`0.75`**, and `plannerBuildChargeReleasePlan()` resolves per-skill fraction overrides before the global default. That means the planner’s horizon math and the real combat opener both use the same 75% release timing for `Sniper Shot`, not just TEST.
+- ✅ **TEST forces partial `Sniper Shot` release (v0.3.113)**: when `runUiTestBundle()` forces `Sniper Shot`, it also temporarily sets `chargeSkillReleaseFraction = 0.75` and clears **`chargeSkillReleaseOverrideMs`** so the verify path actually exercises cancel-at-75% behavior. TEST details now surface that forced fraction in `planner_forced_opener`, `planner_ranked_soak`, and `planner_charge_release_policy`.
+- ✅ **Charge skills use planned release semantics (v0.3.109)**: parsed **`channel_gear`** skills are no longer treated as "wait for no progress, then maybe cancel." **`plannerBuildChargeReleasePlan()`** computes a release hold from **`chargeSkillReleaseFraction`** (default **1.0**, full charge) or optional **`chargeSkillReleaseOverrideMs`** when > **0**. **`attackUntilProgress`** holds for that window, releases via **`clickChargingSkillCancelUi()`** when the plan is a partial release, then verifies HP/count progress from the release itself. **`openerHorizonSim`** blocks basics until the planned release time and only credits **`channel_gear`** damage if that release lands inside the horizon.
+- ✅ **TEST can force Sniper Shot opener (v0.3.110)**: `runUiTestBundle()` temporarily sets `Runtime.planner.forcedOpenerSkillName = "Sniper Shot"` unless you pass another `forceRankedSkillName` (or `false` to disable). `plannerPickSkillOpeningPick()` honors that override only for eligible candidates, records `lastReason: "forced_for_test"` when it succeeds, and falls back to normal ranking when the forced skill is missing/gated. TEST reports this in `Forced opener`.
+- ✅ **Post–charge-cancel safety (v0.3.108)**: After **`clickChargingSkillCancelUi()`**, **`attackUntilProgress`** now **`clickBasicAttack()`** immediately, then waits at most **`Config.combat.attackProgressAfterChargeCancelTimeoutMs`** (default **3200**) for progress — not the full **`attackProgressTimeoutMs`** (~6500). Reduces standing idle while the target still attacks.
+- ✅ **Release calibration tier-2 + default ranked bursts (v0.3.107)**: If release **`calibration_observe`** still sees **`skipped_no_hp_drops`** after the first combat-seed retry, **`runUiTestBundle`** runs a **second seed** (find + **three** spaced basics + **28s** observe). Check detail adds **`retryPasses`** (`0` none, `1` tier-1, `2` tier-2). Default **`Config.planner.rankedBurstsPerFind`** is **`3`** so two-mob pulls get one more ranked burst per find pass before basic-only follow-ups.
+- ✅ **Release calibration retry hardening (v0.3.105)**: when release-profile calibration ends with `skipped_no_hp_drops`, `runUiTestBundle` now performs one short combat-seed retry (find enemy + basic tap) and re-runs `quickCalibrationSession` with a longer observe window. `calibration_observe` detail now reports `retried` / `retryError`.
+- ✅ **Calibration observe attribution fix (v0.3.104)**: **`observeCombatDamage`** now sets **`session.attribution`** on the **first** valid target profile read inside the poll loop if it was missing at observe start (common right after TEST soak stops). Release **`quickCalibrationSession`** uses **15s** observe. **`calibration_observe`** TEST detail **`reason`** surfaces **`enemyDbMerge.error`** (e.g. `no_enemy_key`) instead of a generic `merge_failed` when applicable.
+- ✅ **Canonical skill DB path + release TEST button (v0.3.103)**: Master export lives under **`bot/data/ligmar_hero_skills_db.json`**; **`build.ps1`** prefers that path (legacy root JSON optional fallback). Panel adds second button **`TEST (release)`** for long-profile validation without console.
+- ✅ **openerHorizonSim (v0.3.64)**: Ranked opener uses a **closed-form** paper window (**`openerHorizonSimMs`**, default **5000**) — skill effect damage + basics after **`castTimeSec`** vs **basics-only**; pick skill only if ahead by **`openerHorizonMinImprovementFraction`**; else **`horizon_prefers_basic`**. **`ligmarBot.previewOpenerHorizonSim()`**, **`Runtime.planner.lastOpenerHorizonSim`**. Toggle **`Config.planner.useOpenerHorizonSim`**, log **`openerHorizonLog`** (`86-planner.js`, `10-config.js`, `20-runtime.js`, `99-bootstrap.js`).
+- ✅ **TEST vs `stopRequested` leak (v0.3.63)**: **`stopAutoFarmLoop()`** only set **`stopRequested`**; the loop exit path did **not** clear it, so **`readHeroCombatStats()`**’s **`waitForCondition`** aborted immediately (“**hero profile sheet aborted (stop requested)**”), never opened **Stats**, and **`clickHeroBattleFooter`** often left the sheet on the wrong tab (**Gear**). Fix: set **`Runtime.autoFarm.stopRequested = false`** when **`startAutoFarmLoop`** finishes (`85-combat.js`), and before TEST steps if **`!running`** (`90-ui.js`).
+- ✅ **TEST vs `sleep` (v0.3.62)**: **`runUiTestBundle`** waits for auto-farm to exit with **`sleep(80, { bypassStop: true })`**. Without it, **`stopAutoFarmLoop()`** sets **`stopRequested`** and plain **`sleep()`** resolves in **0 ms**, so the wait loop becomes a **main-thread spin** → tab “not responding”. **`sleep(ms, opts)`** optional **`bypassStop: true`** only for this idle gate (`30-utils.js`, `90-ui.js`).
+- ✅ **Skill master class auto-sync + stricter TEST (v0.3.77)**: `82-skills.js` auto-detects selected class from `app-icon.profile-class` (`icon-src-*`) and syncs `Config.skills.masterClassKey` when applying master DB with no explicit class key. `90-ui.js` now marks `skill_master_db` as failed when scanned skills exist but matched master entries are zero. `10-config.js` adds `selectors.heroProfileClassIcon`.
+- ✅ **TEST self-service (v0.3.60+)**: Panel **TEST** drives **`runUiTestBundle`** end-to-end: auto **`scanSkills()`** when needed; **`readHeroCombatStats()`**; ranked-opener **`plannerPickSkillOpeningPick`** + **`getPlannerOpeningPickDiagnostics()`**; **`previewOpenerHorizonSim`** when **`useRankedAttackSkillsInCombat`** (else HorizonSim step **`skipped`**); probes; cancel smoke; **`quickCalibrationSession`**. **`Logger.log("TEST", <one-line Test result: …>)`** lists each check (**Version**, **Selector probe**, **Skill data**, **Hero stats**, **HorizonSim**, **Ranked opener**, **Charge cancel**, **Calibration**) as **successful** / **skipped** / **failed**, then **`OVERALL: PASS`**, **`PASS with warnings`**, or **`FAIL (critical)`**. Then **`[TEST] SUMMARY`** + **`console.table`**. Return value includes **`testReportLine`**. Panel line mirrors the full string (green/red by **`res.ok`**). **Ship rule:** new **`addCheck`** ids need **`labelById`** entries. Opt out: **`runSkillScanIfNeeded: false`**, **`runHeroStatsInTest: false`**, **`runQuickCalibration: false`**, etc. (`90-ui.js`).
+- ✅ **TEST human report line (v0.3.67+)**: **`buildTestBundleHumanReport`** — copy **`Test result:`** from console to verify a patch; failures log **`Test result: bundle error — …`** on reject.
+- ✅ **slice 23 (faster ranked-opener fallback, v0.3.42)**: **`attackUntilProgress`** uses **`Config.combat.rankedOpenerFirstProgressTimeoutMs`** (default **4200**) for the **first** ranked skill click only; **alternate** ranked openers and **basic** retry still use **`attackProgressTimeoutMs`**. **`postRankedSkillClickSettleMs`** (default **120**) sleeps after a bar skill tap before polling HP/count.
+- ✅ **slice 22 (combat tap-only skills, v0.3.41)**: Ranked combat opener uses **`clickActionBarSlot`** only (same tap as in-game). **`clickActionBarSlotHoldCast`** and bar hold-cast config were **removed** from combat. **`scanSkills()`** still uses a long-press on the bar only to open the **description popup** for parsing, not to cast. **`plannerOpenerHoldCastMs`** remains on **`ligmarBot`** and **always returns 0**. Charge/cancel flow (e.g. “Press to cancel”) is **not** automated yet.
+- ✅ **slice 21 (runtime hardening, v0.3.40)**: **`waitForCondition`** and **`sleep`** cooperate with **`Runtime.autoFarm.stopRequested`**; **`secureTileAndLootOnce`** and **`attackUntilProgress`** bail out without further clicks when **`stopRequested`** (returns **`reason: "stop_requested"`**; auto-farm does **not** increment **`consecutiveFailures`** for that); skill cache BOOT uses **`Config.skills.bootCacheRetryDelaysMs`** multi-retry when the action bar is late; **`resetZoomAssumptionIfSessionRisk(session)`** clears **`Runtime.zoom.maxedOut`** on **`session.dead`** / **`session.poorConnection`**; loot **`lootPostCenterTileSettleMs`** + optional **`inventory_full`** text scan; DPR boot warn. Details: **Archived planning + runtime notes** below.
+- 🟡 **Phase C4: combat planner (in progress)** — **slice 1**: `summarizePlannerInputs()` / `estimatePaperBasicAttackDps()` + `listAttackSkillsForPlanner()`. **slice 2**: `observeCombatDamage()` **`attribution`** at session start; `mergeLastDamageObserveIntoEnemyDb()` → **`observeCalAgg`** / **`observeCalLast`**. **slice 3**: `summarizeEnemyDbCalibration({ key? })` / `getEnemyCalibrationRow(key)`. **slice 4**: `await calibrateEnemyFromCombat(...)`; `rankAttackSkillsByHeuristic` + `plannerSkillEffectHeuristicScore`. **slice 5**: `Runtime.enemy.lastFoughtKey`; `getLastFoughtEnemyKey()`; **`await quickCalibrationSession(...)`**. **slice 6**: **`Config.planner`** hooks in **`secureTileAndLootOnce`**. **slice 7**: **`ligmarbot.plannerUi.v1`** loaded on boot (`90-ui.js`); GUI checkboxes **removed slice 29** (use **`ligmarBot.Config.planner`**). **slice 8**: **`useRankedAttackSkillsInCombat`** — `plannerPickSkillSlotToCast()` + **`clickActionBarSlot(i)`**; **`attackUntilProgress`** opening click tries ranked **`kind==="skill"`** attack (MP gate: **`skillMpReserve`**), else **`clickBasicAttack()`** (`60-actions.js`, `85-combat.js`, `86-planner.js`). **slice 8b**: progress = **`enemyCount`** down **or** red **`targetHp.cur`** down (same **`max`**); skill opener with no progress → **basic retry**; opener skips skills whose parsed **`effects`** lack direct damage (`dot` / `instant` / `channel_gear` / `basic_proc`); **`plannerSkillHasDirectDamageForOpener`** (`86-planner.js`). **slice 9**: **`secureTileAndLootOnce`** — after each successful **find-enemy**, **inner loop** calls **`attackUntilProgress`** repeatedly (cap **`maxCombatAttackBurstsPerFind`**) so multi-mob pulls need fewer **find-enemy** passes; **`useRankedSkillOnlyFirstBurstAfterFind`** (default **true**) keeps **ranked skill** on the **first burst only** after each find, follow-up bursts **basic-only**. **slice 9b (fix)**: when a burst **lowers `enemyCount`** but the pull is **not** clear, run **`clickFindEnemyVerified`** + **`waitForTargetAcquired`** before the next burst so the UI/target bar matches the next mob (avoids long **`attackProgressTimeoutMs`** stalls and redundant outer find spam). **`useRankedSkillOnlyFirstBurstAfterFind`:** ranked opener is allowed again after that **re-find** (not only `attackBursts === 1`). **slice 10**: **`useRankedSkillOnlyFirstBurstAfterFind`** in **`Config.planner`** + **`ligmarbot.plannerUi.v1`** (`90-ui.js`); panel toggle **removed slice 29**. **slice 11**: live action-bar **cooldown / blocked** hints — **`isActionBarSlotShowingCooldown(i)`** (`60-actions.js`); **`plannerPickSkillSlotToCast()`** skips a ranked pick when **`Config.planner.skipOpenerWhenActionBarShowsCooldown`** is true and the slot looks on CD; debug **`ligmarBot.isActionBarSlotShowingCooldown(n)`**. **slice 12 (superseded by slice 22)**: Ranked opener is **`clickActionBarSlot`** only (tap). Hold-cast on the bar was removed — it did not match Ligmar’s input model (skills fire on tap; charge/cancel is separate UI). **`ligmarBot.plannerOpenerHoldCastMs`** is kept for API compatibility and returns **0**. **`basicAttackButton`** defaults to **`app-battle-action-bar app-action-button.type-default`** so basic attack never targets a stray **`type-default`** node elsewhere. **slice 13**: **`readActionBarLayoutFingerprint()`** saved with cache; **`loadSkillsFromCache`** drops cache when live bar ≠ fingerprint (**`Config.skills.invalidateCacheOnBarMismatch`**); **`ligmarBot.readActionBarLayoutFingerprint()`** for debugging. **slice 14** (map): **`scanNeighborRing`** coord-verify **retry** on timeout (**`Config.scan.tileCoordVerifyRetries`**). **slice 15**: **`Config.planner.openerExtraRankedSkills`** — if first ranked opener gets **no** verified progress, **`attackUntilProgress`** tries the **next** ranked slot(s) (**`plannerPickSkillOpeningPick({ excludeSlots })`**) before **basic** fallback.
 - ✅ **Phase C3: enemy profile + DB**: `ligmarBot.readTargetProfileSnapshot()` reads **name**, **level**, and **status bar labels** (same DOM scope as above). **Mob damage-type icon removed** — use Phase C2 observed damage to ground truth outgoing/incoming hits; resist/protect stats lack a known closed-form anyway. `recordTargetToEnemyDb({ note })` merges **`name|level|maxHp`** rows + `statusLabelsLast`. Legacy **`damageClass`** fields are stripped on cache load.
-- ✅ **Phase C2: damage observer (C1 follow-on)**: `ligmarBot.observeCombatDamage({ totalMs, pollMs, includeFloatingTexts, saveSummary, mergeToEnemyDb, mergeOpts })` samples `readBasicState().combat.targetHp` to emit **`hp_drop`** / **`hp_rise`** with **suspicious jump** filtering (and **lethal** `cur<=0` same-max handling). **`mergeToEnemyDb: true`** runs **`mergeLastDamageObserveIntoEnemyDb(mergeOpts)`** when **`hpDropEventCount` > 0**; outcome in **`session.enemyDbMerge`**. Persisted summary **`version: 3`** may include merge ok/key/error. Optional **floating text** scan; results in `Runtime.damage.lastSession` and `localStorage[ligmarbot.damageObserve.v1]`. Ad-hoc: `ligmarBot.snapFloatingDamageOnce()`.
+- ✅ **Phase C2: damage observer (C1 follow-on)**: `ligmarBot.observeCombatDamage({ totalMs, pollMs, includeFloatingTexts, saveSummary, mergeToEnemyDb, mergeOpts })` samples `readBasicState().combat.targetHp` to emit **`hp_drop`** / **`hp_rise`** with **suspicious jump** filtering (and **lethal** `cur<=0` same-max handling). **`mergeToEnemyDb: true`** runs **`mergeLastDamageObserveIntoEnemyDb(mergeOpts)`** only when **`hpDropEventCount` > 0**; outcome in **`session.enemyDbMerge`**. Persisted summary **version 5** may include merge ok/key/error. Optional **floating text** scan; results in `Runtime.damage.lastSession` and `localStorage[ligmarbot.damageObserve.v1]`. Ad-hoc: `ligmarBot.snapFloatingDamageOnce()`.
 - ❓ **Ctrl+Wheel / Keyboard `+` / `-` / `=`**: produced no observable effect. Not used.
 - ❌ **No first-party in-game zoom UI buttons** were findable. Wheel is the only viable input.
 - 🟡 **Ancestor `transform: matrix(1.16, ...)` on `div.app-container.*`**: a global Angular/UI scaling, **not** the game zoom. Don't use it to infer zoom level.
@@ -227,20 +327,37 @@ The script **only reads the red target HP bar** every poll tick. It **does not**
 | `stage: 'no_hp_drops'` from `calibrateEnemyFromCombat` | Same as above | Same; ensure you fight **during** the await |
 | `mobFactorApplied: null` | No `observeCalAgg` for that **exact** `enemyKey` | Merge after a fight vs that mob’s **name\|level\|maxHp** |
 | Merge says no attribution | Profile/red bar not valid at **observe start** | Face target with name+HP visible, then start observe |
+| `no qualifying hp_drop` but log shows **lethal** drop | Older default: merge excluded **`lethal`** drops | **`quickCalibrationSession`** now merges lethal by default; generic **`observeCombatDamage`** merge still uses your **`mergeOpts`** |
 
 **Auto-farm + planner (optional hooks)**
 
-1. **Control panel** — section **“Planner (auto-farm)”**: checkboxes mirror **`Config.planner`** (including **ranked skill: first burst after find only**). Choices persist in **`localStorage[ligmarbot.plannerUi.v1]`** across reloads.
-2. From console (same effect):  
+1. **Planner** — no panel toggles; boot loads **`ligmarbot.plannerUi.v1`** if present (legacy saves from older builds). Fields include ranked flags plus **`openerFollowUpSkillDepth`** (**0–4**, default from **`10-config.js`** when absent). Otherwise use defaults in **`10-config.js`** or set live: **`ligmarBot.Config.planner.*`**. **Persist after console edits:** **`ligmarBot.savePlannerUiPrefs()`** (returns **`{ ok, planner, storageKey }`**), or **`ligmarBot.saveAllUiPrefs()`** with opener ms and **`ligmarbot.autoFarmUi.v1`** (AUTO combat mode); **`loadAllUiPrefs()`** reapplies both and refreshes panel numbers. **Panel AUTO combat mode** (**Fast / Safe / Easy**): **`applyAutoFarmCombatMode`** (**`85-combat.js`**) sets **`Easy`** → ranked off (basics only). **`Fast`** and **`Safe`** both turn ranked on and align in-fight planner knobs with the full pipeline (**`useRankedSkillOnlyFirstBurstAfterFind: false`**, **`skillMpReserve: 0`** — ranked opener / horizon / queue / episode every burst, same as manual ranked-on). **`Safe`** only adds stricter **between-tile** idle gating (**`waitForSafeModeExploreResourcesAndShortPrebuffs`** before **`exploreByScan`** on empty tiles). Mode is **not** written to planner localStorage — it lives in **`ligmarbot.autoFarmUi.v1`**.
+2. From console:  
    `ligmarBot.Config.planner.recordEnemyDbBeforeAttack = true` — **`recordTargetToEnemyDb()`** after target acquire, before basic attacks.  
    `ligmarBot.Config.planner.logPlannerAfterSecureTile = true` — after combat clears, **`[PLANNER]`** log with **`lastFoughtKey`** and **`hasHpDropCalibration`**.  
-   `ligmarBot.Config.planner.useRankedAttackSkillsInCombat = true` — first swing in **`attackUntilProgress`** uses **`plannerPickSkillSlotToCast()`** (needs **`scanSkills`** cache); tune **`Config.planner.skillMpReserve`** (absolute MP) if skills are skipped as “too expensive.” **Slice 9:** `Config.planner.useRankedSkillOnlyFirstBurstAfterFind` (default **true**) — only the **first attack burst after each find-enemy** uses the ranked opener; set **`false`** to try a ranked opener on **every** burst (MP/CD heavy). **`Config.combat.maxCombatAttackBurstsPerFind`** bounds inner bursts per find pass.
-3. **Expect:** `[PLANNER] Enemy DB row refreshed before attack` / `Combat cleared — planner snapshot` during auto-farm when enabled. With slice 8 on: **`[PLANNER] Opening attack used ranked skill slot`** on **burst 1** after find (when slice 9 first-burst gating is on), then **`[VERIFY] attack progress confirmed`** when HP drops or the mob dies; follow-up bursts in the same pull use **basic** opener unless **`useRankedSkillOnlyFirstBurstAfterFind`** is **false**. If the skill does nothing observable, **`[PLANNER] Skill opener had no verified progress; trying basic attack`** then basic.
+   `ligmarBot.Config.planner.useRankedAttackSkillsInCombat = true` — first swing in **`attackUntilProgress`** uses **`plannerPickSkillOpeningPick()`** + **`clickActionBarSlot`** (tap only; needs **`scanSkills`** cache); tune **`Config.planner.skillMpReserve`** (absolute MP) if skills are skipped as “too expensive.” **Slice 9:** `Config.planner.useRankedSkillOnlyFirstBurstAfterFind` (default **true**) — only the **first attack burst after each find-enemy** uses the ranked opener; set **`false`** to try a ranked opener on **every** burst (MP/CD heavy). **`Config.combat.maxCombatAttackBurstsPerFind`** bounds inner bursts per find pass. **Slice 11:** `Config.planner.skipOpenerWhenActionBarShowsCooldown` (default **true**) — skips a top-ranked skill if **`ligmarBot.isActionBarSlotShowingCooldown(slot)`** is true; set **`false`** if your build’s DOM causes false positives. **Slice 15:** `Config.planner.openerExtraRankedSkills` (default **1**) — after the first ranked opener, try up to **N** more **different** ranked slots in the same burst before basic fallback (each must pass MP + cooldown + direct-damage opener filters).
+3. **Expect:** `[PLANNER] Enemy DB row refreshed before attack` / `Combat cleared — planner snapshot` during auto-farm when enabled. With planner skills on: **`[PLANNER] Opening attack used ranked skill slot`** (tap); then **`[VERIFY] attack progress confirmed`** when HP drops or the mob dies. If the skill does nothing observable, **`[PLANNER] Ranked opener(s) had no verified progress; trying basic attack`** then basic.
 4. **Does not** auto-run **`observeCombatDamage`**; use **`quickCalibrationSession`** for **`hp_drop`** merges.
+5. **Console `ligmarBot.runUiTestBundle()`** — if auto-farm was **ON**, stops it and waits for idle, then probes, **`clickChargingSkillCancelUi`** if cancel hint visible, then **`quickCalibrationSession`** by default; **restarts auto-farm** afterward when it had been on (opt out: **`{ resumeAutoFarm: false }`**).
+   - By default TEST also forces **`Sniper Shot`** as the opener when it is on the bar and currently eligible, so charge-release logic gets exercised even if the normal planner prefers another skill. Override with **`ligmarBot.runUiTestBundle({ forceRankedSkillName: "Other Skill" })`** or disable with **`{ forceRankedSkillName: false }`**.
+
+   **When to run it (timing):**
+
+   | Part of the run | Best moment | Weak / skip if |
+   | ---------------- | ----------- | -------------- |
+   | **`quickCalibrationSession`** (~10s damage observe) | **During combat**: live target with **name + red HP bar** visible **when the bundle reaches calibration**. **Keep attacking** for the whole window so HP drops or a lethal kill register. | No target / town idle → little or no **`hp_drop`**; merge may no-op or lack a key. |
+   | Charge-cancel smoke | **Mid-charge**: when **`fireChargeCancelIfHint`** is on (not **quick** TEST), bot calls **`clickChargingSkillCancelUi({ expectedSkillName: forced opener })`** — with default **`chargeCancelRequireCastBarNameMatch`**, it only clicks when cancel hint **and** cast/progress bar show that skill (your channel ends). | No hint / bar mismatch → **`ok: false`** or skipped; normal. To calibrate **without** ever canceling, use **`{ fireChargeCancelIfHint: false }`**. Set **`Config.combat.chargeCancelRequireCastBarNameMatch = false`** to allow hint-only cancel clicks again. |
+   | Probes, **`readBasicState`**, planner summary, skill rank | Any safe time (combat or not). | — |
+
+   Console: skip calibration or cancel-smoke with **`{ runQuickCalibration: false }`** / **`{ fireChargeCancelIfHint: false }`**.
+
+6. **AUTO skill + hero visibility** — **`Config.farmLoop.ensureSkills`** (default **on**): at **AUTO loop boot** (skipped when **`Config.farmLoop.autoLikeTest.enabled`** is **on** — first OOC cycle owns the warm boot) and each **cycle start** after **`waitUntilNotMoving`**, when **`enemyCount===0`** and session is healthy, **`ensureSkillsAndHeroDataForAutoFarm`** runs **`loadSkillsFromCache()`** (and **`loadHeroStatsFromCache()`** when enabled). If the bar still looks blind (no parsed skill rows, empty slots, or cache fingerprint mismatch errors), it calls **`scanSkills({ allowDuringAutoFarm: true })`** — the same DOM long-press scan as manual **`ligmarBot.scanSkills()`**, allowed only **OOC** so we do not open popups mid-pull. When **`Runtime.hero.combatStats`** is still missing, it may run **`readHeroCombatStats()`** once (profile overlay) so planner paper stats exist. Turn off: **`Config.farmLoop.ensureSkills.enabled = false`**.
+
+   **`Config.farmLoop.autoLikeTest`** (default **on**): on the **first** **OOC** cycle of each **AUTO ON** session, **`runAutoFarmAutoLikeTestPrepIfNeeded`** runs **`probeSelectors()`** (when enabled), **`ensureSkillsAndHeroDataForAutoFarm`** (same cache/DOM rules as above), an extra panel-style **`scanSkills({ allowDuringAutoFarm: true })`** when the bar is still empty or has **no** non-**empty** slots, optional **`readHeroCombatStats()`** when stats are missing, then **`plannerPickSkillOpeningPick({})`**, **`getPlannerOpeningPickDiagnostics()`**, and **`applySkillMasterToSlots()`** so **`Config.skills.masterClassKey`** tracks the planner class profile — mirroring **console TEST** readiness **without** ranked soak (**`startAutoFarmLoop` / `stopAutoFarmLoop`**), **`quickCalibrationSession`**, or damage-observe calibration. **`Runtime.autoFarm.autoLikeTestPrepDone`** gates the one-shot; it resets when the loop ends. Disable: **`Config.farmLoop.autoLikeTest.enabled = false`**.
 
 **Clear / reset (when needed)**
 
-- Skills: `ligmarBot.clearSkillsCache()`
+- Skills: `ligmarBot.clearSkillsCache()` (after **class / hero / bar** change, or if logs show **wrong skill names** for your current character, then `await ligmarBot.scanSkills()` with auto-farm OFF — or rely on **AUTO OOC** **`ensureSkills`** to rescan when **`Config.farmLoop.ensureSkills`** is on). After an update, **one rescan** refreshes the fingerprint so the new per-slot hints match live DOM.
 - Hero stats: `ligmarBot.clearHeroStatsCache()`
 - Enemy DB: `ligmarBot.clearEnemyDbCache()`
 - Damage summary file: `ligmarBot.clearDamageObserveStorage()`
@@ -251,585 +368,43 @@ When reporting **no bugs** after a playbook run, state **bundle version** (`ligm
 
 ---
 
-## Core Modules
+## Archived planning + runtime notes (slice 21)
 
-## 1) Config Module
+Older sections of this file described a **hypothetical** tree (`src/core/state.js`, FSM `BOOT → PLAN`, etc.) that **does not match** the shipped bot (`bot/modules/*.js` → one IIFE). That text is preserved for history in **[LEGACY_PLANNING.md](./LEGACY_PLANNING.md)**. Agents should treat **everything above this header** as the canonical description of what is implemented today.
 
-Purpose: Keep all tweakable values and selectors in one place.
+### Concat order and `const` / TDZ (build contract)
 
-Responsibilities:
+- **`function` declarations** are hoisted inside the shared IIFE, so two files can call each other’s functions regardless of numeric order **as long as calls happen at runtime, not in top-level initializers**.
+- **`const` / `let` / `class` at file top level are not hoisted across files.** They execute in **strict numeric filename order**. Example: **`15-logger.js` runs before `20-runtime.js`**, so a top-level `const x = Runtime.autoFarm` in `15-logger.js` would throw — keep cross-file dependencies inside **functions** that run after the bundle finished initializing, or insert a new module **after** its dependencies.
+- The module table under **Source modules and build pipeline** is the authoritative order.
 
-- Store CSS selectors for health/mana/enemy/progress/action UI
-- Store timing values (poll interval, action cooldown, retry windows)
-- Store safety thresholds:
-  - `MIN_HP_TO_MOVE = 0.85`
-  - potion decision rules
-  - boss avoidance rules
-- Store loot ranking table (to be filled once ranking is provided)
+### Stop cooperativity
 
-Exports:
+- **`waitForCondition`** checks **`Runtime.autoFarm.stopRequested`** on every poll tick; when set, it resolves **`false`** immediately and logs **`[VERIFY] <label> aborted (stop requested)`** so long combat/loot waits do not block Stop.
+- **`sleep(ms)`** wakes every **~80 ms** and exits early when **`stopRequested`** is set (used by **`scanSkills`** long-press timing and other `await sleep` paths).
+- **`secureTileAndLootOnce`** exits the find-enemy / combat burst loops when **`stopRequested`** (no further find clicks); **`attackUntilProgress`** does not chain alternate ranked openers or basic attack after a stop-aborted wait. **`startAutoFarmLoop`** treats **`cycleResult.reason === "stop_requested"`** as a user abort, not a failed cycle for **`maxConsecutiveFailures`**.
 
-- `Config.selectors`
-- `Config.thresholds`
-- `Config.timers`
-- `Config.lootPriority`
+### Zoom flag vs death / poor connection
 
----
+- **`resetZoomAssumptionIfSessionRisk(session)`** (`80-map.js`) sets **`Runtime.zoom.maxedOut = false`** when **`session.dead`** or **`session.poorConnection`** is true, so **`ensureMapZoomedOut()`** is not incorrectly skipped after the game resets zoom without a full page reload. Called at the start of **`secureTileAndLootOnce`** and each **`startAutoFarmLoop`** cycle (after a fresh **`readBasicState()`**).
 
-## 2) State Module
+### Loot: center-tile settle + inventory-full hint
 
-Purpose: Gather, normalize, and timestamp all game state.
+- After **`clickMapCenterTile()`** in **`clickLootOrActivateVerified`**, the bot **`await sleep(Config.verification.lootPostCenterTileSettleMs)`** (default **280 ms**) before **`waitForLootInteractionSettled()`** to reduce a race where the highlight button flickers during map follow-up.
+- If settle **fails** and **`detectInventoryFullFromUi()`** matches a substring from **`Config.verification.inventoryFullSubstrings`** inside **`inventoryFullScanSelectors`**, the return object includes **`reason: "inventory_full"`**. Tune strings for your game language; set **`inventoryFullSubstrings: []`** to disable.
 
-Responsibilities:
+### Boot: `devicePixelRatio` warning
 
-- Parse player HP/MP (`current/max`, `%`)
-- Parse target/enemy HP when target exists
-- Parse enemy count in current tile/encounter flow
-- Detect visibility and readiness of action buttons (`find enemy`, `loot`, skills, `RUN`, etc.)
-- Detect active progress bars (`finding enemy`, `looting`, casts if exposed)
-- Detect run-state URL (`/game/`) and death/disconnect indicators
-- Sample ping and connection warnings
-- Provide tile/canvas detection outputs from MapScanner (loot candidates, blocked tiles)
+- When **`Config.boot.warnNonUnityDevicePixelRatio`** (default **true**) and **`window.devicePixelRatio`** is not ~**1**, **`[BOOT]`** emits **`console.warn`** via **`Logger.warn`**: calibrated **`neighborStepPx`** assumes **100%** browser zoom / nominal OS display scaling.
 
-State snapshot shape (example):
+### Combat: ranked opener progress windows (slice 23)
 
-```js
-{
-  time: 1715000000000,
-  session: { inGame: true, dead: false, poorConnection: false, pingMs: 180 },
-  player: { hp: { cur: 600, max: 640, pct: 0.9375 }, mp: { cur: 120, max: 150, pct: 0.8 } },
-  combat: { enemyCount: 2, inCombat: true, targetHpPct: 0.55, findingInProgress: false },
-  actions: { canLoot: false, canFindEnemy: true, runReady: true },
-  world: {
-    nearbyTiles: [],
-    lootCandidates: [],
-    blockedTiles: []
-  }
-}
-```
+- **`Config.combat.rankedOpenerFirstProgressTimeoutMs`** — max wait for **enemy count ↓** or **target HP ↓** after the **first** ranked opener tap only. Shorter than **`attackProgressTimeoutMs`** so a whiffed or non-damaging top pick does not idle ~6.5s before **`openerExtraRankedSkills`** / basic. Set **`0`** or omit to use the full **`attackProgressTimeoutMs`** for the first wait too.
+- **`Config.combat.postRankedSkillClickSettleMs`** — **`await sleep`** after each ranked bar click before **`waitForCondition`** (helps one-frame DOM lag). Set **`0`** to disable.
 
-Rules:
+### Combat: charge skills — release plan
 
-- Never return partial malformed state; if read fails, set explicit `unknown` flags.
-- Each field includes `lastUpdated` when needed for stale-read detection.
-
----
-
-## 3) UIAdapter Module
-
-Purpose: Safe wrappers for DOM/canvas interaction.
-
-Responsibilities:
-
-- Query DOM elements by selector with null guards
-- Parse text values (`123/200`, counters, timers)
-- Click helpers:
-  - `clickButton(name)`
-  - `doubleClickCanvasTile(tile)`
-- Action verification helpers:
-  - wait until progress bar appears/disappears
-  - wait until enemy count changes
-  - wait until HP/MP changed after potion/skill use
-- Unified retry strategy with jitter
-
-Why separate:
-
-- If selectors change, updates stay localized
-- Prevents business logic from manipulating raw DOM directly
-
----
-
-## 4) MapScanner Module (Canvas Perception)
-
-Purpose: Convert canvas pixels into actionable local map info.
-
-Responsibilities:
-
-- Determine local 2-tile neighborhood around player center
-- Classify visible tiles:
-  - walkable
-  - blocked/wall
-  - unknown
-- Detect loot icons by color/pattern:
-  - yellow die (unknown loot, 2 tiles)
-  - purple/blue/grey chest
-  - yellow altar
-  - brown wheel
-  - green goblin head (mini-boss marker -> avoid pathing there)
-- Emit confidence score per detection
-
-Outputs:
-
-- `TileGraph` for local movement planning
-- `lootCandidates[]` with `tile`, `type`, `priority`, `confidence`
-
-Notes:
-
-- Initially bootstrap with deterministic pixel probes for known UI scale.
-- Later expand to pattern matching to survive minor rendering variance.
-
----
-
-## 5) Movement Module
-
-Purpose: Move exactly one tile at a time with verification and safety checks.
-
-Responsibilities:
-
-- Build legal neighbors (max 6 hex directions, minus blocked/unclickable)
-- Choose next step from path planner
-- Execute movement via map tile double-click
-- Confirm movement completion before next command
-- Handle movement cancellation conditions:
-  - HP below move threshold
-  - combat unexpectedly started
-  - connection warning/death
-
-Public API:
-
-- `moveToTile(targetTile)`
-- `stepToward(targetTile)`
-- `isMoveSafe(state)`
-
-Safety rule:
-
-- Never initiate move unless `hpPct >= 0.85`.
-
----
-
-## 6) Combat Module
-
-Purpose: Secure tile before looting or onward movement.
-
-Responsibilities:
-
-- Enter engagement flow:
-  1. if enemies present but no active target, click `find enemy`
-  2. wait for finding progress complete
-  3. attack with selected rotation
-- Skill/potion usage policy with cooldown and mana checks
-- Track combat lifecycle by enemy counter and target HP
-- Exit only when `enemyCount == 0`
-- Avoid bosses (skip/retreat strategy when boss indicators are detected)
-
-Subcomponents:
-
-- `TargetingPolicy`
-- `SkillRotation`
-- `PotionManager`
-
-Resource policy baseline:
-
-- HP should trend to full with intelligent potion timing
-- Pre-move gate remains strict at `>=85%`
-- Avoid over-heal waste by triggering regen effects based on missing-HP window
-
----
-
-## 7) Loot Module
-
-Purpose: Ensure safe and efficient loot collection.
-
-Responsibilities:
-
-- Evaluate nearby loot candidates and rank by priority table
-- Confirm tile secured (`enemyCount == 0`) before looting
-- Click `loot` button when available
-- Wait for loot progress bar completion
-- Confirm loot action resolved (button hidden/disabled or state changed)
-
-Public API:
-
-- `selectNextLootTarget(candidates, state)`
-- `lootCurrentTile()`
-
-Hard constraint:
-
-- Never loot while enemies remain on tile.
-
----
-
-## 8) Pathing Module
-
-Purpose: Pick best route to chosen objective inside currently known local graph.
-
-Responsibilities:
-
-- Build graph from 2-tile scan and incremental discoveries
-- Score path by:
-  - objective priority (loot rank)
-  - distance (step count)
-  - risk (boss markers, low HP state, uncertain tiles)
-- Replan on each step or when map state changes
-
-Approach:
-
-- Start with weighted BFS/A* on local hex graph
-- Keep it deterministic and transparent in logs
-
----
-
-## 9) Safety Module
-
-Purpose: Cross-cutting kill-switch and guardrails.
-
-Responsibilities:
-
-- Global pause/stop hotkey handling
-- Stop all actions on death screen or not-in-game URL
-- Pause/slow actions on poor connection if needed
-- Enforce cooldown between critical clicks to avoid accidental misfires
-- Validate each action preconditions
-
-RUN mechanic handling:
-
-- RUN can be modeled as a **defensive idle mode**:
-  - enable RUN while waiting (healing, scanning, decision idle)
-  - auto-disable naturally when moving/attacking (expected)
-  - re-enable when returning to idle and off cooldown
-- If RUN produces no measurable survival gain, keep feature toggle-able in config.
-
----
-
-## 10) Main Loop Orchestrator
-
-Purpose: Central coordinator and state machine.
-
-States:
-
-- `BOOT`
-- `IDLE_SCAN`
-- `PLAN`
-- `MOVE`
-- `SECURE_TILE`
-- `LOOT`
-- `RECOVER`
-- `PAUSED`
-- `HALT`
-
-Loop pseudocode:
-
-```js
-while (botEnabled) {
-  state = State.readSnapshot();
-  Safety.assertGlobalGuards(state);
-
-  switch (fsm.current) {
-    case "BOOT": ...
-    case "IDLE_SCAN": ...
-    case "PLAN": ...
-    case "MOVE": ...
-    case "SECURE_TILE": ...
-    case "LOOT": ...
-    case "RECOVER": ...
-  }
-
-  Overlay.render(state, fsm, lastAction, nextAction);
-  sleep(Config.timers.mainTickMs);
-}
-```
-
----
-
-## 11) GUI Module (Control Panel)
-
-Purpose: User control in-page without editing script.
-
-Controls:
-
-- Start / Pause / Stop
-- Toggle auto-center map
-- Toggle boss avoidance strictness
-- Toggle RUN usage
-- Potion policy profile selector
-- Main status indicators (current state, hp%, enemy count, target objective)
-
-Behavior:
-
-- GUI actions update in-memory config safely
-- Persist preferences via `localStorage`
-
----
-
-## 12) Debug Overlay Module
-
-Purpose: Real-time observability while bot runs.
-
-Display:
-
-- FSM state + next action
-- HP/MP current/max/%
-- Enemy count, target HP%
-- Ping and connection warnings
-- Current objective tile + path length
-- Last 10 actions with result (`ok`, `retry`, `fail`)
-
-Log policy:
-
-- Structured `console.log` events with module prefix:
-  - `[STATE]`, `[MOVE]`, `[COMBAT]`, `[LOOT]`, `[SAFETY]`, `[FSM]`
-
----
-
-## Module Communication
-
-Communication pattern:
-
-- `State` is read-only source of truth for current tick.
-- Decision modules (`Pathing`, `Combat`, `Loot`, `Safety`) consume snapshot and return intents.
-- `MainLoop` arbitrates intents and calls action modules via `UIAdapter`.
-- Action results feed back into next snapshot.
-
-Data flow:
-
-1. `State.readSnapshot()`
-2. `MapScanner.scanCanvas()` -> enrich `state.world`
-3. `Safety.checks(state)` -> allow/deny
-4. `Planner` chooses objective and next atomic action
-5. `UIAdapter` executes action
-6. `Verifier` confirms result or retries/fails
-7. `Overlay + Logger` publish trace
-8. Next tick
-
----
-
-## Error Handling and Latency Strategy
-
-- Use short polling windows (100-250ms) with hard timeouts per action.
-- Any action must declare:
-  - preconditions
-  - expected confirmation signal
-  - timeout
-  - fallback (retry, re-scan, pause)
-- If confirmation fails N times:
-  - trigger `RECOVER` state
-  - re-center map
-  - force full rescan
-  - if still failing, pause bot and alert via GUI
-
----
-
-## Security / Anti-Detection Posture
-
-Current assumption: no anti-bot defenses observed.
-
-Still recommended:
-
-- Keep click cadence human-like (small randomized delay bounds)
-- Avoid zero-delay infinite loops
-- Log and cap repeated identical actions
-
----
-
-## Suggested Folder Structure
-
-```text
-src/
-  bot.user.js              // Tampermonkey entry
-  config.js
-  core/
-    state.js
-    fsm.js
-    orchestrator.js
-  adapters/
-    uiAdapter.js
-    domReader.js
-    canvasReader.js
-  modules/
-    mapScanner.js
-    pathing.js
-    movement.js
-    combat.js
-    loot.js
-    safety.js
-  ui/
-    controlPanel.js
-    debugOverlay.js
-  utils/
-    logger.js
-    time.js
-    retry.js
-```
-
----
-
-## Step-by-Step Development Roadmap (Tiny, Testable Milestones)
-
-Each milestone should end with a manual test and visible success criteria.
-
-### Phase 0 - Foundation
-
-1. **Milestone 0.1 - Script bootstrap**
-   - Inject Tampermonkey script only on `ligmar.io/game/`.
-   - Test: console prints `bot loaded` only on game page.
-
-2. **Milestone 0.2 - Selector probe utility**
-   - Build helper that checks presence of required DOM elements.
-   - Test: console table of selector availability.
-
-3. **Milestone 0.3 - Structured logger**
-   - Add module-prefixed log function.
-   - Test: logs render consistently with timestamps.
-
-### Phase 1 - Read State Reliably
-
-4. **Milestone 1.1 - Read HP**
-   - Parse `current/max` and `%`.
-   - Test: log HP every 500ms and verify during damage/heal.
-
-5. **Milestone 1.2 - Read MP**
-   - Same parsing for mana bar.
-   - Test: MP changes while casting skills.
-
-6. **Milestone 1.3 - Read enemy counter and target HP**
-   - Parse both signals from UI.
-   - Test: enter/exit fight and verify transitions.
-
-7. **Milestone 1.4 - Read progress bars**
-   - Detect active `finding`/`loot` progress.
-   - Test: trigger both actions manually and observe detection.
-
-8. **Milestone 1.5 - Session safety reads**
-   - Detect `/game/`, death screen, poor connection, ping.
-   - Test: simulated navigation/death case handling.
-
-### Phase 2 - Execute Atomic Actions
-
-9. **Milestone 2.1 - Safe button click wrapper**
-   - Click named UI buttons with null checks and logs.
-   - Test: click `find enemy` via script once.
-
-10. **Milestone 2.2 - Canvas double-click helper**
-    - Double-click given tile coordinates.
-    - Test: move exactly one tile to chosen neighbor.
-
-11. **Milestone 2.3 - Action verification framework**
-    - Add wait-for-condition with timeout/retry.
-    - Test: verify move success and button click effects.
-
-### Phase 3 - Map Perception
-
-12. **Milestone 3.1 - Map center action**
-    - Click center-map button.
-    - Test: player recentered consistently.
-
-13. **Milestone 3.2 - 1-tile ring extraction**
-    - Identify six neighbor tiles around player center.
-    - Test: overlay marks neighbors correctly.
-
-14. **Milestone 3.3 - 2-tile scan**
-    - Expand to two-step neighborhood.
-    - Test: overlay renders scanned tile set.
-
-15. **Milestone 3.4 - Loot icon detection (yellow die first)**
-    - Detect unknown loot marker.
-    - Test: alert when die icon is present.
-
-16. **Milestone 3.5 - Loot type classification**
-    - Distinguish chest/altar/wheel/goblin icons.
-    - Test: logs show detected type and confidence.
-
-### Phase 4 - Minimal FSM Loop
-
-17. **Milestone 4.1 - FSM skeleton**
-    - Implement `BOOT -> IDLE_SCAN -> PLAN`.
-    - Test: state transitions visible in logs.
-
-18. **Milestone 4.2 - Choose nearest loot target**
-    - Plan objective from scan candidates.
-    - Test: selected target printed with score.
-
-19. **Milestone 4.3 - Single-step movement plan**
-    - Compute next step only.
-    - Test: bot steps toward target once, then stops.
-
-### Phase 5 - Combat Securing
-
-20. **Milestone 5.1 - Combat entry routine**
-    - If enemy count > 0, run find-enemy -> attack.
-    - Test: routine starts fight reliably.
-
-21. **Milestone 5.2 - Basic attack loop**
-    - Continue until enemy count becomes 0.
-    - Test: bot clears one tile encounter.
-
-22. **Milestone 5.3 - Boss avoidance guard**
-    - Skip tiles marked as boss/miniboss.
-    - Test: planner refuses boss-marked objective.
-
-### Phase 6 - Loot Routine
-
-23. **Milestone 6.1 - Loot precondition guard**
-    - Enforce `enemyCount == 0` before looting.
-    - Test: no loot click while enemies remain.
-
-24. **Milestone 6.2 - Loot action with verification**
-    - Click loot and wait for progress completion.
-    - Test: successful loot cycle logged.
-
-25. **Milestone 6.3 - Integrate secure->loot chain**
-    - `MOVE -> SECURE_TILE -> LOOT`.
-    - Test: complete one full objective cycle.
-
-### Phase 7 - Safety and Resource Intelligence
-
-26. **Milestone 7.1 - HP move gate**
-    - Block movement under 85% HP.
-    - Test: bot waits and resumes after recovery.
-
-27. **Milestone 7.2 - Potion manager v1**
-    - Trigger potion by missing-HP window logic.
-    - Test: potion used only when efficient.
-
-28. **Milestone 7.3 - RUN defensive idle**
-    - Enable RUN during waits if off cooldown.
-    - Test: RUN toggles in idle and drops on action.
-
-29. **Milestone 7.4 - Recover state**
-    - Add fallback on repeated failed actions.
-    - Test: force a failure and verify re-scan/pause behavior.
-
-### Phase 8 - UX Layer
-
-30. **Milestone 8.1 - GUI panel**
-    - Start/Pause/Stop + key toggles.
-    - Test: controls alter bot behavior live.
-
-31. **Milestone 8.2 - Debug overlay**
-    - Render current state/action/path info.
-    - Test: overlay updates each tick.
-
-32. **Milestone 8.3 - Preference persistence**
-    - Save GUI settings to `localStorage`.
-    - Test: reload page and verify settings restored.
-
-### Phase 9 - Stabilization
-
-33. **Milestone 9.1 - Long-run dry test (30 min)**
-    - Observe loops, stalls, retries.
-    - Test: no hard lock; manageable warning count.
-
-34. **Milestone 9.2 - Long-run active farm (2-4 hrs)**
-    - Track loot cycles/hour, failures/hour.
-    - Test: stable performance and safe recovery.
-
-35. **Milestone 9.3 - Tune thresholds**
-    - Adjust potion and timing config from real metrics.
-    - Test: better uptime with fewer wasted consumables.
-
----
-
-## Open Inputs Needed from You
-
-To finalize behavior quality, next details are required:
-
-1. Loot priority ranking (highest -> lowest) for each icon/type
-2. Exact selectors or screenshots for:
-   - HP/MP text nodes
-   - enemy counter
-   - find enemy button
-   - loot button
-   - center map button
-3. Preferred first combat rotation (basic + skill priorities)
-4. Confirm whether synthetic DOM clicks currently work, or if fallback input method is needed
-
+- Parsed **`channel_gear`** skills use **`plannerBuildChargeReleasePlan()`** so combat and planner share the same mechanic. **Default:** **`Config.combat.chargeSkillReleaseFraction = 1`** (full charge). If you set **`Config.combat.chargeSkillReleaseOverrideMs`** above **0**, that millisecond value overrides the fraction and becomes the planned release hold for charge skills.
+- **Partial release**: after the planned hold, the bot calls **`clickChargingSkillCancelUi({ expectedSkillName })`** (same cast-bar + hint gate when **`chargeCancelRequireCastBarNameMatch`** is on) to release the shot, then waits **`Config.combat.chargeSkillReleaseProgressTimeoutMs`** for HP/count progress. It does **not** inject an immediate basic first, because the release itself should be the damage event.
+- **Full charge**: the bot holds until the max charge time, waits a short **`chargeSkillFullReleasePaddingMs`** for the auto-fire frame, then verifies progress only briefly via **`chargeSkillFullChargeProgressTimeoutMs`**. It does **not** try a late cancel after a full-charge auto-fire.
+- **Legacy stuck-charge fallback** still exists for unparsed/desynced cases: when a ranked opener reaches generic no-progress logic and the cancel hint is visible, **`clickChargingSkillCancelUi({ expectedSkillName })`** still acts as the “unstick” path (subject to the same optional cast-bar name gate). That is now a backup, not the normal charge model.

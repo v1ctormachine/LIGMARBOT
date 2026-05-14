@@ -1,0 +1,17 @@
+---
+description: After changing bot modules, bump version and push so user only refreshes the game tab.
+globs: bot/modules/**/*.js
+alwaysApply: true
+---
+
+# Ligmarbot ship workflow
+
+When you change **`bot/modules/*.js`** (or anything that changes runtime behavior in the game):
+
+1. **Prefer batching:** Do **not** ship micro-only changes (single-line API, return-shape tweak, copy-only) as their **own** version unless it is a **hotfix**. Accumulate on a branch; ship **one** bump with a **headline** `Description` when the batch is **player-meaningful** or touches **multiple modules** for one feature. See **`ROADMAP.md`** → **Release cadence** and **`ARCHITECTURE.md`** → **Release batching**.
+2. Run **`.\bot\build.ps1 -Description "headline: what the player notices"`** — **always use `-Description`** for a normal ship so **`version.json`**, **`05-version.js`**, **`loader.user.js` `@version`**, and **`bot.user.js`** update. Do **not** use **`-NoBump`** when the bundle changed. Use **`-NoBump`** for **docs/rules-only** commits with **no** module edits.
+3. **Commit and push** the regenerated files (`version.json`, `bot/modules/05-version.js`, `bot/loader.user.js`, `bot/bot.user.js`, plus any module edits).
+4. **TEST must cover new testable behavior:** If the version adds or changes something that should be verified in-game (planner, skills, calibration, farm stop/start, etc.), extend **`runUiTestBundle`** in **`90-ui.js`** so the **full** automated suite still runs from the console (**`ligmarBot.runUiTestBundle()`** — probes, scans, planner hooks, **`[TEST] SUMMARY`**). The panel no longer exposes a TEST button; routine validation is **console TEST** + refresh (or programmatic callers).
+5. The user only **refreshes** the ligmar.io tab; Tampermonkey reloads the local `@require` when the loader version changes.
+
+See **`ARCHITECTURE.md`** → Versioning and ship rule, **TEST self-service**.

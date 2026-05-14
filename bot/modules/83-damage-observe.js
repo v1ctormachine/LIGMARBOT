@@ -1,6 +1,7 @@
   // AI CHANGED: Phase C2 -- damage observer: target HP deltas (primary) + newly appeared short numeric
   // leaf text under app-game (secondary, for floating combat numbers). Console-first; tolerates missed
   // frames via poll cadence + suspicious-jump filtering.
+  // AI CHANGED: v0.3.174 — removed floating miss DOM scan (no miss_text events); HP deltas + optional float numbers only.
 
   function dmgIsNodeUnderExcludedSubtree(node, selectors) {
     if (!node || typeof node.closest !== "function") {
@@ -118,7 +119,7 @@
     const cfg = Config.damageObserver;
     try {
       const payload = {
-        version: 3,
+        version: 5,
         savedAt: Date.now(),
         summary: session.summary,
         storedEventCount: session.events ? session.events.length : 0,
@@ -236,6 +237,23 @@
           floatScanCount: floats.length
         };
         samples.push(sample);
+
+        // AI CHANGED: Late attribution — observe may start before target panel is ready (e.g. right after TEST soak stop); merge needs a key when hp_drop events exist.
+        if (!sessionAttribution && th && th.valid) {
+          try {
+            const snap = readTargetProfileSnapshot();
+            if (snap && snap.ok && snap.targetHp && snap.targetHp.valid) {
+              sessionAttribution = {
+                key: makeEnemyDbKey(snap.name, snap.level, snap.targetHp.max),
+                name: snap.name,
+                level: snap.level,
+                maxHp: snap.targetHp.max
+              };
+            }
+          } catch (attErr) {
+            Logger.warn("DMG", "attribution snapshot during observe failed", attErr);
+          }
+        }
 
         if (th && th.valid && prevTarget && prevTarget.valid) {
           const maxRef = Math.max(prevTarget.max, th.max, 1);
@@ -364,7 +382,7 @@
         session.enemyDbMerge = {
           ok: false,
           error: "skipped_no_hp_drops",
-          hint: "mergeToEnemyDb requested but hpDropEventCount was 0"
+          hint: "mergeToEnemyDb requested but session had no hp_drop events"
         };
       }
 

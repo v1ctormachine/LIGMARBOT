@@ -75,29 +75,44 @@
         target: "self"
       })
     },
-    // Pattern E: Heal HP -- "Restores <N> HP" (instant) or "Restores <N> HP over <T> s" (HoT).
+    // Pattern E: Heal HP — "Restores <N> HP" (instant), "Restores <N> HP over <T> s" (HoT), optional upgrade line
+    // "Restores 405 (+52) health over 10 seconds" (base + bonus in parentheses; textContent drops <b>/<span>).
     {
       key: "heal_hp",
-      regex: /restores?\s+(\d+(?:\.\d+)?)\s+(?:HP|health)(?:\s+over\s+(\d+(?:\.\d+)?)\s*s)?/i,
-      build: (m) => ({
-        type: "heal",
-        resource: "hp",
-        value: parseFloat(m[1]),
-        durationSec: m[2] ? parseFloat(m[2]) : 0,
-        target: "self"
-      })
+      regex:
+        /restores?\s+(\d+(?:\.\d+)?)\s*(?:\(\s*\+?\s*(\d+(?:\.\d+)?)\s*\))?\s+(?:HP|health)(?:\s+over\s+(\d+(?:\.\d+)?)\s*(?:s(?:ec(?:ond)?s?)?)?)?/i,
+      build: (m) => {
+        const base = parseFloat(m[1]);
+        const bonus = m[2] ? parseFloat(m[2]) : 0;
+        const value = base + (Number.isFinite(bonus) && bonus > 0 ? bonus : 0);
+        const durationSec = m[3] ? parseFloat(m[3]) : 0;
+        return {
+          type: "heal",
+          resource: "hp",
+          value: value,
+          durationSec: durationSec,
+          target: "self"
+        };
+      }
     },
-    // Pattern F: Restore MP -- same shape as heal HP.
+    // Pattern F: Restore MP — same shapes as heal HP (including "120 (+30) mana over 8 seconds").
     {
       key: "restore_mp",
-      regex: /restores?\s+(\d+(?:\.\d+)?)\s+(?:MP|mana)(?:\s+over\s+(\d+(?:\.\d+)?)\s*s)?/i,
-      build: (m) => ({
-        type: "heal",
-        resource: "mp",
-        value: parseFloat(m[1]),
-        durationSec: m[2] ? parseFloat(m[2]) : 0,
-        target: "self"
-      })
+      regex:
+        /restores?\s+(\d+(?:\.\d+)?)\s*(?:\(\s*\+?\s*(\d+(?:\.\d+)?)\s*\))?\s+(?:MP|mana)(?:\s+over\s+(\d+(?:\.\d+)?)\s*(?:s(?:ec(?:ond)?s?)?)?)?/i,
+      build: (m) => {
+        const base = parseFloat(m[1]);
+        const bonus = m[2] ? parseFloat(m[2]) : 0;
+        const value = base + (Number.isFinite(bonus) && bonus > 0 ? bonus : 0);
+        const durationSec = m[3] ? parseFloat(m[3]) : 0;
+        return {
+          type: "heal",
+          resource: "mp",
+          value: value,
+          durationSec: durationSec,
+          target: "self"
+        };
+      }
     },
     // AI CHANGED: Step into Darkness -- ongoing MP drain while effect is active (not upfront mana cost).
     {
@@ -274,7 +289,13 @@
     // Generic "additional N damage" -- only emitted if no DoT already captured (DoT regex is more
     // specific and would have consumed the same number).
     if (!effects.some((e) => e.type === "dot")) {
-      const m = description.match(/(?:additional|additionally)\s+(\d+(?:\.\d+)?)\s+(physical|magic|magical)\s+damage(?!\s+over)/i);
+      // AI CHANGED: Match "additional 453 physical damage" or "additional 453 → 531 of physical damage" (upgrade arrow) for damageType tagging.
+      let m = description.match(/(?:additional|additionally)\s+(\d+(?:\.\d+)?)\s+(physical|magic|magical)\s+damage(?!\s+over)/i);
+      if (!m) {
+        m = description.match(
+          /(?:additional|additionally)\s+(\d+(?:\.\d+)?)(?:\s*(?:\u2192|>)\s*\d+(?:\.\d+)?)?\s+of\s+(physical|magic|magical)\s+damage(?!\s+over)/i
+        );
+      }
       if (m) {
         effects.push({
           type: "instant",
@@ -285,6 +306,148 @@
       }
     }
     return effects;
+  }
+
+  // AI CHANGED: Strip "(4/10)" suffix and collapse punctuation/encoding variants so master DB keys match across upgrade levels and apostrophe mojibake.
+  function normalizeSkillName(rawName) {
+    if (typeof rawName !== "string") {
+      return "";
+    }
+    const m = rawName.match(/^(.*?)\s*\(\d+\/\d+\)\s*$/);
+    const base = (m ? m[1] : rawName).trim();
+    const precleaned = base
+      // AI CHANGED: Common apostrophe mojibake sequences should behave like a plain apostrophe before Unicode normalization.
+      .replace(/\u0432\u0402\u2122/g, "'")
+      .replace(/\u00E2\u20AC\u2122/g, "'")
+      .replace(/[\u2018\u2019\u201A\u201B\u02BC\uFF07\u0060\u00B4]/g, "'");
+    const folded = typeof precleaned.normalize === "function" ? precleaned.normalize("NFKD") : precleaned;
+    return folded
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^A-Za-z0-9]+/g, "")
+      .trim();
+  }
+
+  // AI CHANGED: Semantic skill shape for planning — effect *types* and text *shape*, not scaled tooltip numbers.
+  // Requirements (level/status/silver) are intentionally ignored everywhere here.
+  function inferSkillConception(slotLike) {
+    const effects = Array.isArray(slotLike.effects) ? slotLike.effects : [];
+    const tags = Array.isArray(slotLike.tags)
+      ? slotLike.tags.map((t) => String(t).toLowerCase())
+      : [];
+    const desc = String(slotLike.description || "").toLowerCase();
+    const types = [];
+    for (let i = 0; i < effects.length; i++) {
+      if (effects[i] && effects[i].type) {
+        types.push(effects[i].type);
+      }
+    }
+    const uniqTypes = [...new Set(types)].sort();
+    const flags = {
+      dot: uniqTypes.indexOf("dot") >= 0,
+      slow: uniqTypes.indexOf("slow") >= 0,
+      stun: uniqTypes.indexOf("stun") >= 0,
+      stealth: uniqTypes.indexOf("stealth") >= 0,
+      channel: uniqTypes.indexOf("channel_gear") >= 0,
+      basicAugment: uniqTypes.indexOf("basic_proc") >= 0,
+      directBonus: uniqTypes.indexOf("instant") >= 0,
+      heal: effects.some((e) => e && e.type === "heal"),
+      manaDrain: uniqTypes.indexOf("mana_drain_per_sec") >= 0,
+      damageBuff: uniqTypes.indexOf("damage_buff") >= 0,
+      critBuff: uniqTypes.indexOf("crit_damage_buff") >= 0,
+      dodgeBuff: uniqTypes.indexOf("dodge_buff") >= 0
+    };
+    const descShape = {
+      selfAttackSpeedReduced:
+        /\b(reduces|decreases|slows)\b[\s\S]{0,120}\battack\s+speed\b/.test(desc) &&
+        (/\b(assassin|yourself|your|self|character)\b/.test(desc) || tags.indexOf("self") >= 0),
+      selfAttackSpeedBuffed:
+        /\b(increases|raises|boosts)\b[\s\S]{0,120}\battack\s+speed\b/.test(desc) && tags.indexOf("self") >= 0,
+      selfAccelerated: /\baccelerat/.test(desc),
+      reducesEnemyDefense:
+        /\b(reduces|decreases|lowers)\b[\s\S]{0,100}\b(armor|resistance|defense)\b/.test(desc) &&
+        /\btarget\b/.test(desc)
+    };
+    const tacticalRoles = [];
+    const usageHints = [];
+    const delivery = [];
+    if (flags.stealth) {
+      tacticalRoles.push("stealth");
+      usageHints.push("commits_to_low_visibility");
+    }
+    if (flags.manaDrain) {
+      tacticalRoles.push("ongoing_mana_cost");
+      usageHints.push("not_flat_mana_price");
+    }
+    if (flags.slow || flags.stun) {
+      tacticalRoles.push("control");
+    }
+    if (flags.dot) {
+      tacticalRoles.push("damage_over_time");
+      delivery.push("dot");
+    }
+    if (flags.channel) {
+      tacticalRoles.push("channeled");
+      delivery.push("channel");
+      usageHints.push("interruptible_window");
+    }
+    if (flags.basicAugment || flags.directBonus) {
+      delivery.push("on_hit_damage");
+    }
+    if (flags.damageBuff || flags.critBuff || flags.dodgeBuff) {
+      tacticalRoles.push("self_buff");
+      delivery.push("buff");
+    }
+    if (flags.heal) {
+      tacticalRoles.push("recovery");
+      delivery.push("heal");
+    }
+    if (tags.indexOf("attack") >= 0 && tags.indexOf("target") >= 0) {
+      tacticalRoles.push("offensive");
+    }
+    if (tags.indexOf("support") >= 0 && tags.indexOf("self") >= 0) {
+      tacticalRoles.push("self_support");
+    }
+    if (descShape.selfAttackSpeedReduced) {
+      tacticalRoles.push("self_tradeoff");
+      usageHints.push("self_slow_as_cost");
+    }
+    if (descShape.selfAccelerated || descShape.selfAttackSpeedBuffed) {
+      tacticalRoles.push("mobility_or_speed");
+    }
+    if (descShape.reducesEnemyDefense) {
+      tacticalRoles.push("shred");
+    }
+    let rangeBucket = "unknown";
+    const raws = String(slotLike.range || "").toLowerCase();
+    if (raws.indexOf("melee") >= 0) {
+      rangeBucket = "melee";
+    } else if (raws.indexOf("ranged") >= 0) {
+      rangeBucket = "ranged";
+    }
+    let castShape = "unknown";
+    if (Number.isFinite(slotLike.castTimeSec)) {
+      castShape = slotLike.castTimeSec <= 0 ? "instant" : "timed_cast";
+    } else if (slotLike.paramsRaw && slotLike.paramsRaw.activation_time) {
+      const rawAt = String(slotLike.paramsRaw.activation_time.raw || "").trim();
+      if (/^instantly$/i.test(rawAt)) {
+        castShape = "instant";
+      }
+    }
+    const dedupe = (arr) => [...new Set(arr)];
+    return {
+      schemaVersion: 1,
+      effectTypes: uniqTypes,
+      flags: flags,
+      descShape: descShape,
+      tacticalRoles: dedupe(tacticalRoles),
+      delivery: dedupe(delivery),
+      usageHints: dedupe(usageHints),
+      rangeBucket: rangeBucket,
+      castShape: castShape,
+      targetKind: tags.indexOf("target") >= 0 ? "enemy" : tags.indexOf("self") >= 0 ? "self" : "unknown",
+      note:
+        "Conception is level-invariant (roles/shapes). Parsed effect magnitudes remain on slot.effects for paper DPS only."
+    };
   }
 
   // AI CHANGED: Classify a button purely from its class string + image URL, BEFORE we open its
@@ -425,7 +588,7 @@
     const descriptionAdditional = getAdditionalDescriptionText(popupRoot);
     const params = getSkillParams(popupRoot);
     const effects = parseSkillEffects(description);
-    return {
+    const record = {
       slot: slotIndex,
       kind: classification.kind,
       flavor: classification.flavor || null,
@@ -457,6 +620,8 @@
       descriptionAdditional: descriptionAdditional || null,
       effects: effects
     };
+    record.conception = inferSkillConception(record);
+    return record;
   }
 
   // AI CHANGED: Read action-bar count badge for potions (the .action-counter on the button itself).
@@ -475,13 +640,65 @@
     };
   }
 
+  // AI CHANGED: Phase C4 slice 13 — compact signature of visible action bar (class + icon per slot) for cache validation.
+  // AI CHANGED: slice 16 — fold in lightweight DOM hints (data-test / aria-label / title) so different heroes/skill sets
+  // diverge even when class+icon hash alone matched a stale cache (e.g. another class scanned earlier).
+  function readActionBarLayoutFingerprint() {
+    const bar = document.querySelector(Config.selectors.actionBar);
+    if (!bar) {
+      return null;
+    }
+    const buttons = bar.querySelectorAll("app-action-button");
+    if (!buttons || buttons.length === 0) {
+      return null;
+    }
+    const parts = [];
+    for (let i = 0; i < buttons.length; i += 1) {
+      const button = buttons[i];
+      const cls = (button.className || "").toString().trim().replace(/\s+/g, " ");
+      const imgNode = button.querySelector(".action-image");
+      const styleAttr = imgNode ? (imgNode.getAttribute("style") || "") : "";
+      const iconMatch = styleAttr.match(/url\("?([^")]+)"?\)/i);
+      const iconUrl = iconMatch ? iconMatch[1] : "";
+      const id = getIconHash(iconUrl) || iconUrl.slice(-32);
+      const dataTest = (button.getAttribute("data-test") || "").trim();
+      const aria = (button.getAttribute("aria-label") || "").trim();
+      const title = (button.getAttribute("title") || "").trim();
+      const hint = (dataTest + "@" + aria + "@" + title).replace(/\s+/g, " ").trim().slice(0, 160);
+      parts.push(String(i) + ":" + cls + ":" + id + ":" + hint);
+    }
+    return parts.join("|");
+  }
+
+  // AI CHANGED: Detect selected hero class from profile icon (`icon-src-archer` etc.) so master DB class key auto-follows UI.
+  function detectProfileClassKey() {
+    const sel = Config.selectors && Config.selectors.heroProfileClassIcon
+      ? Config.selectors.heroProfileClassIcon
+      : "app-icon.profile-class";
+    const icon = document.querySelector(sel);
+    if (!icon) {
+      return "";
+    }
+    const cls = (icon.className || "").toString().toLowerCase();
+    const classMatch = cls.match(/\bicon-src-([a-z0-9_-]+)\b/);
+    if (classMatch && classMatch[1]) {
+      return classMatch[1].trim();
+    }
+    const tui = icon.querySelector("tui-icon");
+    const styleAttr = tui ? (tui.getAttribute("style") || "") : "";
+    const styleMatch = styleAttr.match(/assets\/icons\/([a-z0-9_-]+)\.svg/i);
+    return styleMatch && styleMatch[1] ? styleMatch[1].trim().toLowerCase() : "";
+  }
+
   // AI CHANGED: Persist the parsed slot array to localStorage so subsequent page reloads can skip
   // the rescan. Versioned key (Config.skills.storageKey) so a parser-schema change forces fresh scan.
   function saveSkillsToCache(slots) {
     try {
+      const fp = readActionBarLayoutFingerprint();
       const payload = {
-        version: 2,
+        version: 3, // AI CHANGED: slice 16 — bumped when fingerprint string gained per-slot DOM hints (old v2 still loads until bar mismatch).
         savedAt: Date.now(),
+        actionBarFingerprint: fp || null,
         slots: slots
       };
       localStorage.setItem(Config.skills.storageKey, JSON.stringify(payload));
@@ -495,8 +712,11 @@
 
   // AI CHANGED: Try to populate Runtime.skills.slots from localStorage on boot. Returns true on
   // successful load, false otherwise. Boot logs which path we took so the user can verify.
+  // AI CHANGED: slice 16 — always require a stored fingerprint + live bar when invalidation is on;
+  // old caches without fingerprint are cleared; liveFp null skips load (BOOT may retry once).
   function loadSkillsFromCache() {
     try {
+      Runtime.skills.lastError = null;
       const raw = localStorage.getItem(Config.skills.storageKey);
       if (!raw) {
         return false;
@@ -505,12 +725,59 @@
       if (!payload || !Array.isArray(payload.slots)) {
         return false;
       }
+      if (Config.skills.invalidateCacheOnBarMismatch !== false) {
+        const cachedFp = payload.actionBarFingerprint;
+        if (typeof cachedFp !== "string" || cachedFp.length === 0) {
+          Logger.warn("SKILLS", "Skill cache rejected: missing actionBarFingerprint (pre-slice-13 save or corrupt) — clearing", {
+            key: Config.skills.storageKey
+          });
+          Runtime.skills.lastError = "cache_missing_fingerprint";
+          try {
+            localStorage.removeItem(Config.skills.storageKey);
+          } catch (rmErr) {
+            Logger.warn("SKILLS", "Failed to remove stale skills cache", rmErr);
+          }
+          return false;
+        }
+        const liveFp = readActionBarLayoutFingerprint();
+        if (liveFp == null) {
+          Logger.warn("SKILLS", "Skill cache not loaded: action bar not available for fingerprint (will retry if BOOT schedules deferred load)", {
+            key: Config.skills.storageKey
+          });
+          Runtime.skills.lastError = "cache_bar_not_ready";
+          return false;
+        }
+        if (liveFp !== cachedFp) {
+          Logger.warn("SKILLS", "Skill cache rejected: action bar layout changed vs saved scan (re-scan with auto-farm OFF)", {
+            key: Config.skills.storageKey
+          });
+          Runtime.skills.lastError = "cache_bar_mismatch";
+          try {
+            localStorage.removeItem(Config.skills.storageKey);
+          } catch (rmErr) {
+            Logger.warn("SKILLS", "Failed to remove stale skills cache", rmErr);
+          }
+          return false;
+        }
+      }
       Runtime.skills.slots = payload.slots;
+      for (let bi = 0; bi < Runtime.skills.slots.length; bi++) {
+        const row = Runtime.skills.slots[bi];
+        if (row && row.kind === "skill" && !row.conception && Array.isArray(row.effects)) {
+          row.conception = inferSkillConception(row);
+        }
+      }
+      // AI CHANGED: Auto-attach master DB conception after cache load (class auto-detected from profile icon when available).
+      if (Config.skills.autoApplyMasterOnCacheLoad !== false && typeof applySkillMasterToSlots === "function") {
+        applySkillMasterToSlots();
+      }
       Runtime.skills.cacheLoadedAt = Date.now();
       Runtime.skills.scannedAt = payload.savedAt || null;
+      Runtime.skills.lastError = null;
       return true;
     } catch (err) {
       Logger.warn("SKILLS", "Failed to load skills cache", err);
+      Runtime.skills.lastError = "cache_parse_error";
       return false;
     }
   }
@@ -530,6 +797,134 @@
     Logger.log("SKILLS", "Skill cache cleared");
   }
 
+  // AI CHANGED: Roadmap — if hero class bucket misses, attach master row when exactly one other class defines that normalized name (shared spelling across classes).
+  function tryResolveUniqueSkillMasterAcrossClasses(rawName) {
+    if (typeof SkillMasterIndex === "undefined" || !SkillMasterIndex) {
+      return null;
+    }
+    const base =
+      typeof normalizeSkillName === "function"
+        ? normalizeSkillName(String(rawName || ""))
+        : String(rawName || "");
+    const key = base.trim().toLowerCase();
+    if (!key) {
+      return null;
+    }
+    let foundEntry = null;
+    const classKeys = Object.keys(SkillMasterIndex);
+    for (let ci = 0; ci < classKeys.length; ci++) {
+      const cls = classKeys[ci];
+      const bucket = SkillMasterIndex[cls];
+      if (!bucket || typeof bucket !== "object") {
+        continue;
+      }
+      const row = bucket[key];
+      if (!row) {
+        continue;
+      }
+      if (foundEntry) {
+        return { ambiguous: true, nameKey: key };
+      }
+      foundEntry = row;
+    }
+    if (!foundEntry) {
+      return null;
+    }
+    return { entry: foundEntry, ambiguous: false };
+  }
+
+  // AI CHANGED: Apply master skill DB metadata to scanned slots by normalized name.
+  // This is the bridge from per-character action-bar scan -> level-invariant conception.
+  // Requirements are not used. classKey is optional: when missing, we auto-detect via profile icon and sync Config.skills.masterClassKey.
+  function applySkillMasterToSlots(classKey) {
+    const slots = Runtime.skills.slots;
+    if (!Array.isArray(slots) || slots.length === 0) {
+      return { ok: false, error: "no_slots", matched: 0, totalSkills: 0, unmatchedNames: [] };
+    }
+    if (typeof getSkillMasterEntry !== "function") {
+      return { ok: false, error: "no_master_db", matched: 0, totalSkills: 0, unmatchedNames: [] };
+    }
+    const preferred = typeof classKey === "string" ? classKey.trim() : "";
+    const detected = detectProfileClassKey();
+    const configured = typeof Config.skills.masterClassKey === "string" ? Config.skills.masterClassKey.trim() : "";
+    const ck = preferred || detected || configured;
+    if (!ck) {
+      return { ok: false, error: "missing_classKey", matched: 0, totalSkills: 0, unmatchedNames: [] };
+    }
+    if (!preferred && detected && configured !== detected) {
+      Config.skills.masterClassKey = detected;
+      Logger.log("SKILLS", "Auto-synced masterClassKey from profile icon", {
+        previous: configured || null,
+        next: detected
+      });
+    }
+    let totalSkills = 0;
+    let matched = 0;
+    let crossClassResolved = 0;
+    const matchedNames = [];
+    const unmatchedNames = [];
+    for (let i = 0; i < slots.length; i += 1) {
+      const s = slots[i];
+      if (!s || s.kind !== "skill") {
+        continue;
+      }
+      totalSkills += 1;
+      let master = getSkillMasterEntry(ck, s.name || "");
+      let resolvedVia = null;
+      if (!master) {
+        const fb = tryResolveUniqueSkillMasterAcrossClasses(s.name || "");
+        if (fb && fb.ambiguous) {
+          Logger.warn("SKILLS", "Skill master name exists in multiple classes — skip cross-class attach", {
+            slotName: s.name,
+            normalizedKey: fb.nameKey
+          });
+        } else if (fb && fb.entry) {
+          master = fb.entry;
+          resolvedVia = "unique_cross_class";
+          crossClassResolved += 1;
+          Logger.log("SKILLS", "Skill master unique cross-class match", {
+            slotName: s.name,
+            barClassKey: ck,
+            rowClassKey: fb.entry.classKey
+          });
+        }
+      }
+      if (master) {
+        s.master = {
+          classKey: master.classKey,
+          name: master.name,
+          tags: master.tags,
+          conception: master.conception
+        };
+        if (resolvedVia) {
+          s.master.resolvedVia = resolvedVia;
+        }
+        matched += 1;
+        matchedNames.push(master.name || s.name || "");
+      } else {
+        unmatchedNames.push(s.name || ("slot_" + i));
+      }
+    }
+    Logger.log("SKILLS", "Applied skill master DB to slots", {
+      classKey: ck,
+      matched: matched,
+      totalSkills: totalSkills,
+      crossClassResolved: crossClassResolved,
+      unmatchedNames: unmatchedNames,
+      matchedSample: matchedNames.slice(0, 5)
+    });
+    return {
+      ok: true,
+      classKey: ck,
+      matched: matched,
+      totalSkills: totalSkills,
+      crossClassResolved: crossClassResolved,
+      unmatchedCount: unmatchedNames.length,
+      unmatchedNames: unmatchedNames,
+      matchedSample: matchedNames.slice(0, 5)
+    };
+  }
+
   // AI CHANGED: Console summary column -- potions both use effect.type "heal"; append resource so the
   // table is not ambiguous (heal_hp vs heal_mp). Runtime still stores full objects for the planner.
   function formatEffectForTable(effect) {
@@ -537,21 +932,49 @@
       return "";
     }
     if (effect.type === "heal" && effect.resource) {
-      return "heal_" + effect.resource;
+      const v = Number.isFinite(effect.value) ? effect.value : "";
+      const d = Number.isFinite(effect.durationSec) && effect.durationSec > 0 ? "@" + effect.durationSec + "s" : "";
+      // AI CHANGED: Show parsed total (includes +bonus from tooltip) so scan table matches sustain math.
+      return "heal_" + effect.resource + (v !== "" ? ":" + v + d : "");
     }
     return effect.type;
   }
 
   // AI CHANGED: Top-level scan. Iterates every slot in the action bar, classifies, opens popup
   // (skipping empty slots), parses, closes popup, accumulates records. Returns the array of
-  // parsed slots. Refuses to run while auto-farm is active so we never accidentally cast a skill
-  // mid-fight by simulating clicks. Caller can wait for the returned promise; the bot status
-  // bar surfaces progress via setBotStatus.
-  async function scanSkills() {
-    if (Runtime.autoFarm.running) {
+  // parsed slots. Refuses to run while auto-farm is active unless opts.allowDuringAutoFarm and
+  // readBasicState() shows enemyCount===0 (OOC) — see ensureSkillsAndHeroDataForAutoFarm in 85-combat.js.
+  async function scanSkills(opts) {
+    const o = opts && typeof opts === "object" ? opts : {};
+    let allowDuringAuto = !!o.allowDuringAutoFarm;
+    if (allowDuringAuto && (!Runtime.autoFarm || !Runtime.autoFarm.running)) {
+      allowDuringAuto = false;
+    }
+    if (Runtime.autoFarm.running && !allowDuringAuto) {
       Logger.warn("SKILLS", "Cannot scan: auto-farm is running. Press OFF first, then retry.");
       Runtime.skills.lastError = "auto_farm_running";
       return null;
+    }
+    if (allowDuringAuto) {
+      if (Runtime.autoFarm.stopRequested) {
+        Logger.warn("SKILLS", "AUTO skill scan refused: stop requested");
+        Runtime.skills.lastError = "stop_requested";
+        return null;
+      }
+      const live = readBasicState();
+      if (!(typeof live.combat.enemyCount === "number" && live.combat.enemyCount === 0)) {
+        Logger.warn("SKILLS", "AUTO skill scan refused: not clear of enemies", {
+          enemyCount: live.combat.enemyCount
+        });
+        Runtime.skills.lastError = "auto_scan_refused_enemies";
+        return null;
+      }
+      if (live.session && (live.session.dead === true || live.session.poorConnection === true)) {
+        Logger.warn("SKILLS", "AUTO skill scan refused: session risk (dead/poor connection)");
+        Runtime.skills.lastError = "auto_scan_refused_session";
+        return null;
+      }
+      Logger.log("SKILLS", "AUTO out-of-combat skill scan (trusted caller)");
     }
     const bar = document.querySelector(Config.selectors.actionBar);
     if (!bar) {
@@ -570,6 +993,12 @@
 
     const slots = [];
     for (let i = 0; i < buttons.length; i += 1) {
+      if (allowDuringAuto && Runtime.autoFarm && Runtime.autoFarm.stopRequested) {
+        await closeActionPopup();
+        Logger.warn("SKILLS", "AUTO skill scan aborted mid-loop (stop requested)");
+        Runtime.skills.lastError = "stop_requested";
+        return null;
+      }
       const button = buttons[i];
       const classification = classifyActionButton(button);
       // Read the counter (potion charges, etc.) BEFORE opening the popup -- the popup may move
@@ -636,6 +1065,10 @@
     Runtime.skills.slots = slots;
     Runtime.skills.scannedAt = Date.now();
     Runtime.skills.lastError = null;
+    // AI CHANGED: Auto-attach master DB conception after fresh scan (class auto-detected from profile icon when available).
+    if (Config.skills.autoApplyMasterOnScan !== false) {
+      applySkillMasterToSlots();
+    }
     saveSkillsToCache(slots);
 
     // Pretty-print a table for quick eyeballing. Console-only -- no GUI clutter.
@@ -645,6 +1078,9 @@
       flavor: s.flavor || "",
       name: s.name || (s.kind === "empty" ? "(empty)" : ""),
       level: s.level || "",
+      conception: s.conception && Array.isArray(s.conception.tacticalRoles)
+        ? s.conception.tacticalRoles.join("+")
+        : "",
       cast: s.castTimeSec ?? "",
       cd: s.cooldownSec ?? "",
       mp: s.manaCost ?? "",

@@ -105,6 +105,44 @@
     return (span.textContent || "").replace(/\s+/g, " ").trim();
   }
 
+  // AI CHANGED: Queue v2 trigger — read all visible non-fraction canvas-condition-bar labels so queueing can react to the real cast name ("Sniper Shot", "Attack", etc.).
+  function readVisibleCombatCastBarTexts() {
+    const nodes = Array.from(document.querySelectorAll(Config.selectors.movingBarValue));
+    const out = [];
+    const seen = new Set();
+    for (let i = 0; i < nodes.length; i += 1) {
+      const span = nodes[i];
+      if (!span || !span.isConnected) {
+        continue;
+      }
+      const host = span.closest("app-canvas-condition-bar") || span;
+      if (!isElementVisible(host)) {
+        continue;
+      }
+      const text = (span.textContent || "").replace(/\s+/g, " ").trim();
+      if (!text) {
+        continue;
+      }
+      if (parseFractionText(text).valid) {
+        continue;
+      }
+      const key = text.toLowerCase();
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      out.push(text);
+    }
+    const battleText = readBattleStatusBarText();
+    if (battleText && !parseFractionText(battleText).valid) {
+      const battleKey = battleText.toLowerCase();
+      if (!seen.has(battleKey)) {
+        out.unshift(battleText);
+      }
+    }
+    return out;
+  }
+
   // AI CHANGED: True when battle status shows known in-progress loot/altar strings (visible bar only).
   function isLootInteractionStatusBusy() {
     const t = readBattleStatusBarText().toLowerCase();
@@ -118,6 +156,225 @@
       }
     }
     return false;
+  }
+
+  // AI CHANGED: slice 24b — find visible “Press to cancel” (or configured substrings) on charge UI.
+  function findChargingSkillCancelHintElement() {
+    const subs = Config.combat.chargingCancelHintSubstrings;
+    if (!Array.isArray(subs) || subs.length === 0) {
+      return null;
+    }
+    const rootSel =
+      typeof Config.combat.chargingCancelHintScanRoot === "string" && Config.combat.chargingCancelHintScanRoot.trim()
+        ? Config.combat.chargingCancelHintScanRoot.trim()
+        : "app-game";
+    const root = document.querySelector(rootSel);
+    if (!root) {
+      return null;
+    }
+    const nodes = root.querySelectorAll("span.status-description, .status-description");
+    for (let i = 0; i < nodes.length; i += 1) {
+      const el = nodes[i];
+      if (!el || !isElementVisible(el)) {
+        continue;
+      }
+      const t = (el.textContent || "").toLowerCase().replace(/\s+/g, " ").trim();
+      for (let j = 0; j < subs.length; j += 1) {
+        const sub = String(subs[j] || "").toLowerCase();
+        if (sub && t.indexOf(sub) !== -1) {
+          return el;
+        }
+      }
+    }
+    return null;
+  }
+
+  function isChargingSkillCancelHintVisible() {
+    return !!findChargingSkillCancelHintElement();
+  }
+
+  // AI CHANGED: Align charge-cancel cast bar matching with queue / planner name normalization (86-planner loads before runtime calls).
+  function normalizeChargeCancelSkillMatchKey(rawName) {
+    if (typeof plannerNormalizeSkillNameForMatch === "function") {
+      return plannerNormalizeSkillNameForMatch(String(rawName || ""));
+    }
+    if (typeof normalizeSkillName === "function") {
+      return normalizeSkillName(String(rawName || "")).toLowerCase();
+    }
+    return String(rawName || "").replace(/\s+/g, " ").trim().toLowerCase();
+  }
+
+  // AI CHANGED: True when any visible cast/progress label matches expected skill (substring tolerant for level suffixes).
+  function isCastBarShowingExpectedSkillNameForChargeCancel(expectedRawName) {
+    const expectedKey = normalizeChargeCancelSkillMatchKey(expectedRawName);
+    if (!expectedKey) {
+      return false;
+    }
+    const labels = readVisibleCombatCastBarTexts();
+    for (let i = 0; i < labels.length; i += 1) {
+      const labelKey = normalizeChargeCancelSkillMatchKey(labels[i]);
+      if (!labelKey) {
+        continue;
+      }
+      if (labelKey === expectedKey) {
+        return true;
+      }
+      // AI CHANGED: Substring only when the shorter key is long enough — avoids e.g. "shot" matching "Sniper Shot".
+      const shortKey = labelKey.length <= expectedKey.length ? labelKey : expectedKey;
+      const longKey = labelKey.length <= expectedKey.length ? expectedKey : labelKey;
+      if (shortKey.length >= 5 && longKey.indexOf(shortKey) !== -1) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // AI CHANGED: slice 24b — element to click for charge cancel (explicit selectors first, else ancestor button / role=button, else hint node).
+  // AI CHANGED: Midpoint in the gap between map-open button and map canvas (viewport coords) — game treats as empty UI; cancels charge.
+  function getChargeCancelMapGapClientPoint() {
+    const btnSel =
+      typeof Config.selectors.mapToggleButton === "string" && Config.selectors.mapToggleButton.trim()
+        ? Config.selectors.mapToggleButton.trim()
+        : "app-button-icon.button-map";
+    const cvSel =
+      typeof Config.selectors.mapCanvas === "string" && Config.selectors.mapCanvas.trim()
+        ? Config.selectors.mapCanvas.trim()
+        : "app-game canvas";
+    const btn = document.querySelector(btnSel);
+    const canvas = document.querySelector(cvSel);
+    if (!btn || !canvas || !isElementVisible(btn) || !isElementVisible(canvas)) {
+      return null;
+    }
+    const a = btn.getBoundingClientRect();
+    const b = canvas.getBoundingClientRect();
+    let x;
+    let y;
+    if (a.right <= b.left) {
+      x = (a.right + b.left) / 2;
+      const yTop = Math.max(a.top, b.top);
+      const yBot = Math.min(a.bottom, b.bottom);
+      y = yBot > yTop ? (yTop + yBot) / 2 : (a.top + a.bottom + b.top + b.bottom) / 4;
+    } else if (b.right <= a.left) {
+      x = (b.right + a.left) / 2;
+      const yTop = Math.max(a.top, b.top);
+      const yBot = Math.min(a.bottom, b.bottom);
+      y = yBot > yTop ? (yTop + yBot) / 2 : (a.top + a.bottom + b.top + b.bottom) / 4;
+    } else if (a.bottom <= b.top) {
+      y = (a.bottom + b.top) / 2;
+      const xLeft = Math.max(a.left, b.left);
+      const xRight = Math.min(a.right, b.right);
+      x = xRight > xLeft ? (xLeft + xRight) / 2 : (a.left + a.right + b.left + b.right) / 4;
+    } else if (b.bottom <= a.top) {
+      y = (b.bottom + a.top) / 2;
+      const xLeft = Math.max(a.left, b.left);
+      const xRight = Math.min(a.right, b.right);
+      x = xRight > xLeft ? (xLeft + xRight) / 2 : (a.left + a.right + b.left + b.right) / 4;
+    } else {
+      x = (a.right + b.left) / 2;
+      y = (a.top + a.bottom + b.top + b.bottom) / 4;
+    }
+    const margin = 2;
+    const clampedX = Math.min(Math.max(x, margin), window.innerWidth - margin);
+    const clampedY = Math.min(Math.max(y, margin), window.innerHeight - margin);
+    return { clientX: clampedX, clientY: clampedY };
+  }
+
+  function clickChargeCancelViaMapToggleCanvasGap() {
+    const pt = getChargeCancelMapGapClientPoint();
+    if (!pt) {
+      Logger.warn("COMBAT", "charge cancel map-gap: map button or canvas missing / not visible");
+      return false;
+    }
+    return dispatchClickAt(pt.clientX, pt.clientY, "charge-cancel-map-gap");
+  }
+
+  function getChargingSkillCancelClickTarget() {
+    const hint = findChargingSkillCancelHintElement();
+    if (!hint) {
+      return null;
+    }
+    const explicit = Config.combat.chargingCancelClickSelectors;
+    if (Array.isArray(explicit) && explicit.length > 0) {
+      for (let e = 0; e < explicit.length; e += 1) {
+        const sel = String(explicit[e] || "").trim();
+        if (!sel) {
+          continue;
+        }
+        const el = document.querySelector(sel);
+        if (el && isElementVisible(el)) {
+          return el;
+        }
+      }
+    }
+    const maxUp = Number.isFinite(Config.combat.chargingCancelParentWalkMax)
+      ? Config.combat.chargingCancelParentWalkMax
+      : 14;
+    let node = hint;
+    for (let u = 0; u < maxUp && node; u += 1) {
+      const tag = (node.tagName || "").toLowerCase();
+      const role = (node.getAttribute && node.getAttribute("role")) || "";
+      if (tag === "button" || role.toLowerCase() === "button") {
+        return node;
+      }
+      if (tag === "a") {
+        const href = node.getAttribute ? node.getAttribute("href") : null;
+        if (href && href !== "#") {
+          return node;
+        }
+      }
+      node = node.parentElement;
+    }
+    return hint;
+  }
+
+  // AI CHANGED: slice 24b — cancel charge: prefer map-toggle/canvas gap click; else DOM cancel control (not bar slot).
+  // AI CHANGED: Optional opts.expectedSkillName — when `chargeCancelRequireCastBarNameMatch` is true, require cancel hint + cast bar shows that skill before any cancel click.
+  function clickChargingSkillCancelUi(userOpts) {
+    // AI CHANGED: quick TEST profile — no charge-cancel UI clicks during bundle (soak/combat inside TEST).
+    if (Runtime.testBundle && Runtime.testBundle.disableChargeCancelUi === true) {
+      Logger.log("STATE", "charge cancel UI skipped (TEST quick profile)");
+      return false;
+    }
+    const opts =
+      userOpts && typeof userOpts === "object"
+        ? userOpts
+        : typeof userOpts === "string" && String(userOpts).trim()
+          ? { expectedSkillName: String(userOpts).trim() }
+          : {};
+    const expectedSkillName =
+      typeof opts.expectedSkillName === "string" ? opts.expectedSkillName.trim() : "";
+    const requireBarNameMatch = Config.combat && Config.combat.chargeCancelRequireCastBarNameMatch !== false;
+    // AI CHANGED: HP-spike / emergency callers may bypass strict cast-bar name gate so map-gap / DOM cancel still runs.
+    const dangerBypassNameMatch = opts.dangerBypassNameMatch === true;
+    if (requireBarNameMatch && !dangerBypassNameMatch) {
+      if (!isChargingSkillCancelHintVisible()) {
+        Logger.warn("COMBAT", "charge cancel skipped: cancel hint not visible (cast-bar name gate)");
+        return false;
+      }
+      if (!expectedSkillName) {
+        Logger.warn("COMBAT", "charge cancel skipped: cast-bar name match enabled but expectedSkillName empty");
+        return false;
+      }
+      if (!isCastBarShowingExpectedSkillNameForChargeCancel(expectedSkillName)) {
+        Logger.warn("COMBAT", "charge cancel skipped: cast/progress bar does not match expected skill", {
+          expectedSkillName: expectedSkillName,
+          castBarLabels: readVisibleCombatCastBarTexts()
+        });
+        return false;
+      }
+    }
+    if (Config.combat.chargingCancelPreferMapGapClick !== false) {
+      if (clickChargeCancelViaMapToggleCanvasGap()) {
+        return true;
+      }
+      Logger.log("COMBAT", "charge cancel: map-gap click failed; trying DOM cancel target");
+    }
+    const target = getChargingSkillCancelClickTarget();
+    if (!target) {
+      Logger.warn("COMBAT", "charge cancel: no DOM click target (hint missing or selectors unmatched)");
+      return false;
+    }
+    return clickElementSafe(target, "charge-cancel-ui");
   }
 
   // AI CHANGED: Added direct enemy counter reader using the real game selector.
@@ -177,6 +434,11 @@
     const targetHpNode = document.querySelector(Config.selectors.targetHpText);
     const deathScreenNode = document.querySelector(Config.selectors.deathScreen);
     const poorConnectionNode = document.querySelector(Config.selectors.poorConnection);
+    const gameRootNode = document.querySelector(Config.selectors.gameRoot);
+    const actionBarNode = document.querySelector(Config.selectors.actionBar);
+    const mapToggleNode = document.querySelector(Config.selectors.mapToggleButton);
+    const mapCanvasNode = document.querySelector(Config.selectors.mapCanvas);
+    const findEnemyNode = document.querySelector(Config.selectors.findEnemyButton);
 
     const hpText = hpNode ? hpNode.textContent || "" : "";
     const mpText = mpNode ? mpNode.textContent || "" : "";
@@ -213,12 +475,29 @@
       pingMs = pingMatch ? parseFirstInt(pingMatch[1]) : null;
     }
 
+    const gameRootVisible = !!(gameRootNode && isElementVisible(gameRootNode));
+    const actionBarVisible = !!(actionBarNode && isElementVisible(actionBarNode));
+    const mapToggleVisible = !!(mapToggleNode && isElementVisible(mapToggleNode));
+    const mapCanvasVisible = !!(mapCanvasNode && isElementVisible(mapCanvasNode));
+    const findEnemyVisible = !!(findEnemyNode && isElementVisible(findEnemyNode));
+    const coreUiVisible = !!(gameRootVisible && (actionBarVisible || mapToggleVisible || mapCanvasVisible || findEnemyVisible));
+    const coreUiMissing = !coreUiVisible;
+
     return {
       time: Date.now(),
       session: {
         inGame: isGamePage(),
         dead: !!deathScreenNode,
-        poorConnection: !!poorConnectionNode
+        poorConnection: !!poorConnectionNode,
+        coreUi: {
+          gameRootVisible: gameRootVisible,
+          actionBarVisible: actionBarVisible,
+          mapToggleVisible: mapToggleVisible,
+          mapCanvasVisible: mapCanvasVisible,
+          findEnemyVisible: findEnemyVisible,
+          visible: coreUiVisible,
+          missing: coreUiMissing
+        }
       },
       player: {
         hp: hp,
@@ -235,7 +514,8 @@
         fractionCandidateCount: fractionCandidates.length,
         inferredHpNode: inferred.hp ? { text: inferred.hp.text, x: inferred.hp.x, y: inferred.hp.y } : null,
         inferredMpNode: inferred.mp ? { text: inferred.mp.text, x: inferred.mp.x, y: inferred.mp.y } : null,
-        inferredTargetHpNode: inferred.targetHp ? { text: inferred.targetHp.text, x: inferred.targetHp.x, y: inferred.targetHp.y } : null
+        inferredTargetHpNode: inferred.targetHp ? { text: inferred.targetHp.text, x: inferred.targetHp.x, y: inferred.targetHp.y } : null,
+        coreUiVisible: coreUiVisible
       }
     };
   }

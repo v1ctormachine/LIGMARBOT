@@ -68,8 +68,30 @@
   }
 
   // AI CHANGED: Added shared async sleep helper for paced loop execution.
-  function sleep(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
+  // AI CHANGED: slice 21 — chunk sleeps so Runtime.autoFarm.stopRequested can release long holds quickly.
+  // AI CHANGED: optional opts.bypassStop — TEST wait-for-farm-idle must not spin when stopRequested (90-ui.js).
+  function sleep(ms, opts) {
+    const o = opts && typeof opts === "object" ? opts : {};
+    const bypassStop = o.bypassStop === true;
+    const total = Math.max(0, Number(ms) || 0);
+    const stepMs = 80;
+    return new Promise((resolve) => {
+      let elapsed = 0;
+      const tick = () => {
+        if (!bypassStop && Runtime.autoFarm.stopRequested) {
+          resolve();
+          return;
+        }
+        if (elapsed >= total) {
+          resolve();
+          return;
+        }
+        const slice = Math.min(stepMs, total - elapsed);
+        elapsed += slice;
+        setTimeout(tick, slice);
+      };
+      tick();
+    });
   }
 
   // AI CHANGED: Added helper for consistent compact JSON text in GUI status.
@@ -123,6 +145,34 @@
       button: 0
     });
     canvas.dispatchEvent(event);
+  }
+
+  // AI CHANGED: Full click sequence at viewport coords (elementFromPoint) — for dead UI gaps, not only canvas.
+  function dispatchClickAt(clientX, clientY, label) {
+    const x = Number(clientX);
+    const y = Number(clientY);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      Logger.warn("ACTION", `${label} click-at skipped: bad coordinates`);
+      return false;
+    }
+    const el = document.elementFromPoint(x, y);
+    if (!el) {
+      Logger.warn("ACTION", `${label} click-at skipped: no element at point`);
+      return false;
+    }
+    const opts = {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      clientX: x,
+      clientY: y,
+      button: 0
+    };
+    el.dispatchEvent(new MouseEvent("mousedown", opts));
+    el.dispatchEvent(new MouseEvent("mouseup", opts));
+    el.dispatchEvent(new MouseEvent("click", opts));
+    Logger.log("ACTION", `${label} click-at`, { x: Math.round(x), y: Math.round(y), tag: el.tagName });
+    return true;
   }
 
   // AI CHANGED: Single funnel for bot phase changes. Updates Runtime.status and emits a structured log.
