@@ -1813,6 +1813,14 @@
         best = v;
       }
     }
+    // AI CHANGED: Match "900 seconds" style wording from skill DB export (mage barriers, etc.).
+    const reWord = /(\d[\d.,]{0,8})\s+seconds?\b/gi;
+    while ((x = reWord.exec(d)) !== null) {
+      const v2 = parseFloat(String(x[1]).replace(/,/g, "."));
+      if (Number.isFinite(v2) && v2 > 0 && v2 < 200000 && (best === null || v2 > best)) {
+        best = v2;
+      }
+    }
     return best;
   }
 
@@ -1922,6 +1930,56 @@
       }
     }
     return false;
+  }
+
+  // AI CHANGED: Tooltip/FX duration first; then embedded DB classification (88-support-classification.generated.js).
+  function resolveSupportBuffDurationSecPreferDb(row, classKey) {
+    let dur = guessBuffDurationSecForSupportRow(row, classKey);
+    if (Number.isFinite(dur)) {
+      return dur;
+    }
+    if (typeof lookupSupportSkillClassificationFromGeneratedDb === "function" && classKey) {
+      const lu = lookupSupportSkillClassificationFromGeneratedDb(classKey, row && row.name);
+      if (lu && Number.isFinite(lu.durationSecGuess)) {
+        return lu.durationSecGuess;
+      }
+    }
+    return null;
+  }
+
+  // AI CHANGED: Long self support (≥ longDurationMinSec, default 60s) — OOC renew + pre-combat refresh; never new-tile prebuff.
+  function skillRowIsPermanentOocSelfLongBuff(row, classKey) {
+    if (!row || row.kind !== "skill" || row.isAttack) {
+      return false;
+    }
+    if (!row.isSupport || !row.targetsSelf) {
+      return false;
+    }
+    if (isSupportSkillExcludedFromPrebuffSafetyPolicy(row, classKey)) {
+      return false;
+    }
+    if (skillRowScanTagsPartySupportNonAttack(row)) {
+      return false;
+    }
+    const masterEnt =
+      typeof getSkillMasterEntry === "function" && classKey ? getSkillMasterEntry(classKey, row.name) : null;
+    if (skillMasterEntryIsPartySupportNonAttackFromDb(masterEnt)) {
+      return false;
+    }
+    const root = Config.supportBuffs;
+    const longMin = Number.isFinite(root && root.longDurationMinSec) ? root.longDurationMinSec : 60;
+    const dur = resolveSupportBuffDurationSecPreferDb(row, classKey);
+    if (!Number.isFinite(dur) || dur < longMin) {
+      return false;
+    }
+    const lu =
+      typeof lookupSupportSkillClassificationFromGeneratedDb === "function" && classKey
+        ? lookupSupportSkillClassificationFromGeneratedDb(classKey, row.name)
+        : null;
+    if (lu) {
+      return lu.permanentSelfOoc === true;
+    }
+    return true;
   }
 
   // AI CHANGED: Idle empty tile — drink MP pots when mana below idleMpPotionUseBelowPct (toward idleMpPotionTopOffTargetPct).
@@ -2105,7 +2163,11 @@
         if (row.isAttack && !skillNameMatchesAnySubstring(row.name, treatAttackSubs)) {
           continue;
         }
-      let dur = guessBuffDurationSecForSupportRow(row, classKey);
+        // AI CHANGED: Permanent long self-buffs use OOC / pre-combat refresh only — not new-tile prebuff.
+        if (skillRowIsPermanentOocSelfLongBuff(row, classKey)) {
+          continue;
+        }
+      let dur = resolveSupportBuffDurationSecPreferDb(row, classKey);
       if (!Number.isFinite(dur) && skillNameMatchesAnySubstring(row.name, forceLongSubs)) {
         dur = unknownLongSec;
       }
@@ -2284,53 +2346,91 @@
     return { ok: true, hpTh: hpTh, mpTh: mpTh, shortPrebuff: pbCast };
   }
 
-  async function maybeMaintainLongSelfSupportBuffsOutOfCombat(liveState) {
+  // AI CHANGED: Shared pass for permanent (≥longDurationMinSec) self support buffs — idle OOC or occupied tile before find-enemy.
+  async function runPermanentSelfLongBuffRefreshPass(liveState, opts) {
+    const o = opts || {};
+    const allowEnemiesOnTile = !!o.allowEnemiesOnTile;
     const root = Config.supportBuffs;
     const perm = root && root.permanentSelf;
     if (!root || root.enabled === false || !perm || perm.enabled === false) {
-      return { renewed: 0 };
+      return { cast: 0, skipped: true, reason: "disabled" };
     }
-    if (!liveState || typeof liveState.combat.enemyCount !== "number" || liveState.combat.enemyCount !== 0) {
-      return { renewed: 0, skipped: true, reason: "not_clear_tile" };
+    if (!liveState || typeof liveState.combat.enemyCount !== "number") {
+      return { cast: 0, skipped: true, reason: "no_enemy_count" };
     }
-    const longMin = Number.isFinite(root.longDurationMinSec) ? root.longDurationMinSec : 120;
-    const renewRem = Number.isFinite(perm.renewWhenRemainingSec) ? perm.renewWhenRemainingSec : 90;
+    const ec = liveState.combat.enemyCount;
+    if (allowEnemiesOnTile) {
+      if (!(ec > 0)) {
+        return { cast: 0, skipped: true, reason: "need_enemies_on_tile" };
+      }
+    } else if (ec !== 0) {
+      return { cast: 0, skipped: true, reason: "not_clear_tile" };
+    }
+    const longMin = Number.isFinite(root.longDurationMinSec) ? root.longDurationMinSec : 60;
+    const renewRem = Number.isFinite(perm.renewWhenRemainingSec) ? perm.renewWhenRemainingSec : 20;
     const classKey = typeof Config.skills.masterClassKey === "string" ? Config.skills.masterClassKey.trim() : "";
     const slots = Runtime.skills && Array.isArray(Runtime.skills.slots) ? Runtime.skills.slots : [];
     const rt = getSupportBuffLineRuntime();
-    let renewed = 0;
-    const settleMs = Number.isFinite(Config.combat && Config.combat.postRankedSkillClickSettleMs)
-      ? Math.max(120, Config.combat.postRankedSkillClickSettleMs * 4)
-      : 180;
     const now = Date.now();
+    const metaList = [];
     for (let i = 0; i < slots.length; i++) {
       const row = slots[i];
-      if (!row || row.kind !== "skill" || !row.isSupport || !row.targetsSelf || row.isAttack) {
+      if (!skillRowIsPermanentOocSelfLongBuff(row, classKey)) {
         continue;
       }
-      const dur = guessBuffDurationSecForSupportRow(row, classKey);
+      const dur = resolveSupportBuffDurationSecPreferDb(row, classKey);
       if (!Number.isFinite(dur) || dur < longMin) {
         continue;
       }
       const nameKey =
         typeof normalizeSkillName === "function" ? normalizeSkillName(String(row.name || "")) : String(row.name || "");
       const tracked = rt.longSelfTracked[nameKey];
-      if (tracked && Number.isFinite(tracked.expectedEndAt) && now < tracked.expectedEndAt - renewRem * 1000) {
+      const need =
+        !tracked ||
+        !Number.isFinite(tracked.expectedEndAt) ||
+        now >= tracked.expectedEndAt - renewRem * 1000;
+      if (!need) {
         continue;
       }
       const slotIdx = typeof row.slot === "number" ? row.slot : i;
-      if (typeof isActionBarSlotShowingCooldown === "function" && isActionBarSlotShowingCooldown(slotIdx)) {
+      const urgency = tracked && Number.isFinite(tracked.expectedEndAt) ? tracked.expectedEndAt : now + 1e12;
+      metaList.push({ slot: slotIdx, row: row, dur: dur, nameKey: nameKey, urgency: urgency });
+    }
+    metaList.sort(function (a, b) {
+      return a.urgency - b.urgency;
+    });
+    const maxCast = Number.isFinite(perm.maxCastPerPass) ? Math.max(1, Math.floor(perm.maxCastPerPass)) : 6;
+    let cast = 0;
+    const settleMs = Number.isFinite(Config.combat && Config.combat.postRankedSkillClickSettleMs)
+      ? Math.max(120, Config.combat.postRankedSkillClickSettleMs * 4)
+      : 180;
+    for (let m = 0; m < metaList.length && cast < maxCast; m++) {
+      const one = metaList[m];
+      if (typeof isActionBarSlotShowingCooldown === "function" && isActionBarSlotShowingCooldown(one.slot)) {
         continue;
       }
-      if (!clickActionBarSlot(slotIdx)) {
+      if (!clickActionBarSlot(one.slot)) {
         continue;
       }
-      rt.longSelfTracked[nameKey] = { expectedEndAt: now + Math.round(dur * 1000), assumedDurationSec: dur };
-      renewed += 1;
-      Logger.log("COMBAT", "Long self-buff renew (OOC)", { name: row.name, durSec: dur, slot: slotIdx });
+      rt.longSelfTracked[one.nameKey] = { expectedEndAt: now + Math.round(one.dur * 1000), assumedDurationSec: one.dur };
+      cast += 1;
+      Logger.log("COMBAT", allowEnemiesOnTile ? "Permanent self-buff before combat" : "Long self-buff renew (OOC)", {
+        name: one.row.name,
+        durSec: one.dur,
+        slot: one.slot
+      });
       await sleep(settleMs);
     }
-    return { renewed: renewed };
+    return { cast: cast, planned: metaList.length };
+  }
+
+  async function maybeMaintainLongSelfSupportBuffsOutOfCombat(liveState) {
+    const res = await runPermanentSelfLongBuffRefreshPass(liveState, { allowEnemiesOnTile: false });
+    return { renewed: res.cast || 0, skipped: res.skipped, reason: res.reason };
+  }
+
+  async function maybeApplyPermanentSelfLongBuffsBeforeFindEnemy(liveState) {
+    return runPermanentSelfLongBuffRefreshPass(liveState, { allowEnemiesOnTile: true });
   }
 
   function listScannedSupportBuffClassifications() {
@@ -2339,7 +2439,7 @@
     const slots = Runtime.skills && Array.isArray(Runtime.skills.slots) ? Runtime.skills.slots : [];
     const longMin = Number.isFinite(Config.supportBuffs && Config.supportBuffs.longDurationMinSec)
       ? Config.supportBuffs.longDurationMinSec
-      : 120;
+      : 60;
     const shortMax = Number.isFinite(Config.supportBuffs && Config.supportBuffs.shortPrebuffMaxSec)
       ? Config.supportBuffs.shortPrebuffMaxSec
       : 120;
@@ -2350,7 +2450,7 @@
       }
       const desc = getSupportBuffDescriptionForRow(row, classKey);
       const d = desc.toLowerCase();
-      const dur = guessBuffDurationSecForSupportRow(row, classKey);
+      const dur = resolveSupportBuffDurationSecPreferDb(row, classKey);
       let durationKind = "unknown";
       if (Number.isFinite(dur)) {
         if (dur >= longMin) {
@@ -2428,6 +2528,10 @@
       } else if (hitsAtt) {
         role = "attacking";
       }
+      const supportDb =
+        typeof lookupSupportSkillClassificationFromGeneratedDb === "function" && classKey
+          ? lookupSupportSkillClassificationFromGeneratedDb(classKey, row.name)
+          : null;
       out.push({
         slot: typeof row.slot === "number" ? row.slot : i,
         name: row.name,
@@ -2436,7 +2540,8 @@
         scope: scope,
         role: role,
         isAttack: !!row.isAttack,
-        description: desc
+        description: desc,
+        supportDb: supportDb || null
       });
     }
     return out;
@@ -4105,8 +4210,11 @@
 
     let current = startState;
     if (typeof startState.combat.enemyCount === "number" && startState.combat.enemyCount > 0) {
+      setBotStatus("preparing", "permanent self-buffs (before prebuff / find-enemy)");
+      await maybeApplyPermanentSelfLongBuffsBeforeFindEnemy(startState);
+      current = readBasicState();
       setBotStatus("preparing", "new-tile prebuffs (before find-enemy)");
-      await maybeApplySupportPrebuffsOnNewTile(startState);
+      await maybeApplySupportPrebuffsOnNewTile(current);
       current = readBasicState();
     }
     let findAttempts = 0;

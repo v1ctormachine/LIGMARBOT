@@ -212,6 +212,30 @@ if (Test-Path $skillDbFile) {
     [System.IO.File]::WriteAllText($skillMasterModuleFile, $skillMasterStub + "`n", $utf8NoBom)
 }
 
+# --- Generate support-skill classification (same skill DB JSON; Node tool) ---
+$supportClassifyScript = Join-Path $here "tools/generate-support-classification.mjs"
+$supportClassifyOut = Join-Path $modulesDir "88-support-classification.generated.js"
+$supportClassifyStub = @"
+  // AUTO-GENERATED stub - run Node on tools/generate-support-classification.mjs when bot/data/ligmar_hero_skills_db.json is present.
+  const SupportSkillClassificationByClass = {};
+  function lookupSupportSkillClassificationFromGeneratedDb(classKey, rawOrBaseName) { void classKey; void rawOrBaseName; return null; }
+  function listSupportSkillClassificationFromMasterDb(optClassKey) { void optClassKey; return []; }
+"@
+if ((Test-Path $skillDbFile) -and (Test-Path $supportClassifyScript)) {
+    try {
+        $nodeExe = (Get-Command node -ErrorAction Stop).Source
+        & $nodeExe $supportClassifyScript $skillDbFile $supportClassifyOut
+        if ($LASTEXITCODE -ne 0) {
+            throw "generate-support-classification.mjs exit $LASTEXITCODE"
+        }
+    } catch {
+        Write-Warning "Support classification generator failed or Node missing: $_ - writing stub 88-support-classification.generated.js"
+        [System.IO.File]::WriteAllText($supportClassifyOut, $supportClassifyStub + "`n", $utf8NoBom)
+    }
+} else {
+    [System.IO.File]::WriteAllText($supportClassifyOut, $supportClassifyStub + "`n", $utf8NoBom)
+}
+
 # --- Update loader.user.js @version line ------------------------------------
 if (Test-Path $loaderFile) {
     $loaderContent = [System.IO.File]::ReadAllText($loaderFile, $utf8NoBom)

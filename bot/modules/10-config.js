@@ -145,11 +145,15 @@
     // AI CHANGED: Support-buff teaching — duration/scope/role classification, OOC long self-buffs, prebuff, safety interrupt (Windy Dome wired first).
     supportBuffs: {
       enabled: true,
-      longDurationMinSec: 120,
+      // AI CHANGED: Permanent self-buffs = parsed/DB duration ≥ this (seconds); default 60s (1 minute) per player spec.
+      longDurationMinSec: 60,
       shortPrebuffMaxSec: 120,
       permanentSelf: {
         enabled: true,
-        renewWhenRemainingSec: 90
+        // AI CHANGED: Re-cast tracked long self-buffs when ≤ this many seconds of assumed duration remain (OOC + pre-combat pass).
+        renewWhenRemainingSec: 20,
+        // AI CHANGED: Cap casts per refresh pass so pre-combat prep cannot stall the secure loop indefinitely.
+        maxCastPerPass: 6
       },
       prebuff: {
         enabled: true,

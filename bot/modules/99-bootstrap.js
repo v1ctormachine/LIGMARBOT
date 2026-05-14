@@ -235,6 +235,15 @@
       normalizeSkillName: normalizeSkillName,
       // AI CHANGED: Master skill DB (tree export) lookup — keyed by class + normalized name; Requirements are not stored.
       getSkillMasterEntry: typeof getSkillMasterEntry === "function" ? getSkillMasterEntry : null,
+      // AI CHANGED: Static support-skill taxonomy from ligmar_hero_skills_db (build-generated 88 module).
+      lookupSupportSkillClassificationFromGeneratedDb:
+        typeof lookupSupportSkillClassificationFromGeneratedDb === "function"
+          ? lookupSupportSkillClassificationFromGeneratedDb
+          : null,
+      listSupportSkillClassificationFromMasterDb:
+        typeof listSupportSkillClassificationFromMasterDb === "function"
+          ? listSupportSkillClassificationFromMasterDb
+          : null,
       getSkillMasterConception: typeof getSkillMasterConception === "function" ? getSkillMasterConception : null,
       // AI CHANGED: Phase C1 -- hero stats + passive regen (console-first).
       readHeroCombatStats: readHeroCombatStats,

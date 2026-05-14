@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.211",
-    "description":  "AUTO mode: Fast/Safe after Easy re-enables ranked skills (panel + prefs load)",
-    "builtAt":  "2026-05-14T09:17:35.5847740+03:00",
+    "version":  "0.3.212",
+    "description":  "Support DB taxonomy: permanent self-buffs OOC + pre-combat; exclude from prebuff",
+    "builtAt":  "2026-05-14T09:52:41.3338273+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.212",
+                        "description":  "Support DB taxonomy: permanent self-buffs OOC + pre-combat; exclude from prebuff",
+                        "date":  "2026-05-14T09:52:41.3338273+03:00"
+                    },
                     {
                         "version":  "0.3.211",
                         "description":  "AUTO mode: Fast/Safe after Easy re-enables ranked skills (panel + prefs load)",
@@ -247,11 +252,6 @@
                         "version":  "0.3.163",
                         "description":  "chat: uniform 1/6 pick — smart pair vs five slot bank lines",
                         "date":  "2026-05-13T11:25:09.1207991+03:00"
-                    },
-                    {
-                        "version":  "0.3.162",
-                        "description":  "TEST: panel default profile, one button full auto (soak/calibration/resume); release via console",
-                        "date":  "2026-05-13T11:21:08.9952380+03:00"
                     }
                 ]
 }
