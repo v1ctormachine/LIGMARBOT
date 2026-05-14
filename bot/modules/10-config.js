@@ -500,7 +500,16 @@
       recenterEveryNCycles: 4,
       // AI CHANGED: Reliability hardening — if repeated combat no-progress failures happen, pause before next cycle.
       noProgressCooldownThreshold: 2,
-      noProgressCooldownMs: 5000
+      noProgressCooldownMs: 5000,
+      // AI CHANGED: AUTO — each OOC cycle reloads skill cache; DOM scanSkills when bar empty / cache invalid so planner sees skills without manual TEST.
+      ensureSkills: {
+        enabled: true,
+        loadCacheEveryCycle: true,
+        loadHeroStatsCacheEveryCycle: true,
+        scanWhenLikelyBlind: true,
+        scanWhenRankedButNoParsedSkills: true,
+        readHeroCombatStatsWhenMissing: true
+      }
     },
     // AI CHANGED: Added movement tuning for map exploration when idling on empty tiles.
     movement: {

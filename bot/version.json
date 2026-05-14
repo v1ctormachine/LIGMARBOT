@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.219",
-    "description":  "Support buffs: assumed duration tracking; recast when remaining at or below threshold",
-    "builtAt":  "2026-05-14T11:43:02.0989783+03:00",
+    "version":  "0.3.220",
+    "description":  "AUTO: OOC skill scan + cache load; scanSkills allowDuringAutoFarm",
+    "builtAt":  "2026-05-14T13:16:06.1488446+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.220",
+                        "description":  "AUTO: OOC skill scan + cache load; scanSkills allowDuringAutoFarm",
+                        "date":  "2026-05-14T13:16:06.1488446+03:00"
+                    },
                     {
                         "version":  "0.3.219",
                         "description":  "Support buffs: assumed duration tracking; recast when remaining at or below threshold",
@@ -247,11 +252,6 @@
                         "version":  "0.3.171",
                         "description":  "Combat: close map after verified find-enemy (configurable)",
                         "date":  "2026-05-13T12:49:38.7742491+03:00"
-                    },
-                    {
-                        "version":  "0.3.170",
-                        "description":  "TEST: calibration observes miss floats + missDiagnostics export",
-                        "date":  "2026-05-13T12:25:59.3001156+03:00"
                     }
                 ]
 }

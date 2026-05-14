@@ -321,7 +321,7 @@
     ) {
       Logger.warn(
         "BOOT",
-        "useRankedAttackSkillsInCombat is true but skill slots are empty — openers stay basic until await ligmarBot.scanSkills() (auto-farm OFF). Persist planner tweaks: ligmarBot.savePlannerUiPrefs()"
+        "useRankedAttackSkillsInCombat is true but skill slots are empty — openers stay basic until the bar is scanned (AUTO runs OOC ensureSkills when farmLoop.ensureSkills is on, or await ligmarBot.scanSkills()). Persist planner tweaks: ligmarBot.savePlannerUiPrefs()"
       );
     }
 

@@ -4781,6 +4781,124 @@
     return { ok: true, running: true, message: "stop_requested" };
   }
 
+  // AI CHANGED: AUTO — reload skill cache / DOM-scan bar + hero stats when OOC so ranked planner sees real slots (scanSkills normally blocks while AUTO runs).
+  async function ensureSkillsAndHeroDataForAutoFarm(preState, meta) {
+    const cfg = Config.farmLoop && Config.farmLoop.ensureSkills;
+    if (!cfg || cfg.enabled === false) {
+      return { skipped: true, reason: "ensure_skills_disabled" };
+    }
+    if (!Runtime.autoFarm || !Runtime.autoFarm.running) {
+      return { skipped: true, reason: "not_auto" };
+    }
+    if (Runtime.autoFarm.stopRequested) {
+      return { skipped: true, reason: "stop_requested" };
+    }
+    const st =
+      preState && preState.combat && typeof preState.combat.enemyCount === "number"
+        ? preState
+        : readBasicState();
+    if (!(typeof st.combat.enemyCount === "number" && st.combat.enemyCount === 0)) {
+      return { skipped: true, reason: "not_ooc", enemyCount: st.combat.enemyCount };
+    }
+    if (st.session && (st.session.dead === true || st.session.poorConnection === true)) {
+      return { skipped: true, reason: "session_risk" };
+    }
+    let cacheLoaded = false;
+    if (cfg.loadCacheEveryCycle !== false && typeof loadSkillsFromCache === "function") {
+      cacheLoaded = !!loadSkillsFromCache();
+    }
+    if (cfg.loadHeroStatsCacheEveryCycle !== false && typeof loadHeroStatsFromCache === "function") {
+      loadHeroStatsFromCache();
+    }
+    const slots = Runtime.skills && Array.isArray(Runtime.skills.slots) ? Runtime.skills.slots : [];
+    let usableSkills = 0;
+    for (let si = 0; si < slots.length; si++) {
+      const r = slots[si];
+      if (r && r.kind === "skill" && typeof r.name === "string" && r.name.trim() && !r.parseFailed) {
+        usableSkills++;
+      }
+    }
+    const err = Runtime.skills ? Runtime.skills.lastError : null;
+    let needDomScan =
+      cfg.scanWhenLikelyBlind !== false &&
+      typeof scanSkills === "function" &&
+      (slots.length === 0 ||
+        usableSkills === 0 ||
+        err === "cache_bar_mismatch" ||
+        err === "cache_missing_fingerprint");
+    const modeEasy = Runtime.autoFarm.combatMode && String(Runtime.autoFarm.combatMode).toLowerCase() === "easy";
+    if (!needDomScan && !modeEasy && cfg.scanWhenRankedButNoParsedSkills !== false) {
+      const rankedOn = !!(Config.planner && Config.planner.useRankedAttackSkillsInCombat);
+      if (rankedOn && usableSkills === 0 && slots.length > 0) {
+        needDomScan = true;
+      }
+    }
+    let heroRes = null;
+    if (
+      !needDomScan &&
+      cfg.readHeroCombatStatsWhenMissing !== false &&
+      typeof readHeroCombatStats === "function" &&
+      (!Runtime.hero || !Runtime.hero.combatStats)
+    ) {
+      heroRes = await readHeroCombatStats();
+    }
+    if (!needDomScan) {
+      return {
+        skipped: false,
+        cacheLoaded: cacheLoaded,
+        scanned: false,
+        usableSkillRows: usableSkills,
+        lastError: err,
+        hero: heroRes,
+        meta: meta || null
+      };
+    }
+    setBotStatus("scanning", "AUTO: skill bar (OOC)");
+    const scannedSlots = await scanSkills({ allowDuringAutoFarm: true });
+    const scannedOk = Array.isArray(scannedSlots);
+    if (
+      scannedOk &&
+      cfg.readHeroCombatStatsWhenMissing !== false &&
+      typeof readHeroCombatStats === "function" &&
+      (!Runtime.hero || !Runtime.hero.combatStats) &&
+      !Runtime.autoFarm.stopRequested
+    ) {
+      const st2 = readBasicState();
+      if (
+        typeof st2.combat.enemyCount === "number" &&
+        st2.combat.enemyCount === 0 &&
+        !(st2.session && (st2.session.dead === true || st2.session.poorConnection === true))
+      ) {
+        heroRes = await readHeroCombatStats();
+      }
+    }
+    let usableAfter = usableSkills;
+    if (scannedOk) {
+      usableAfter = 0;
+      for (let sj = 0; sj < scannedSlots.length; sj++) {
+        const r2 = scannedSlots[sj];
+        if (r2 && r2.kind === "skill" && typeof r2.name === "string" && r2.name.trim() && !r2.parseFailed) {
+          usableAfter++;
+        }
+      }
+    }
+    Logger.log("AUTO", "ensureSkillsAndHeroDataForAutoFarm", {
+      scanned: scannedOk,
+      usableAfter: usableAfter,
+      lastError: Runtime.skills ? Runtime.skills.lastError : null,
+      meta: meta || null
+    });
+    return {
+      skipped: false,
+      cacheLoaded: cacheLoaded,
+      scanned: scannedOk,
+      usableSkillRowsAfter: usableAfter,
+      lastError: Runtime.skills ? Runtime.skills.lastError : null,
+      hero: heroRes,
+      meta: meta || null
+    };
+  }
+
   // AI CHANGED: Added controlled repeat runner with auto-stop on repeated failures.
   async function startAutoFarmLoop() {
     if (Runtime.autoFarm.running) {
@@ -4816,6 +4934,13 @@
       maxConsecutiveFailures: Config.farmLoop.maxConsecutiveFailures
     });
 
+    try {
+      const bootPeek = readBasicState();
+      await ensureSkillsAndHeroDataForAutoFarm(bootPeek, { phase: "loop_boot" });
+    } catch (bootEnsErr) {
+      Logger.warn("AUTO", "ensureSkillsAndHeroDataForAutoFarm (loop boot) threw", bootEnsErr);
+    }
+
     while (Runtime.autoFarm.running && !Runtime.autoFarm.stopRequested) {
       // AI CHANGED: Re-apply combat mode each cycle so mid-session panel changes take effect without restart.
       applyAutoFarmCombatMode();
@@ -4826,6 +4951,11 @@
       const preCycleState = readBasicState();
       // AI CHANGED: slice 21 — fresh session flags each cycle so zoom flag tracks UI, not stale assumptions.
       resetZoomAssumptionIfSessionRisk(preCycleState.session);
+      try {
+        await ensureSkillsAndHeroDataForAutoFarm(preCycleState, { phase: "cycle_start" });
+      } catch (cycleEnsErr) {
+        Logger.warn("AUTO", "ensureSkillsAndHeroDataForAutoFarm (cycle) threw", cycleEnsErr);
+      }
       const preCycleRecovery = await maybeRecoverUnhealthySession(preCycleState, {
         reason: "cycle_start"
       });

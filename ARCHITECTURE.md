@@ -350,9 +350,11 @@ The script **only reads the red target HP bar** every poll tick. It **does not**
 
    Console: skip calibration or cancel-smoke with **`{ runQuickCalibration: false }`** / **`{ fireChargeCancelIfHint: false }`**.
 
+6. **AUTO skill + hero visibility** — **`Config.farmLoop.ensureSkills`** (default **on**): at **AUTO loop boot** and each **cycle start** after **`waitUntilNotMoving`**, when **`enemyCount===0`** and session is healthy, **`ensureSkillsAndHeroDataForAutoFarm`** runs **`loadSkillsFromCache()`** (and **`loadHeroStatsFromCache()`** when enabled). If the bar still looks blind (no parsed skill rows, empty slots, or cache fingerprint mismatch errors), it calls **`scanSkills({ allowDuringAutoFarm: true })`** — the same DOM long-press scan as manual **`ligmarBot.scanSkills()`**, allowed only **OOC** so we do not open popups mid-pull. When **`Runtime.hero.combatStats`** is still missing, it may run **`readHeroCombatStats()`** once (profile overlay) so planner paper stats exist. Turn off: **`Config.farmLoop.ensureSkills.enabled = false`**.
+
 **Clear / reset (when needed)**
 
-- Skills: `ligmarBot.clearSkillsCache()` (after **class / hero / bar** change, or if logs show **wrong skill names** for your current character, then `await ligmarBot.scanSkills()` with auto-farm OFF). After an update, **one rescan** refreshes the fingerprint so the new per-slot hints match live DOM.
+- Skills: `ligmarBot.clearSkillsCache()` (after **class / hero / bar** change, or if logs show **wrong skill names** for your current character, then `await ligmarBot.scanSkills()` with auto-farm OFF — or rely on **AUTO OOC** **`ensureSkills`** to rescan when **`Config.farmLoop.ensureSkills`** is on). After an update, **one rescan** refreshes the fingerprint so the new per-slot hints match live DOM.
 - Hero stats: `ligmarBot.clearHeroStatsCache()`
 - Enemy DB: `ligmarBot.clearEnemyDbCache()`
 - Damage summary file: `ligmarBot.clearDamageObserveStorage()`

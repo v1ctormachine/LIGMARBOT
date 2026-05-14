@@ -942,14 +942,39 @@
 
   // AI CHANGED: Top-level scan. Iterates every slot in the action bar, classifies, opens popup
   // (skipping empty slots), parses, closes popup, accumulates records. Returns the array of
-  // parsed slots. Refuses to run while auto-farm is active so we never accidentally cast a skill
-  // mid-fight by simulating clicks. Caller can wait for the returned promise; the bot status
-  // bar surfaces progress via setBotStatus.
-  async function scanSkills() {
-    if (Runtime.autoFarm.running) {
+  // parsed slots. Refuses to run while auto-farm is active unless opts.allowDuringAutoFarm and
+  // readBasicState() shows enemyCount===0 (OOC) — see ensureSkillsAndHeroDataForAutoFarm in 85-combat.js.
+  async function scanSkills(opts) {
+    const o = opts && typeof opts === "object" ? opts : {};
+    let allowDuringAuto = !!o.allowDuringAutoFarm;
+    if (allowDuringAuto && (!Runtime.autoFarm || !Runtime.autoFarm.running)) {
+      allowDuringAuto = false;
+    }
+    if (Runtime.autoFarm.running && !allowDuringAuto) {
       Logger.warn("SKILLS", "Cannot scan: auto-farm is running. Press OFF first, then retry.");
       Runtime.skills.lastError = "auto_farm_running";
       return null;
+    }
+    if (allowDuringAuto) {
+      if (Runtime.autoFarm.stopRequested) {
+        Logger.warn("SKILLS", "AUTO skill scan refused: stop requested");
+        Runtime.skills.lastError = "stop_requested";
+        return null;
+      }
+      const live = readBasicState();
+      if (!(typeof live.combat.enemyCount === "number" && live.combat.enemyCount === 0)) {
+        Logger.warn("SKILLS", "AUTO skill scan refused: not clear of enemies", {
+          enemyCount: live.combat.enemyCount
+        });
+        Runtime.skills.lastError = "auto_scan_refused_enemies";
+        return null;
+      }
+      if (live.session && (live.session.dead === true || live.session.poorConnection === true)) {
+        Logger.warn("SKILLS", "AUTO skill scan refused: session risk (dead/poor connection)");
+        Runtime.skills.lastError = "auto_scan_refused_session";
+        return null;
+      }
+      Logger.log("SKILLS", "AUTO out-of-combat skill scan (trusted caller)");
     }
     const bar = document.querySelector(Config.selectors.actionBar);
     if (!bar) {
@@ -968,6 +993,12 @@
 
     const slots = [];
     for (let i = 0; i < buttons.length; i += 1) {
+      if (allowDuringAuto && Runtime.autoFarm && Runtime.autoFarm.stopRequested) {
+        await closeActionPopup();
+        Logger.warn("SKILLS", "AUTO skill scan aborted mid-loop (stop requested)");
+        Runtime.skills.lastError = "stop_requested";
+        return null;
+      }
       const button = buttons[i];
       const classification = classifyActionButton(button);
       // Read the counter (potion charges, etc.) BEFORE opening the popup -- the popup may move
