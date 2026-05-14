@@ -305,6 +305,10 @@
     try {
       const raw = window.localStorage.getItem("ligmarbot.autoFarmUi.v1");
       if (!raw) {
+        // AI CHANGED: No stored prefs — still sync planner from default Runtime.autoFarm.combatMode (e.g. fast).
+        if (typeof applyAutoFarmCombatMode === "function") {
+          applyAutoFarmCombatMode();
+        }
         return { ok: true, fromStorage: false, autoFarm: autoFarmUiPrefsSnapshot() };
       }
       const p = JSON.parse(raw);
@@ -318,8 +322,16 @@
       if (typeof p.autoLocalChatSpammerEnabled === "boolean" && Config.chat) {
         Config.chat.autoLocalPromocodeSpammerEnabled = p.autoLocalChatSpammerEnabled;
       }
+      // AI CHANGED: Persisted Fast/Safe/Easy must sync planner immediately (not only while AUTO loop is running).
+      if (typeof applyAutoFarmCombatMode === "function") {
+        applyAutoFarmCombatMode();
+      }
       return { ok: true, fromStorage: true, autoFarm: autoFarmUiPrefsSnapshot() };
     } catch (err) {
+      // AI CHANGED: On corrupt prefs JSON, still sync planner from current Runtime combat mode.
+      if (typeof applyAutoFarmCombatMode === "function") {
+        applyAutoFarmCombatMode();
+      }
       return {
         ok: false,
         fromStorage: false,
@@ -3839,7 +3851,7 @@
     buttonsWrap.appendChild(stopButton);
     panel.appendChild(buttonsWrap);
 
-    // AI CHANGED: AUTO combat mode — Fast / Safe / Easy; persisted in ligmarbot.autoFarmUi.v1; planner applied when AUTO runs.
+    // AI CHANGED: AUTO combat mode — Fast / Safe / Easy; persisted in ligmarbot.autoFarmUi.v1; `applyAutoFarmCombatMode` on each click (AUTO on or off).
     const autoModeLabel = document.createElement("div");
     autoModeLabel.textContent = "AUTO combat mode";
     autoModeLabel.style.fontSize = "10px";
@@ -3866,7 +3878,7 @@
         Runtime.autoFarm.combatMode = modeKey;
         saveAutoFarmUiPrefs();
         refreshAutoFarmModeButtonsVisual();
-        if (Runtime.autoFarm.running && typeof applyAutoFarmCombatMode === "function") {
+        if (typeof applyAutoFarmCombatMode === "function") {
           applyAutoFarmCombatMode();
         }
         Logger.log("UI", "AUTO combat mode selected", { mode: modeKey, running: !!Runtime.autoFarm.running });
