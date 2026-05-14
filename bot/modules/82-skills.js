@@ -75,29 +75,44 @@
         target: "self"
       })
     },
-    // Pattern E: Heal HP -- "Restores <N> HP" (instant) or "Restores <N> HP over <T> s" (HoT).
+    // Pattern E: Heal HP — "Restores <N> HP" (instant), "Restores <N> HP over <T> s" (HoT), optional upgrade line
+    // "Restores 405 (+52) health over 10 seconds" (base + bonus in parentheses; textContent drops <b>/<span>).
     {
       key: "heal_hp",
-      regex: /restores?\s+(\d+(?:\.\d+)?)\s+(?:HP|health)(?:\s+over\s+(\d+(?:\.\d+)?)\s*s)?/i,
-      build: (m) => ({
-        type: "heal",
-        resource: "hp",
-        value: parseFloat(m[1]),
-        durationSec: m[2] ? parseFloat(m[2]) : 0,
-        target: "self"
-      })
+      regex:
+        /restores?\s+(\d+(?:\.\d+)?)\s*(?:\(\s*\+?\s*(\d+(?:\.\d+)?)\s*\))?\s+(?:HP|health)(?:\s+over\s+(\d+(?:\.\d+)?)\s*(?:s(?:ec(?:ond)?s?)?)?)?/i,
+      build: (m) => {
+        const base = parseFloat(m[1]);
+        const bonus = m[2] ? parseFloat(m[2]) : 0;
+        const value = base + (Number.isFinite(bonus) && bonus > 0 ? bonus : 0);
+        const durationSec = m[3] ? parseFloat(m[3]) : 0;
+        return {
+          type: "heal",
+          resource: "hp",
+          value: value,
+          durationSec: durationSec,
+          target: "self"
+        };
+      }
     },
-    // Pattern F: Restore MP -- same shape as heal HP.
+    // Pattern F: Restore MP — same shapes as heal HP (including "120 (+30) mana over 8 seconds").
     {
       key: "restore_mp",
-      regex: /restores?\s+(\d+(?:\.\d+)?)\s+(?:MP|mana)(?:\s+over\s+(\d+(?:\.\d+)?)\s*s)?/i,
-      build: (m) => ({
-        type: "heal",
-        resource: "mp",
-        value: parseFloat(m[1]),
-        durationSec: m[2] ? parseFloat(m[2]) : 0,
-        target: "self"
-      })
+      regex:
+        /restores?\s+(\d+(?:\.\d+)?)\s*(?:\(\s*\+?\s*(\d+(?:\.\d+)?)\s*\))?\s+(?:MP|mana)(?:\s+over\s+(\d+(?:\.\d+)?)\s*(?:s(?:ec(?:ond)?s?)?)?)?/i,
+      build: (m) => {
+        const base = parseFloat(m[1]);
+        const bonus = m[2] ? parseFloat(m[2]) : 0;
+        const value = base + (Number.isFinite(bonus) && bonus > 0 ? bonus : 0);
+        const durationSec = m[3] ? parseFloat(m[3]) : 0;
+        return {
+          type: "heal",
+          resource: "mp",
+          value: value,
+          durationSec: durationSec,
+          target: "self"
+        };
+      }
     },
     // AI CHANGED: Step into Darkness -- ongoing MP drain while effect is active (not upfront mana cost).
     {
@@ -917,7 +932,10 @@
       return "";
     }
     if (effect.type === "heal" && effect.resource) {
-      return "heal_" + effect.resource;
+      const v = Number.isFinite(effect.value) ? effect.value : "";
+      const d = Number.isFinite(effect.durationSec) && effect.durationSec > 0 ? "@" + effect.durationSec + "s" : "";
+      // AI CHANGED: Show parsed total (includes +bonus from tooltip) so scan table matches sustain math.
+      return "heal_" + effect.resource + (v !== "" ? ":" + v + d : "");
     }
     return effect.type;
   }

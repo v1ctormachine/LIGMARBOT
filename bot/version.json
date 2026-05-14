@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.215",
-    "description":  "planner prefs reconcile ranked after load + TEST; idle MP topoff during OOC heal gate",
-    "builtAt":  "2026-05-14T10:50:09.6690943+03:00",
+    "version":  "0.3.216",
+    "description":  "parse potion HoT: base (+bonus) heal/MP; ligmarBot.parseSkillEffects",
+    "builtAt":  "2026-05-14T11:07:11.0562798+03:00",
     "history":  [
+                    {
+                        "version":  "0.3.216",
+                        "description":  "parse potion HoT: base (+bonus) heal/MP; ligmarBot.parseSkillEffects",
+                        "date":  "2026-05-14T11:07:11.0562798+03:00"
+                    },
                     {
                         "version":  "0.3.215",
                         "description":  "planner prefs reconcile ranked after load + TEST; idle MP topoff during OOC heal gate",
@@ -247,11 +252,6 @@
                         "version":  "0.3.167",
                         "description":  "TEST export: JSON clone before prune — fix false circular in planner snapshot",
                         "date":  "2026-05-13T12:07:23.3827720+03:00"
-                    },
-                    {
-                        "version":  "0.3.166",
-                        "description":  "TEST export: compact JSON — prune huge planner arrays, keep head/tail samples",
-                        "date":  "2026-05-13T12:00:40.6704832+03:00"
                     }
                 ]
 }

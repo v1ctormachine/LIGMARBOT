@@ -218,6 +218,8 @@
       // AI CHANGED: Phase C0 -- skill scanner public API. scanSkills() is the only "active" call;
       // the rest are getters / cache helpers for inspection and recovery.
       scanSkills: scanSkills,
+      // AI CHANGED: Console / TEST — parse merged popup description text (e.g. potion HoT with (+bonus) heal).
+      parseSkillEffects: typeof parseSkillEffects === "function" ? parseSkillEffects : null,
       get skills() { return Runtime.skills.slots; },
       getSkillsMeta: function () {
         return {

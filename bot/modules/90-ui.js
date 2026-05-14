@@ -621,6 +621,10 @@
       chat_spammer_auto: "Chat spammer auto",
       support_buffs_surface: "Support buffs surface",
       support_buff_post_cast_cooldown_wait_config: "Support buff post-cast CD wait",
+      // AI CHANGED: Potion tooltip regression — base (+bonus) total heal/MP for sustain.
+      potion_parse_heal_base_plus_bonus: "Potion heal parse (+bonus)",
+      potion_parse_mp_base_plus_bonus: "Potion MP parse (+bonus)",
+      potion_parse_heal_legacy_no_bonus: "Potion heal parse (legacy)",
       combat_sustain_policy: "Combat sustain",
       auto_farm_resume_policy: "Farm resume policy",
       auto_farm_reliability: "Combat reliability",
@@ -1715,6 +1719,53 @@
         );
       } catch (err) {
         addCheck("support_buff_post_cast_cooldown_wait_config", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Potion tooltips can show base (+upgrade) as plain text after DOM strip — parseSkillEffects sums for combat sustain / potion choice.
+      try {
+        if (typeof parseSkillEffects !== "function") {
+          addCheck("potion_parse_heal_base_plus_bonus", false, { reason: "parseSkillEffects_missing" }, false);
+          addCheck("potion_parse_mp_base_plus_bonus", false, { reason: "parseSkillEffects_missing" }, false);
+          addCheck("potion_parse_heal_legacy_no_bonus", false, { reason: "parseSkillEffects_missing" }, false);
+        } else {
+          const hpPotionDesc =
+            "A magical potion made from Health Powder that restores 405 (+52) health over 10 seconds.";
+          const hpFx = parseSkillEffects(hpPotionDesc);
+          const healHp = hpFx.find(function (e) {
+            return e && e.type === "heal" && e.resource === "hp";
+          });
+          addCheck(
+            "potion_parse_heal_base_plus_bonus",
+            !!(healHp && Math.abs(healHp.value - 457) < 0.01 && healHp.durationSec >= 9.5 && healHp.durationSec <= 10.5),
+            { value: healHp && healHp.value, durationSec: healHp && healHp.durationSec },
+            false
+          );
+          const mpDesc = "Restores 120 (+30) mana over 8 seconds.";
+          const mpFx = parseSkillEffects(mpDesc);
+          const healMp = mpFx.find(function (e) {
+            return e && e.type === "heal" && e.resource === "mp";
+          });
+          addCheck(
+            "potion_parse_mp_base_plus_bonus",
+            !!(healMp && Math.abs(healMp.value - 150) < 0.01 && healMp.durationSec >= 7.5 && healMp.durationSec <= 8.5),
+            { value: healMp && healMp.value, durationSec: healMp && healMp.durationSec },
+            false
+          );
+          const legacyHp = "Restores 200 HP over 12 s";
+          const legFx = parseSkillEffects(legacyHp);
+          const legHeal = legFx.find(function (e) {
+            return e && e.type === "heal" && e.resource === "hp";
+          });
+          addCheck(
+            "potion_parse_heal_legacy_no_bonus",
+            !!(legHeal && legHeal.value === 200 && legHeal.durationSec === 12),
+            { value: legHeal && legHeal.value, durationSec: legHeal && legHeal.durationSec },
+            false
+          );
+        }
+      } catch (err) {
+        Logger.warn("TEST", "potion parse (+bonus) checks threw", err);
+        addCheck("potion_parse_heal_base_plus_bonus", false, { error: String(err && err.message ? err.message : err) }, false);
       }
 
       try {
