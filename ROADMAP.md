@@ -1,6 +1,6 @@
 # Ligmarbot roadmap
 
-Baseline **v0.3.64+**. **Going forward: bigger releases** — see **§ Release cadence** below; no more one-line-per-patch unless it’s an emergency hotfix. **TEST** stays the full in-game validator via **`ligmarBot.runUiTestBundle()`** (console) when a version needs checks (see **`ARCHITECTURE.md`** versioning + **`.cursor/rules/ligmarbot-ship-version.mdc`**).
+Baseline **v1.0.0-alpha+** (game-stable DOM epoch; legacy **v0.3.x** in history only). **Going forward: bigger releases** — see **§ Release cadence** below; no more one-line-per-patch unless it’s an emergency hotfix. **TEST** stays the full in-game validator via **`ligmarBot.runUiTestBundle()`** (console) when a version needs checks (see **`ARCHITECTURE.md`** versioning + **`.cursor/rules/ligmarbot-ship-version.mdc`**).
 
 ## Release cadence (bigger steps)
 
@@ -17,6 +17,7 @@ Emergency **hotfix** (crash / wrong click): ship immediately, even if tiny.
 
 ## Done recently
 
+- **Versioning: 1.0.0-alpha baseline (ship)** — Bot semver now counts from **`1.0.0-alpha`** (game-stable epoch; **`0.3.224`** last in the old line). **`build.ps1`** bumps patch and preserves prerelease (`1.0.0-alpha` → `1.0.1-alpha`); **`-SetVersion`** for milestones. **`ARCHITECTURE.md`**, **`ROADMAP.md`**, **`.cursor/rules/ligmarbot-ship-version.mdc`**, **`bot/build.ps1`**, **`bot/version.json`**.
 - **Action bar: app-skill-button unified slots (ship)** — Game stable bar splits skills into **`app-skill-button`** (`img.skill-button-image`, `span.skill-counter`); bot now scans/clicks/cooldown-checks **`Config.selectors.actionBarSlot`** (`app-action-button, app-skill-button`) in DOM order. Skill cache fingerprint **v4** invalidates stale 8-slot caches. TEST **`action_bar_unified_slots`**. **`10-config.js`**, **`60-actions.js`**, **`82-skills.js`**, **`90-ui.js`**, **`99-bootstrap.js`**, **`ARCHITECTURE.md`**, **`ROADMAP.md`**.
 - **Panel: remove TEST / STOP+COPY + trim footer (ship)** — Removed in-page **TEST**, **Test result** line, **STOP + COPY LOGS**, and issue-clip hint; use **`ligmarBot.runUiTestBundle()`** / **`ligmarBot.copyIssueReportLogs()`** from the console. Status footer no longer shows Session / Health / Recovery / Last-action watchdog lines. **`.cursor/rules/ligmarbot-ship-version.mdc`**, **`ARCHITECTURE.md`**, **`ROADMAP.md`**, **`20-runtime.js`**, **`90-ui.js`**, **`99-bootstrap.js`**.
 - **Explore: allow goblin tiles (ship)** — **`scoreScannedTile`**: removed hard-avoid for **`goblin`** map markers (**champion/boss** still **-500000**). Goblin-only neighbors use base **350000** (between contract-only and mob-only). **`ringHasUsefulLoot`** / yellow-die **`ringCandidates`** skip **boss** only so goblin counts as “useful” 1-ring loot. **`80-map.js`**, **`ARCHITECTURE.md`**, **`ROADMAP.md`**.

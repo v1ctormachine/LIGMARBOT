@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "0.3.224",
-    "description":  "action bar: scan and click app-skill-button slots in bar order",
-    "builtAt":  "2026-05-15T11:30:39.7283605+03:00",
+    "version":  "1.0.0-alpha",
+    "description":  "game-stable baseline: bot semver from 1.0.0-alpha (replaces 0.3.x line)",
+    "builtAt":  "2026-05-15T14:52:04.3483513+03:00",
     "history":  [
+                    {
+                        "version":  "1.0.0-alpha",
+                        "description":  "game-stable baseline: bot semver from 1.0.0-alpha (replaces 0.3.x line)",
+                        "date":  "2026-05-15T14:52:04.3483513+03:00"
+                    },
                     {
                         "version":  "0.3.224",
                         "description":  "action bar: scan and click app-skill-button slots in bar order",
@@ -247,11 +252,6 @@
                         "version":  "0.3.176",
                         "description":  "Soak: STOP+COPY last 30 log lines, Logger ring buffer, TEST Logger ring check",
                         "date":  "2026-05-13T13:49:01.7652840+03:00"
-                    },
-                    {
-                        "version":  "0.3.175",
-                        "description":  "Field validation: gameSnapshotEnd.fieldValidation + getFieldValidationSnapshot + TEST check",
-                        "date":  "2026-05-13T13:39:27.2610495+03:00"
                     }
                 ]
 }

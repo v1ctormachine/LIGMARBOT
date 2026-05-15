@@ -104,18 +104,19 @@ The bot is delivered to Tampermonkey via a thin loader userscript that points at
 
 **Pieces:**
 
-- **`bot/version.json`** — single source of truth: `version` (semver `MAJOR.MINOR.PATCH`), latest `description`, `builtAt` ISO timestamp, and a 50-entry `history` array of past bumps.
+- **`bot/version.json`** — single source of truth: `version` (semver `MAJOR.MINOR.PATCH` or `MAJOR.MINOR.PATCH-prerelease`, e.g. **`1.0.0-alpha`** — the current line counts from the game-stable baseline; legacy **`0.3.x`** entries remain in `history` only), latest `description`, `builtAt` ISO timestamp, and a 50-entry `history` array of past bumps.
 - **`bot/loader.user.js`** — installed in Tampermonkey **once**. Contains `@require file:///C:/Users/Victor/.cursor/projects/ligmarbot/bot/bot.user.js` and a `@version` line that `build.ps1` rewrites on every bump. Tampermonkey re-fetches `@require`d files when the loader's `@version` changes; bumping every build guarantees the new bundle is picked up on the next page reload.
 - **`bot/modules/05-version.js`** — auto-generated module with `const BotVersion = { version, description, builtAt };`. Concatenated into the bundle so the runtime has authoritative version info; the GUI panel renders it in its header and `Logger.log("BOOT", ...)` includes it on startup.
 
 **Build commands:**
 
 ```powershell
-.\bot\build.ps1 -Description "short summary of what changed"   # bump patch, regenerate, rebuild
+.\bot\build.ps1 -Description "short summary of what changed"   # bump patch, regenerate, rebuild (e.g. 1.0.0-alpha -> 1.0.1-alpha)
+.\bot\build.ps1 -SetVersion "1.0.0-alpha" -Description "…"     # set exact version (milestone / prerelease label)
 .\bot\build.ps1 -NoBump                                        # rebuild only (no version change)
 ```
 
-`-Description` is required for a normal build so every shipped change carries a human-readable note. The patch number auto-increments (e.g. `0.2.1 -> 0.2.2`); manual major/minor edits to `version.json` are allowed for milestone resets.
+`-Description` is required for a normal build so every shipped change carries a human-readable note. The **patch** auto-increments and **keeps the same prerelease label** when present (e.g. `1.0.0-alpha` → `1.0.1-alpha`). Edit **`version.json`** or use **`-SetVersion`** for major/minor or to drop/add a prerelease suffix.
 
 **Ship rule (bot code changes):** Any patch that changes **`bot/modules/*.js`** (or anything that should change what runs in the game) **must** finish with **`.\bot\build.ps1 -Description "…"`** — **not** `-NoBump` — so **`version.json`**, **`bot/modules/05-version.js`**, **`bot/loader.user.js`** (`@version`), and **`bot/bot.user.js`** stay in sync. Then **commit and push** those artifacts. The user should only need to **refresh the game tab** (Tampermonkey reloads the `@require` bundle when the loader’s `@version` bumps). Reserve **`-NoBump`** for rare cases where the bundle did not change (e.g. docs-only edits under the repo root with no module touch).
 
