@@ -450,6 +450,54 @@
     };
   }
 
+  // AI CHANGED: Unified battle bar slot list (attack/potions/empty + app-skill-button skills).
+  function getActionBarSlotElements(bar) {
+    if (!bar) {
+      return [];
+    }
+    const sel =
+      Config.selectors && Config.selectors.actionBarSlot
+        ? Config.selectors.actionBarSlot
+        : "app-action-button, app-skill-button";
+    return Array.from(bar.querySelectorAll(sel));
+  }
+
+  function getBarSlotIconUrl(element) {
+    if (!element) {
+      return "";
+    }
+    const tag = (element.tagName || element.localName || "").toLowerCase();
+    if (tag === "app-skill-button") {
+      const img = element.querySelector("img.skill-button-image");
+      return img ? String(img.getAttribute("src") || "") : "";
+    }
+    const imgNode = element.querySelector(".action-image");
+    const styleAttr = imgNode ? (imgNode.getAttribute("style") || "") : "";
+    const iconMatch = styleAttr.match(/url\("?([^")]+)"?\)/i);
+    return iconMatch ? iconMatch[1] : "";
+  }
+
+  function classifySkillButton(button) {
+    const iconUrl = getBarSlotIconUrl(button);
+    const counterNode = button.querySelector(".skill-counter[data-color='mana-cost'], .skill-counter");
+    const manaText = counterNode ? (counterNode.textContent || "").trim() : "";
+    const manaNumeric = Number.parseInt(manaText, 10);
+    return {
+      kind: "skill",
+      flavor: "attack",
+      iconUrl: iconUrl,
+      manaCostHint: Number.isFinite(manaNumeric) ? manaNumeric : null
+    };
+  }
+
+  function classifyBarSlot(element) {
+    const tag = (element.tagName || element.localName || "").toLowerCase();
+    if (tag === "app-skill-button") {
+      return classifySkillButton(element);
+    }
+    return classifyActionButton(element);
+  }
+
   // AI CHANGED: Classify a button purely from its class string + image URL, BEFORE we open its
   // popup. Lets us decide whether to scan it at all and what record shape to emit.
   function classifyActionButton(button) {
@@ -628,7 +676,9 @@
   // Skills don't have this; potions show charges (e.g. "246"). We sample BEFORE opening the popup
   // because opening it doesn't modify the badge.
   function readActionCounter(button) {
-    const counter = button.querySelector(".action-counter-top, .action-counter-bottom");
+    const counter = button.querySelector(
+      ".action-counter-top, .action-counter-bottom, span.skill-counter"
+    );
     if (!counter) {
       return null;
     }
@@ -648,24 +698,22 @@
     if (!bar) {
       return null;
     }
-    const buttons = bar.querySelectorAll("app-action-button");
+    const buttons = getActionBarSlotElements(bar);
     if (!buttons || buttons.length === 0) {
       return null;
     }
     const parts = [];
     for (let i = 0; i < buttons.length; i += 1) {
       const button = buttons[i];
+      const tag = (button.tagName || button.localName || "").toLowerCase();
       const cls = (button.className || "").toString().trim().replace(/\s+/g, " ");
-      const imgNode = button.querySelector(".action-image");
-      const styleAttr = imgNode ? (imgNode.getAttribute("style") || "") : "";
-      const iconMatch = styleAttr.match(/url\("?([^")]+)"?\)/i);
-      const iconUrl = iconMatch ? iconMatch[1] : "";
+      const iconUrl = getBarSlotIconUrl(button);
       const id = getIconHash(iconUrl) || iconUrl.slice(-32);
       const dataTest = (button.getAttribute("data-test") || "").trim();
       const aria = (button.getAttribute("aria-label") || "").trim();
       const title = (button.getAttribute("title") || "").trim();
       const hint = (dataTest + "@" + aria + "@" + title).replace(/\s+/g, " ").trim().slice(0, 160);
-      parts.push(String(i) + ":" + cls + ":" + id + ":" + hint);
+      parts.push(String(i) + ":" + tag + ":" + cls + ":" + id + ":" + hint);
     }
     return parts.join("|");
   }
@@ -696,7 +744,7 @@
     try {
       const fp = readActionBarLayoutFingerprint();
       const payload = {
-        version: 3, // AI CHANGED: slice 16 — bumped when fingerprint string gained per-slot DOM hints (old v2 still loads until bar mismatch).
+        version: 4, // AI CHANGED: app-skill-button unified bar — fingerprint includes tag + skill img src (invalidates pre-split caches).
         savedAt: Date.now(),
         actionBarFingerprint: fp || null,
         slots: slots
@@ -982,14 +1030,14 @@
       Runtime.skills.lastError = "no_action_bar";
       return null;
     }
-    const buttons = bar.querySelectorAll("app-action-button");
+    const buttons = getActionBarSlotElements(bar);
     if (!buttons || buttons.length === 0) {
-      Logger.warn("SKILLS", "Action bar has no buttons; selector may be stale");
+      Logger.warn("SKILLS", "Action bar has no slots; selector may be stale");
       Runtime.skills.lastError = "no_buttons";
       return null;
     }
     setBotStatus("scanning", `skills (0/${buttons.length})`);
-    Logger.log("SKILLS", `Scanning ${buttons.length} action-bar slots`);
+    Logger.log("SKILLS", `Scanning ${buttons.length} action-bar slots (unified)`);
 
     const slots = [];
     for (let i = 0; i < buttons.length; i += 1) {
@@ -1000,7 +1048,7 @@
         return null;
       }
       const button = buttons[i];
-      const classification = classifyActionButton(button);
+      const classification = classifyBarSlot(button);
       // Read the counter (potion charges, etc.) BEFORE opening the popup -- the popup may move
       // focus and detach the badge node briefly.
       const counter = readActionCounter(button);

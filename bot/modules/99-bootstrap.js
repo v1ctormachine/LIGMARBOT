@@ -237,6 +237,7 @@
       clearSkillsCache: clearSkillsCache,
       applySkillMasterToSlots: applySkillMasterToSlots,
       readActionBarLayoutFingerprint: readActionBarLayoutFingerprint,
+      getActionBarSlotElements: getActionBarSlotElements,
       parseSkillEffects: parseSkillEffects,
       inferSkillConception: inferSkillConception,
       normalizeSkillName: normalizeSkillName,

@@ -558,6 +558,7 @@
     return {
       version: "Version",
       probe_selectors: "Selector probe",
+      action_bar_unified_slots: "Action bar unified slots",
       skill_scan: "Skill data",
       skill_master_db: "Skill master DB",
       hero_stats: "Hero stats",
@@ -1654,6 +1655,38 @@
       } catch (err) {
         Logger.warn("TEST", "probeSelectors threw", err);
         addCheck("probe_selectors", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      try {
+        const bar = document.querySelector(Config.selectors.actionBar);
+        if (!bar) {
+          addCheck("action_bar_unified_slots", true, { skipped: "no_action_bar" }, false);
+        } else {
+          const actionOnly = bar.querySelectorAll("app-action-button").length;
+          const skillOnly = bar.querySelectorAll("app-skill-button").length;
+          const unified =
+            typeof getActionBarSlotElements === "function"
+              ? getActionBarSlotElements(bar).length
+              : bar.querySelectorAll(
+                  Config.selectors.actionBarSlot || "app-action-button, app-skill-button"
+                ).length;
+          const ok = skillOnly === 0 || unified > actionOnly;
+          addCheck(
+            "action_bar_unified_slots",
+            ok,
+            { actionOnly: actionOnly, skillOnly: skillOnly, unified: unified, children: bar.children.length },
+            false,
+            ok ? null : "app-skill-button present but unified slot count did not exceed action-button-only count"
+          );
+        }
+      } catch (err) {
+        Logger.warn("TEST", "action_bar_unified_slots threw", err);
+        addCheck(
+          "action_bar_unified_slots",
+          false,
+          { error: String(err && err.message ? err.message : err) },
+          false
+        );
       }
 
       // AI CHANGED: Regression — planner localStorage can leave useRanked false; Fast/Safe must flip it on via applyAutoFarmCombatMode (same as AUTO ON / loop start).

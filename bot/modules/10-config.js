@@ -693,6 +693,8 @@
       poorConnection: '[data-test="poor-connection"]',
       // AI CHANGED: Phase C0 -- action-bar / skill description popup selectors.
       actionBar: "app-battle-action-bar",
+      // AI CHANGED: Game stable bar — skills are app-skill-button siblings of app-action-button (attack/potions/empty).
+      actionBarSlot: "app-action-button, app-skill-button",
       actionButton: "app-battle-action-bar app-action-button",
       // The popup root that appears after a long-press on a skill / potion / basic-attack slot.
       skillPopup: "app-action-info",
