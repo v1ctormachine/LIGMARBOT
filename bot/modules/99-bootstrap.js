@@ -183,6 +183,35 @@
       readPersistedAutoRecoveryResume: readPersistedAutoRecoveryResume,
       clearPersistedAutoRecoveryResume: clearPersistedAutoRecoveryResume,
       resumeAutoFarmAfterRecoveryBootIfNeeded: resumeAutoFarmAfterRecoveryBootIfNeeded,
+      // AI CHANGED: Night mode — unattended overnight farm: hourly reload + boot autostart, persisted in `ligmarbot.autoFarmUi.v1`.
+      isNightModeEnabled: typeof isNightModeEnabled === "function" ? isNightModeEnabled : null,
+      setNightModeEnabled: typeof setNightModeEnabled === "function" ? setNightModeEnabled : null,
+      scheduleNightModeHourlyReloadIfNeeded:
+        typeof scheduleNightModeHourlyReloadIfNeeded === "function" ? scheduleNightModeHourlyReloadIfNeeded : null,
+      cancelNightModeHourlyReload:
+        typeof cancelNightModeHourlyReload === "function" ? cancelNightModeHourlyReload : null,
+      triggerNightModeHourlyReload:
+        typeof triggerNightModeHourlyReload === "function" ? triggerNightModeHourlyReload : null,
+      writeNightModeBootAutostartTokenIfNeeded:
+        typeof writeNightModeBootAutostartTokenIfNeeded === "function"
+          ? writeNightModeBootAutostartTokenIfNeeded
+          : null,
+      getNightModeStatus: function () {
+        const nm =
+          Runtime.autoFarm && Runtime.autoFarm.nightMode && typeof Runtime.autoFarm.nightMode === "object"
+            ? Runtime.autoFarm.nightMode
+            : null;
+        return {
+          enabled: !!(nm && nm.enabled),
+          hourlyReloadDueAt: nm ? nm.hourlyReloadDueAt : null,
+          hourlyReloadScheduledAt: nm ? nm.hourlyReloadScheduledAt : null,
+          hourlyReloadMs: (Config.nightMode && Config.nightMode.hourlyReloadMs) || 3600000,
+          autoFarmRunning: !!(Runtime.autoFarm && Runtime.autoFarm.running),
+          reloadOnlyWhenAutoFarmRunning: !!(Config.nightMode && Config.nightMode.reloadOnlyWhenAutoFarmRunning !== false),
+          lastReloadAt: nm ? nm.lastReloadAt : null,
+          lastBootAutostartAt: nm ? nm.lastBootAutostartAt : null
+        };
+      },
       createControlPanel: createControlPanel,
       updateControlPanelStatus: updateControlPanelStatus,
       // AI CHANGED: grouped slice 34 — planner localStorage sync from console (panel had no toggles since slice 29).
@@ -310,9 +339,13 @@
     };
 
     Logger.log("BOOT", "Debug API exposed as window.ligmarBot");
-    // AI CHANGED: Auto-create GUI control panel at startup.
+    // AI CHANGED: Auto-create GUI control panel at startup. createControlPanel() also calls loadAutoFarmUiPrefs(), so Night Mode is restored before we check whether to autostart.
     createControlPanel();
-    // AI CHANGED: Night resilience — if the previous page refresh was a recovery action, wait for a healthy game surface and resume AUTO.
+    // AI CHANGED: Night mode — if persisted ON and no recovery token is pending, write a boot-autostart resume token so the existing health-check path drives AUTO start.
+    if (typeof writeNightModeBootAutostartTokenIfNeeded === "function") {
+      writeNightModeBootAutostartTokenIfNeeded();
+    }
+    // AI CHANGED: Night resilience — if the previous page refresh was a recovery action (or Night Mode boot autostart), wait for a healthy game surface and resume AUTO.
     resumeAutoFarmAfterRecoveryBootIfNeeded();
 
     // AI CHANGED: grouped slice 34 — obvious console hint when ranked planner is on but scanSkills never ran.

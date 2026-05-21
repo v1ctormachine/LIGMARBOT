@@ -119,6 +119,65 @@
     );
   }
 
+  // AI CHANGED: Game stable input path — Angular appsmartclick ignores HTMLElement.click(); dispatch real pointer/mouse events at center.
+  function dispatchUserClickSequence(element, label) {
+    const rect = element.getBoundingClientRect();
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      Logger.warn("ACTION", `${label} user-click skipped: bad element center`);
+      return false;
+    }
+    const base = {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      clientX: x,
+      clientY: y,
+      button: 0
+    };
+    const dispatchPointer = (type, buttons) => {
+      if (typeof PointerEvent !== "function") {
+        return true;
+      }
+      const ev = new PointerEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        clientX: x,
+        clientY: y,
+        button: 0,
+        buttons: buttons,
+        pointerId: 1,
+        pointerType: "mouse",
+        isPrimary: true
+      });
+      return element.dispatchEvent(ev);
+    };
+    const dispatchMouse = (type, buttons) => {
+      const ev = new MouseEvent(type, Object.assign({}, base, { buttons: buttons }));
+      return element.dispatchEvent(ev);
+    };
+    try {
+      if (typeof element.focus === "function") {
+        element.focus({ preventScroll: true });
+      }
+    } catch (focusErr) {
+      // ignore focus failures; the pointer sequence is what matters for appsmartclick.
+    }
+    dispatchPointer("pointerdown", 1);
+    dispatchMouse("mousedown", 1);
+    dispatchPointer("pointerup", 0);
+    dispatchMouse("mouseup", 0);
+    dispatchMouse("click", 0);
+    Logger.log("ACTION", `${label} clicked`, {
+      x: Math.round(x),
+      y: Math.round(y),
+      input: typeof PointerEvent === "function" ? "pointer_mouse_sequence" : "mouse_sequence"
+    });
+    return true;
+  }
+
   // AI CHANGED: Added safe click wrapper with logging and visibility checks.
   function clickElementSafe(element, label) {
     if (!element) {
@@ -129,9 +188,7 @@
       Logger.warn("ACTION", `${label} click skipped: element not visible`);
       return false;
     }
-    element.click();
-    Logger.log("ACTION", `${label} clicked`);
-    return true;
+    return dispatchUserClickSequence(element, label);
   }
 
   // AI CHANGED: Added low-level mouse event dispatcher for canvas click simulation.

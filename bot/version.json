@@ -1,8 +1,18 @@
 ﻿{
-    "version":  "1.0.0-alpha",
-    "description":  "game-stable baseline: bot semver from 1.0.0-alpha (replaces 0.3.x line)",
-    "builtAt":  "2026-05-15T14:52:04.3483513+03:00",
+    "version":  "1.0.2-alpha",
+    "description":  "night mode: hourly reload + boot autostart, persisted toggle",
+    "builtAt":  "2026-05-21T23:47:03.0399856+03:00",
     "history":  [
+                    {
+                        "version":  "1.0.2-alpha",
+                        "description":  "night mode: hourly reload + boot autostart, persisted toggle",
+                        "date":  "2026-05-21T23:47:03.0399856+03:00"
+                    },
+                    {
+                        "version":  "1.0.1-alpha",
+                        "description":  "input: use pointer/mouse sequence for appsmartclick actions",
+                        "date":  "2026-05-21T23:29:55.1630238+03:00"
+                    },
                     {
                         "version":  "1.0.0-alpha",
                         "description":  "game-stable baseline: bot semver from 1.0.0-alpha (replaces 0.3.x line)",
@@ -242,16 +252,6 @@
                         "version":  "0.3.178",
                         "description":  "Combat: shorter charge late-wait + tiny cancel_release cap",
                         "date":  "2026-05-13T14:12:24.8105758+03:00"
-                    },
-                    {
-                        "version":  "0.3.177",
-                        "description":  "Combat: charge release late wait + queue tick + per-opener queue arm",
-                        "date":  "2026-05-13T14:01:18.5465236+03:00"
-                    },
-                    {
-                        "version":  "0.3.176",
-                        "description":  "Soak: STOP+COPY last 30 log lines, Logger ring buffer, TEST Logger ring check",
-                        "date":  "2026-05-13T13:49:01.7652840+03:00"
                     }
                 ]
 }

@@ -108,6 +108,15 @@
         lastRefreshAt: null,
         lastRefreshReason: null,
         lastRefreshToken: null
+      },
+      // AI CHANGED: Night mode — unattended long-run reliability (hourly refresh + boot autostart). `enabled` persists in ligmarbot.autoFarmUi.v1.
+      nightMode: {
+        enabled: false,
+        hourlyReloadTimer: null,
+        hourlyReloadScheduledAt: null,
+        hourlyReloadDueAt: null,
+        lastReloadAt: null,
+        lastBootAutostartAt: null
       }
     },
     // AI CHANGED: Added exploration state so idle movement rotates through nearby directions.

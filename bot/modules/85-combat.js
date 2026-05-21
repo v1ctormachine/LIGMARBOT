@@ -1068,6 +1068,155 @@
     return { ok: false, recovered: false, summary: postSummary, soft: soft };
   }
 
+  // AI CHANGED: Night mode — runtime accessors + lifecycle for hourly refresh and boot autostart.
+  function getNightModeRuntime() {
+    if (!Runtime.autoFarm.nightMode || typeof Runtime.autoFarm.nightMode !== "object") {
+      Runtime.autoFarm.nightMode = {
+        enabled: false,
+        hourlyReloadTimer: null,
+        hourlyReloadScheduledAt: null,
+        hourlyReloadDueAt: null,
+        lastReloadAt: null,
+        lastBootAutostartAt: null
+      };
+    }
+    return Runtime.autoFarm.nightMode;
+  }
+
+  function isNightModeEnabled() {
+    return !!getNightModeRuntime().enabled;
+  }
+
+  function setNightModeEnabled(nextEnabled, opts) {
+    const o = opts && typeof opts === "object" ? opts : {};
+    const nm = getNightModeRuntime();
+    const wasEnabled = !!nm.enabled;
+    nm.enabled = !!nextEnabled;
+    Logger.log("NIGHT", "Night mode " + (nm.enabled ? "enabled" : "disabled"), {
+      previous: wasEnabled,
+      autoFarmRunning: !!(Runtime.autoFarm && Runtime.autoFarm.running),
+      source: o.source || "api"
+    });
+    if (nm.enabled) {
+      scheduleNightModeHourlyReloadIfNeeded({ source: "set_enabled" });
+    } else {
+      cancelNightModeHourlyReload({ source: "set_disabled" });
+    }
+    return nm.enabled;
+  }
+
+  function scheduleNightModeHourlyReloadIfNeeded(opts) {
+    const o = opts && typeof opts === "object" ? opts : {};
+    const nm = getNightModeRuntime();
+    if (!nm.enabled) {
+      return { scheduled: false, reason: "night_mode_off" };
+    }
+    const cfg = Config.nightMode || {};
+    if (cfg.reloadOnlyWhenAutoFarmRunning !== false) {
+      if (!(Runtime.autoFarm && Runtime.autoFarm.running)) {
+        return { scheduled: false, reason: "auto_farm_off" };
+      }
+    }
+    const ms = Number.isFinite(cfg.hourlyReloadMs) ? Math.max(60000, cfg.hourlyReloadMs) : 3600000;
+    if (nm.hourlyReloadTimer != null) {
+      return { scheduled: false, reason: "already_scheduled", dueAt: nm.hourlyReloadDueAt };
+    }
+    nm.hourlyReloadScheduledAt = Date.now();
+    nm.hourlyReloadDueAt = nm.hourlyReloadScheduledAt + ms;
+    nm.hourlyReloadTimer = window.setTimeout(function () {
+      try {
+        triggerNightModeHourlyReload({ source: o.source || "timer" });
+      } catch (err) {
+        Logger.warn("NIGHT", "Night mode hourly reload failed", err);
+      }
+    }, ms);
+    Logger.log("NIGHT", "Hourly reload scheduled", {
+      dueInMs: ms,
+      dueAt: new Date(nm.hourlyReloadDueAt).toISOString(),
+      source: o.source || "schedule"
+    });
+    return { scheduled: true, dueAt: nm.hourlyReloadDueAt, dueInMs: ms };
+  }
+
+  function cancelNightModeHourlyReload(opts) {
+    const o = opts && typeof opts === "object" ? opts : {};
+    const nm = getNightModeRuntime();
+    if (nm.hourlyReloadTimer == null) {
+      return { cancelled: false, reason: "no_timer" };
+    }
+    try {
+      window.clearTimeout(nm.hourlyReloadTimer);
+    } catch (err) {
+      Logger.warn("NIGHT", "Failed to clear hourly reload timer", err);
+    }
+    nm.hourlyReloadTimer = null;
+    nm.hourlyReloadDueAt = null;
+    nm.hourlyReloadScheduledAt = null;
+    Logger.log("NIGHT", "Hourly reload cancelled", { source: o.source || "cancel" });
+    return { cancelled: true };
+  }
+
+  // AI CHANGED: Night mode — fire the hourly refresh by reusing the AUTO resume token path so boot restarts AUTO automatically.
+  function triggerNightModeHourlyReload(opts) {
+    const o = opts && typeof opts === "object" ? opts : {};
+    const cfg = Config.nightMode || {};
+    const nm = getNightModeRuntime();
+    nm.hourlyReloadTimer = null;
+    nm.hourlyReloadDueAt = null;
+    if (!nm.enabled) {
+      Logger.warn("NIGHT", "Hourly reload skipped: night mode turned off before firing");
+      return { ok: false, reason: "night_mode_off" };
+    }
+    if (cfg.reloadOnlyWhenAutoFarmRunning !== false && !(Runtime.autoFarm && Runtime.autoFarm.running)) {
+      Logger.warn("NIGHT", "Hourly reload skipped: AUTO not running");
+      return { ok: false, reason: "auto_farm_off" };
+    }
+    const token = {
+      version: BotVersion && BotVersion.version ? BotVersion.version : null,
+      createdAt: new Date().toISOString(),
+      reason: cfg.hourlyReloadReason || "night_mode_hourly_refresh",
+      resumeAutoFarm: true,
+      refreshAttempts: 0,
+      summary: { primaryReason: cfg.hourlyReloadReason || "night_mode_hourly_refresh", source: o.source || "timer" }
+    };
+    writePersistedAutoRecoveryResume(token);
+    nm.lastReloadAt = Date.now();
+    setBotStatus("waiting", "night mode hourly refresh");
+    Logger.warn("NIGHT", "Night mode hourly reload firing", token);
+    window.setTimeout(function () {
+      window.location.reload();
+    }, 60);
+    return { ok: true, refreshing: true, token: token };
+  }
+
+  // AI CHANGED: Night mode — boot autostart writes the same resume token so the existing recovery boot loop drives AUTO start when surface is healthy.
+  function writeNightModeBootAutostartTokenIfNeeded() {
+    const nm = getNightModeRuntime();
+    if (!nm.enabled) {
+      return { ok: false, reason: "night_mode_off" };
+    }
+    if (Runtime.autoFarm && Runtime.autoFarm.running) {
+      return { ok: false, reason: "already_running" };
+    }
+    const existing = readPersistedAutoRecoveryResume();
+    if (existing && existing.resumeAutoFarm === true) {
+      return { ok: false, reason: "recovery_token_already_present", existing: existing };
+    }
+    const cfg = Config.nightMode || {};
+    const token = {
+      version: BotVersion && BotVersion.version ? BotVersion.version : null,
+      createdAt: new Date().toISOString(),
+      reason: cfg.bootAutostartReason || "night_mode_boot_autostart",
+      resumeAutoFarm: true,
+      refreshAttempts: 0,
+      summary: { primaryReason: cfg.bootAutostartReason || "night_mode_boot_autostart" }
+    };
+    writePersistedAutoRecoveryResume(token);
+    nm.lastBootAutostartAt = Date.now();
+    Logger.log("NIGHT", "Night mode boot autostart token written", token);
+    return { ok: true, token: token };
+  }
+
   // AI CHANGED: After an auto-refresh recovery, wait for a healthy game surface and restart AUTO ON automatically.
   function resumeAutoFarmAfterRecoveryBootIfNeeded() {
     const token = readPersistedAutoRecoveryResume();
@@ -4778,6 +4927,8 @@
     }
     Runtime.autoFarm.stopRequested = true;
     Logger.log("AUTO", "Stop requested for auto-farm loop");
+    // AI CHANGED: Night mode — cancel pending hourly reload when user stops AUTO so the page does not refresh during manual play.
+    cancelNightModeHourlyReload({ source: "auto_loop_stop" });
     return { ok: true, running: true, message: "stop_requested" };
   }
 
@@ -5035,6 +5186,8 @@
     resetAutoFarmHealthRuntime(Runtime.autoFarm.startedAt);
     resetAutoFarmRecoveryRuntime();
     clearPersistedAutoRecoveryResume();
+    // AI CHANGED: Night mode — arm the hourly reload as soon as AUTO is up so unattended sessions self-refresh.
+    scheduleNightModeHourlyReloadIfNeeded({ source: "auto_loop_start" });
     scheduleNextAutoChatSpammer("auto_loop_start", { nowMs: Runtime.autoFarm.startedAt });
     let exitReason = "unknown";
 

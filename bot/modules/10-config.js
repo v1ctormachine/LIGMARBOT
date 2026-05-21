@@ -267,6 +267,17 @@
       // AI CHANGED: Persist refresh-resume intent across page reloads.
       resumeStorageKey: "ligmarbot.autoRecoveryResume.v1"
     },
+    // AI CHANGED: Night mode — unattended long-run reliability. Hourly hard-refresh + auto-start AUTO on boot.
+    nightMode: {
+      // AI CHANGED: Page is reloaded this often when night mode is on AND AUTO is running.
+      hourlyReloadMs: 3600000,
+      // AI CHANGED: Refuse to reload mid-session if AUTO was stopped manually; reload only protects long unattended farms.
+      reloadOnlyWhenAutoFarmRunning: true,
+      // AI CHANGED: Storage key for the night-mode preference (separate from autoFarmUi blob is unnecessary — kept inside ligmarbot.autoFarmUi.v1).
+      // Boot autostart reuses the recovery resume token shape with a distinct reason for logs.
+      bootAutostartReason: "night_mode_boot_autostart",
+      hourlyReloadReason: "night_mode_hourly_refresh"
+    },
     // AI CHANGED: Phase C4 -- paper DPS (hero sheet); verify against Phase C2 observer on real targets.
     planner: {
       // When crit damage % is missing from hero stats, use this crit vs non-crit damage ratio (2 = double).

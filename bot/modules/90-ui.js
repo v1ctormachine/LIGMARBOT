@@ -312,7 +312,9 @@
     const cm = raw === "easy" || raw === "safe" || raw === "fast" ? raw : "fast";
     // AI CHANGED: Persist AUTO local chat spammer toggle with combat mode (`ligmarbot.autoFarmUi.v1`).
     const spamOn = !!(Config.chat && Config.chat.autoLocalPromocodeSpammerEnabled !== false);
-    return { combatMode: cm, autoLocalChatSpammerEnabled: spamOn };
+    // AI CHANGED: Persist night mode (hourly reload + boot autostart) with the same AUTO prefs blob.
+    const nightOn = !!(Runtime.autoFarm && Runtime.autoFarm.nightMode && Runtime.autoFarm.nightMode.enabled);
+    return { combatMode: cm, autoLocalChatSpammerEnabled: spamOn, nightModeEnabled: nightOn };
   }
 
   function loadAutoFarmUiPrefs() {
@@ -335,6 +337,20 @@
       // AI CHANGED: Restore chat spammer preference from the same AUTO prefs blob.
       if (typeof p.autoLocalChatSpammerEnabled === "boolean" && Config.chat) {
         Config.chat.autoLocalPromocodeSpammerEnabled = p.autoLocalChatSpammerEnabled;
+      }
+      // AI CHANGED: Restore night mode preference. Only flips Runtime flag; boot autostart + hourly reload arming are gated separately.
+      if (typeof p.nightModeEnabled === "boolean") {
+        if (!Runtime.autoFarm.nightMode || typeof Runtime.autoFarm.nightMode !== "object") {
+          Runtime.autoFarm.nightMode = {
+            enabled: false,
+            hourlyReloadTimer: null,
+            hourlyReloadScheduledAt: null,
+            hourlyReloadDueAt: null,
+            lastReloadAt: null,
+            lastBootAutostartAt: null
+          };
+        }
+        Runtime.autoFarm.nightMode.enabled = !!p.nightModeEnabled;
       }
       // AI CHANGED: Persisted Fast/Safe/Easy must sync planner immediately (not only while AUTO loop is running).
       if (typeof applyAutoFarmCombatMode === "function") {
@@ -559,6 +575,9 @@
       version: "Version",
       probe_selectors: "Selector probe",
       action_bar_unified_slots: "Action bar unified slots",
+      user_click_sequence: "User-like click sequence",
+      night_mode_helpers_wired: "Night mode helpers wired",
+      night_mode_persistence_roundtrip: "Night mode persistence",
       skill_scan: "Skill data",
       skill_master_db: "Skill master DB",
       hero_stats: "Hero stats",
@@ -1683,6 +1702,107 @@
         Logger.warn("TEST", "action_bar_unified_slots threw", err);
         addCheck(
           "action_bar_unified_slots",
+          false,
+          { error: String(err && err.message ? err.message : err) },
+          false
+        );
+      }
+
+      try {
+        addCheck(
+          "user_click_sequence",
+          typeof dispatchUserClickSequence === "function",
+          {
+            helper: typeof dispatchUserClickSequence,
+            pointerEvent: typeof PointerEvent === "function",
+            reason: "appsmartclick requires pointer/mouse center events; native element.click() is not enough after game update"
+          },
+          false
+        );
+      } catch (err) {
+        Logger.warn("TEST", "user_click_sequence threw", err);
+        addCheck(
+          "user_click_sequence",
+          false,
+          { error: String(err && err.message ? err.message : err) },
+          false
+        );
+      }
+
+      // AI CHANGED: Night mode — helper wiring (config + lifecycle helpers + bootstrap autostart hook).
+      try {
+        const nmCfg = Config && Config.nightMode ? Config.nightMode : null;
+        const hourlyMs = nmCfg && Number.isFinite(nmCfg.hourlyReloadMs) ? nmCfg.hourlyReloadMs : null;
+        const wired =
+          !!nmCfg &&
+          hourlyMs != null &&
+          hourlyMs >= 60000 &&
+          typeof setNightModeEnabled === "function" &&
+          typeof scheduleNightModeHourlyReloadIfNeeded === "function" &&
+          typeof cancelNightModeHourlyReload === "function" &&
+          typeof triggerNightModeHourlyReload === "function" &&
+          typeof writeNightModeBootAutostartTokenIfNeeded === "function";
+        addCheck(
+          "night_mode_helpers_wired",
+          wired,
+          {
+            hourlyReloadMs: hourlyMs,
+            setNightModeEnabled: typeof setNightModeEnabled,
+            scheduleNightModeHourlyReloadIfNeeded: typeof scheduleNightModeHourlyReloadIfNeeded,
+            cancelNightModeHourlyReload: typeof cancelNightModeHourlyReload,
+            triggerNightModeHourlyReload: typeof triggerNightModeHourlyReload,
+            writeNightModeBootAutostartTokenIfNeeded: typeof writeNightModeBootAutostartTokenIfNeeded
+          },
+          false
+        );
+      } catch (err) {
+        Logger.warn("TEST", "night_mode_helpers_wired threw", err);
+        addCheck("night_mode_helpers_wired", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Night mode — persistence round-trip via the shared autoFarmUi blob (key `ligmarbot.autoFarmUi.v1`).
+      try {
+        if (
+          typeof saveAutoFarmUiPrefs !== "function" ||
+          typeof loadAutoFarmUiPrefs !== "function" ||
+          !Runtime.autoFarm
+        ) {
+          addCheck("night_mode_persistence_roundtrip", false, { reason: "prefs_api_missing" }, false);
+        } else {
+          if (!Runtime.autoFarm.nightMode || typeof Runtime.autoFarm.nightMode !== "object") {
+            Runtime.autoFarm.nightMode = {
+              enabled: false,
+              hourlyReloadTimer: null,
+              hourlyReloadScheduledAt: null,
+              hourlyReloadDueAt: null,
+              lastReloadAt: null,
+              lastBootAutostartAt: null
+            };
+          }
+          const prevEnabled = !!Runtime.autoFarm.nightMode.enabled;
+          Runtime.autoFarm.nightMode.enabled = true;
+          const saved = saveAutoFarmUiPrefs();
+          Runtime.autoFarm.nightMode.enabled = false;
+          loadAutoFarmUiPrefs();
+          const afterLoad = !!(Runtime.autoFarm.nightMode && Runtime.autoFarm.nightMode.enabled);
+          Runtime.autoFarm.nightMode.enabled = prevEnabled;
+          saveAutoFarmUiPrefs();
+          addCheck(
+            "night_mode_persistence_roundtrip",
+            saved && saved.ok === true && afterLoad === true,
+            {
+              storageKey: saved && saved.storageKey ? saved.storageKey : null,
+              wroteEnabled: true,
+              loadedEnabled: afterLoad,
+              restoredTo: prevEnabled
+            },
+            false
+          );
+        }
+      } catch (err) {
+        Logger.warn("TEST", "night_mode_persistence_roundtrip threw", err);
+        addCheck(
+          "night_mode_persistence_roundtrip",
           false,
           { error: String(err && err.message ? err.message : err) },
           false
@@ -4121,6 +4241,36 @@
     chatSpamRow.appendChild(chatSpamCb);
     chatSpamRow.appendChild(chatSpamLbl);
     panel.appendChild(chatSpamRow);
+
+    // AI CHANGED: Panel toggle — Night Mode (hourly page reload + boot autostart for unattended overnight farming).
+    const nightModeRow = document.createElement("label");
+    nightModeRow.style.display = "flex";
+    nightModeRow.style.alignItems = "center";
+    nightModeRow.style.gap = "8px";
+    nightModeRow.style.marginBottom = "10px";
+    nightModeRow.style.fontSize = "10px";
+    nightModeRow.style.opacity = "0.9";
+    nightModeRow.style.cursor = "pointer";
+    nightModeRow.title =
+      "When ON: page auto-reloads every hour while AUTO is running, and AUTO ON starts automatically after each refresh (and after a normal page load).";
+    const nightModeCb = document.createElement("input");
+    nightModeCb.type = "checkbox";
+    nightModeCb.checked = !!(Runtime.autoFarm && Runtime.autoFarm.nightMode && Runtime.autoFarm.nightMode.enabled);
+    nightModeCb.addEventListener("change", function () {
+      if (typeof setNightModeEnabled === "function") {
+        setNightModeEnabled(!!nightModeCb.checked, { source: "panel_toggle" });
+      } else if (Runtime.autoFarm && Runtime.autoFarm.nightMode) {
+        Runtime.autoFarm.nightMode.enabled = !!nightModeCb.checked;
+      }
+      saveAutoFarmUiPrefs();
+      Logger.log("UI", "Night mode toggled", { enabled: !!nightModeCb.checked });
+      setTimeout(updateControlPanelStatus, 20);
+    });
+    const nightModeLbl = document.createElement("span");
+    nightModeLbl.textContent = "Night Mode (hourly reload + auto-start)";
+    nightModeRow.appendChild(nightModeCb);
+    nightModeRow.appendChild(nightModeLbl);
+    panel.appendChild(nightModeRow);
 
     // AI CHANGED: TEST / issue clip — use console only: `ligmarBot.runUiTestBundle(...)`, `ligmarBot.copyIssueReportLogs(...)`.
 
