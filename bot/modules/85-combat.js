@@ -2294,11 +2294,29 @@
   }
 
   // AI CHANGED: Sync safety fire — HP spike flag from sustain observations; cancel+Windy Dome when available.
+  // AI CHANGED: Single source of truth for "is AUTO running in Easy mode" — used by Easy-mode buff suppression + ensureSkills skip.
+  function isAutoFarmEasyMode() {
+    return !!(
+      Runtime.autoFarm &&
+      Runtime.autoFarm.combatMode &&
+      String(Runtime.autoFarm.combatMode).toLowerCase() === "easy"
+    );
+  }
+
   function processCombatSafetyHpSpikeIfNeeded(liveState) {
     const root = Config.supportBuffs;
     const cfg = root && root.safety;
     const rt = getSupportBuffLineRuntime();
     if (!root || root.enabled === false || !cfg || cfg.enabled === false) {
+      return false;
+    }
+    // AI CHANGED: Easy mode disables all buff usage — safety HP-spike Windy Dome included. HP/MP potions still fire from `maybeUseCombatSustain`.
+    if (isAutoFarmEasyMode()) {
+      if (rt.safetyHpSpikePending) {
+        rt.safetyHpSpikePending = false;
+        rt.safetyHpSpikeLost = null;
+        rt.safetyHpSpikeAt = null;
+      }
       return false;
     }
     if (!rt.safetyHpSpikePending) {
@@ -2341,6 +2359,10 @@
     const cfg = root && root.safety;
     if (!root || root.enabled === false || !cfg || cfg.enabled === false) {
       return { fired: false, skipped: true, reason: "disabled" };
+    }
+    // AI CHANGED: Easy mode disables all buff usage — safety interrupt included.
+    if (isAutoFarmEasyMode()) {
+      return { fired: false, skipped: true, reason: "easy_mode" };
     }
     updateCombatSustainObservations(liveState);
     const fired = processCombatSafetyHpSpikeIfNeeded(liveState);
@@ -2480,6 +2502,10 @@
     const pb = root && root.prebuff;
     if (!root || root.enabled === false || !pb || pb.enabled === false) {
       return { used: 0 };
+    }
+    // AI CHANGED: Easy mode disables all buff usage — new-tile prebuffs never fire.
+    if (isAutoFarmEasyMode()) {
+      return { used: 0, skipped: true, reason: "easy_mode" };
     }
     if (!liveState || typeof liveState.combat.enemyCount !== "number" || liveState.combat.enemyCount <= 0) {
       return { used: 0, skipped: true, reason: "no_enemies" };
@@ -2637,6 +2663,10 @@
     const perm = root && root.permanentSelf;
     if (!root || root.enabled === false || !perm || perm.enabled === false) {
       return { cast: 0, skipped: true, reason: "disabled" };
+    }
+    // AI CHANGED: Easy mode disables all buff usage — permanent-self long-buff refresh skipped (both OOC maintenance and pre-find-enemy paths route through here).
+    if (isAutoFarmEasyMode()) {
+      return { cast: 0, skipped: true, reason: "easy_mode" };
     }
     if (!liveState || typeof liveState.combat.enemyCount !== "number") {
       return { cast: 0, skipped: true, reason: "no_enemy_count" };
@@ -4932,7 +4962,7 @@
     return { ok: true, running: true, message: "stop_requested" };
   }
 
-  // AI CHANGED: AUTO — reload skill cache / DOM-scan bar + hero stats when OOC so ranked planner sees real slots (scanSkills normally blocks while AUTO runs).
+  // AI CHANGED: AUTO — reload skill cache / DOM-scan bar + hero stats when OOC so ranked planner sees real slots (scanSkills normally blocks while AUTO runs). Now latches once per AUTO session (`Runtime.autoFarm.skillEnsureDone`) and is skipped entirely in Easy mode (no ranked planner = no need to read the bar).
   async function ensureSkillsAndHeroDataForAutoFarm(preState, meta) {
     const cfg = Config.farmLoop && Config.farmLoop.ensureSkills;
     if (!cfg || cfg.enabled === false) {
@@ -4943,6 +4973,30 @@
     }
     if (Runtime.autoFarm.stopRequested) {
       return { skipped: true, reason: "stop_requested" };
+    }
+    // AI CHANGED: Easy mode short-circuit — no ranked picks happen, so cache reload + scan provide no value.
+    if (cfg.skipInEasyMode !== false && isAutoFarmEasyMode()) {
+      return { skipped: true, reason: "easy_mode" };
+    }
+    // AI CHANGED: Once-per-session latch — after the first successful run that lands usable skills, skip subsequent cycles. The latch resets in `startAutoFarmLoop`.
+    if (cfg.runOncePerAutoSession !== false && Runtime.autoFarm.skillEnsureDone === true) {
+      const slots0 = Runtime.skills && Array.isArray(Runtime.skills.slots) ? Runtime.skills.slots : [];
+      let usable0 = 0;
+      for (let i0 = 0; i0 < slots0.length; i0++) {
+        const r0 = slots0[i0];
+        if (r0 && r0.kind === "skill" && typeof r0.name === "string" && r0.name.trim() && !r0.parseFailed) {
+          usable0++;
+        }
+      }
+      if (usable0 > 0) {
+        return {
+          skipped: true,
+          reason: "already_ensured",
+          usableSkillRows: usable0,
+          meta: meta || null
+        };
+      }
+      Runtime.autoFarm.skillEnsureDone = false;
     }
     const st =
       preState && preState.combat && typeof preState.combat.enemyCount === "number"
@@ -4994,6 +5048,10 @@
       heroRes = await readHeroCombatStats();
     }
     if (!needDomScan) {
+      // AI CHANGED: Latch the once-per-session flag when the cache reload already produced usable skills — later cycles short-circuit early.
+      if (cfg.runOncePerAutoSession !== false && usableSkills > 0 && Runtime.autoFarm) {
+        Runtime.autoFarm.skillEnsureDone = true;
+      }
       return {
         skipped: false,
         cacheLoaded: cacheLoaded,
@@ -5033,10 +5091,15 @@
         }
       }
     }
+    // AI CHANGED: Latch the once-per-session flag when the DOM scan produced usable skills — later cycles short-circuit early.
+    if (cfg.runOncePerAutoSession !== false && usableAfter > 0 && Runtime.autoFarm) {
+      Runtime.autoFarm.skillEnsureDone = true;
+    }
     Logger.log("AUTO", "ensureSkillsAndHeroDataForAutoFarm", {
       scanned: scannedOk,
       usableAfter: usableAfter,
       lastError: Runtime.skills ? Runtime.skills.lastError : null,
+      ensureDoneLatched: !!(Runtime.autoFarm && Runtime.autoFarm.skillEnsureDone),
       meta: meta || null
     });
     return {
@@ -5174,6 +5237,8 @@
     Runtime.autoFarm.startedAt = Date.now();
     // AI CHANGED: Fresh AUTO session — allow one TEST-like OOC prep pass when `Config.farmLoop.autoLikeTest` is enabled.
     Runtime.autoFarm.autoLikeTestPrepDone = false;
+    // AI CHANGED: Fresh AUTO session — clear the ensure-skills latch so the first OOC cycle revalidates cache/hero, then later cycles skip.
+    Runtime.autoFarm.skillEnsureDone = false;
     Runtime.autoFarm.reliability.noProgressStreak = 0;
     // AI CHANGED: Apply Fast/Safe/Easy before snapshot — planner localStorage can leave useRankedAttackSkillsInCombat false while combat mode is Fast/Safe; old order restored that false after every AUTO OFF and looked like "ON skips ranked until TEST".
     applyAutoFarmCombatMode();

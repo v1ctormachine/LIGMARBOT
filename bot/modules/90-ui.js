@@ -578,6 +578,8 @@
       user_click_sequence: "User-like click sequence",
       night_mode_helpers_wired: "Night mode helpers wired",
       night_mode_persistence_roundtrip: "Night mode persistence",
+      auto_skill_ensure_runs_once: "Skill ensure once-per-session",
+      easy_mode_disables_buffs: "Easy mode disables buffs",
       skill_scan: "Skill data",
       skill_master_db: "Skill master DB",
       hero_stats: "Hero stats",
@@ -1758,6 +1760,78 @@
       } catch (err) {
         Logger.warn("TEST", "night_mode_helpers_wired threw", err);
         addCheck("night_mode_helpers_wired", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Verify the ensure-skills helper has once-per-session config + Runtime latch hook (`Config.farmLoop.ensureSkills.runOncePerAutoSession`, `Runtime.autoFarm.skillEnsureDone`).
+      try {
+        const eCfg =
+          Config.farmLoop && Config.farmLoop.ensureSkills ? Config.farmLoop.ensureSkills : null;
+        const runtimeHasFlag =
+          !!Runtime.autoFarm && Object.prototype.hasOwnProperty.call(Runtime.autoFarm, "skillEnsureDone");
+        const ok =
+          !!eCfg &&
+          eCfg.runOncePerAutoSession !== false &&
+          eCfg.skipInEasyMode !== false &&
+          runtimeHasFlag;
+        addCheck(
+          "auto_skill_ensure_runs_once",
+          ok,
+          {
+            runOncePerAutoSession: eCfg ? eCfg.runOncePerAutoSession : null,
+            skipInEasyMode: eCfg ? eCfg.skipInEasyMode : null,
+            runtimeSkillEnsureDone: runtimeHasFlag ? !!Runtime.autoFarm.skillEnsureDone : null
+          },
+          false
+        );
+      } catch (err) {
+        Logger.warn("TEST", "auto_skill_ensure_runs_once threw", err);
+        addCheck("auto_skill_ensure_runs_once", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Easy mode disables all buff usage — verify the central predicate exists and buff entry helpers short-circuit by inspecting source strings (live combat exec is non-trivial in TEST).
+      try {
+        const predicateOk = typeof isAutoFarmEasyMode === "function";
+        const fnSrc = function (fn) {
+          try {
+            return typeof fn === "function" ? String(fn) : "";
+          } catch (e) {
+            return "";
+          }
+        };
+        const gated = [
+          {
+            name: "maybeApplySupportPrebuffsOnNewTile",
+            ok: fnSrc(typeof maybeApplySupportPrebuffsOnNewTile === "function" ? maybeApplySupportPrebuffsOnNewTile : null).indexOf("isAutoFarmEasyMode") >= 0
+          },
+          {
+            name: "runPermanentSelfLongBuffRefreshPass",
+            ok: fnSrc(typeof runPermanentSelfLongBuffRefreshPass === "function" ? runPermanentSelfLongBuffRefreshPass : null).indexOf("isAutoFarmEasyMode") >= 0
+          },
+          {
+            name: "maybeCombatSafetyBuffInterrupt",
+            ok: fnSrc(typeof maybeCombatSafetyBuffInterrupt === "function" ? maybeCombatSafetyBuffInterrupt : null).indexOf("isAutoFarmEasyMode") >= 0
+          },
+          {
+            name: "processCombatSafetyHpSpikeIfNeeded",
+            ok: fnSrc(typeof processCombatSafetyHpSpikeIfNeeded === "function" ? processCombatSafetyHpSpikeIfNeeded : null).indexOf("isAutoFarmEasyMode") >= 0
+          }
+        ];
+        const missing = gated.filter(function (g) {
+          return !g.ok;
+        });
+        addCheck(
+          "easy_mode_disables_buffs",
+          predicateOk && missing.length === 0,
+          {
+            predicate: predicateOk,
+            gatedFunctions: gated,
+            missingCount: missing.length
+          },
+          false
+        );
+      } catch (err) {
+        Logger.warn("TEST", "easy_mode_disables_buffs threw", err);
+        addCheck("easy_mode_disables_buffs", false, { error: String(err && err.message ? err.message : err) }, false);
       }
 
       // AI CHANGED: Night mode — persistence round-trip via the shared autoFarmUi blob (key `ligmarbot.autoFarmUi.v1`).

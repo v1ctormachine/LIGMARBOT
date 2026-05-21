@@ -174,6 +174,8 @@
       getAutoFarmStatus: getAutoFarmStatus,
       setAutoFarmCombatMode: setAutoFarmCombatMode,
       applyAutoFarmCombatMode: applyAutoFarmCombatMode,
+      // AI CHANGED: Easy-mode predicate exposed for console debugging of buff/scan suppression.
+      isAutoFarmEasyMode: typeof isAutoFarmEasyMode === "function" ? isAutoFarmEasyMode : null,
       getCombatEpisode: function () {
         return Runtime.autoFarm && Runtime.autoFarm.combatEpisode ? Runtime.autoFarm.combatEpisode : null;
       },

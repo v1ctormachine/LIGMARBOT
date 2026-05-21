@@ -512,9 +512,13 @@
       // AI CHANGED: Reliability hardening — if repeated combat no-progress failures happen, pause before next cycle.
       noProgressCooldownThreshold: 2,
       noProgressCooldownMs: 5000,
-      // AI CHANGED: AUTO — each OOC cycle reloads skill cache; DOM scanSkills when bar empty / cache invalid so planner sees skills without manual TEST.
+      // AI CHANGED: AUTO — first OOC cycles try to land usable skills (cache reload + scan when blind); once landed, `Runtime.autoFarm.skillEnsureDone` latches and later cycles skip the helper. Easy mode skips it entirely (no ranked planner = no need to read the bar).
       ensureSkills: {
         enabled: true,
+        // AI CHANGED: When true, the helper short-circuits after the first successful run per AUTO session (set on usable skills > 0). Set to false for old "every-cycle" behavior.
+        runOncePerAutoSession: true,
+        // AI CHANGED: Easy mode has no ranked planner picks — there is nothing for ensureSkills to feed; skip the helper entirely.
+        skipInEasyMode: true,
         loadCacheEveryCycle: true,
         loadHeroStatsCacheEveryCycle: true,
         scanWhenLikelyBlind: true,
