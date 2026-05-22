@@ -2693,6 +2693,178 @@
         addCheck("planner_sequence_logic_archer_smoke", false, { error: String(err && err.message ? err.message : err) }, false);
       }
 
+      // AI CHANGED: Planner rewrite v1.1 — excludeSlots is honored INSIDE the new sequence planner's candidate builder.
+      //   Logic (bullet-list):
+      //     • Build a synthetic flat sim state with two attack skills (slots 0 and 1), both ready and mana-affordable.
+      //     • Call plannerSeqBuildCandidateActions with no exclude — expect both skills present in the candidate list.
+      //     • Call again with excludeSlots = new Set([0]) — expect slot 0 absent, slot 1 still present, basic still present.
+      //     • Call again with Array form excludeSlots = [1] — same logic, slot 1 absent.
+      //   This verifies the planner-correctness fix at the most fundamental level, regardless of live skill cache.
+      try {
+        if (typeof plannerSeqBuildCandidateActions === "function") {
+          const skillA = {
+            slot: 0, name: "Skill A", normalizedKey: "skilla",
+            isAttack: true, hasDirectDamage: true, manaCost: 0, castTimeSec: 0.4, cooldownSec: 0,
+            immediateDamage: 100, dotPerSec: 0, dotDurationSec: 0, damageType: "physical",
+            isCharge: false, chargeMaxSec: 0, chargeGearPct: 0, isAoe: false, isControl: false,
+            controlDurationSec: 0, tacticalRoles: ["offensive"], semantic: null
+          };
+          const skillB = {
+            slot: 1, name: "Skill B", normalizedKey: "skillb",
+            isAttack: true, hasDirectDamage: true, manaCost: 0, castTimeSec: 0.4, cooldownSec: 0,
+            immediateDamage: 90, dotPerSec: 0, dotDurationSec: 0, damageType: "physical",
+            isCharge: false, chargeMaxSec: 0, chargeGearPct: 0, isAoe: false, isControl: false,
+            controlDurationSec: 0, tacticalRoles: ["offensive"], semantic: null
+          };
+          const synthSim = {
+            elapsedSec: 0,
+            playerMpCur: 100,
+            skillCooldownReadyAtSec: {}
+          };
+          // AI CHANGED: depth-0 skipReadyCheck — `plannerSeqSkillIsReadyNow` is only invoked when elapsedSec === 0; for the synthetic test we lift
+          // that gate by setting `elapsedSec` to a tiny non-zero value so live-DOM is not consulted.
+          synthSim.elapsedSec = 0.001;
+          const noExclude = plannerSeqBuildCandidateActions(synthSim, [skillA, skillB], {
+            disallowChargeSkills: false
+          });
+          const slotsNoExclude = noExclude.map(function (c) { return c.slot; });
+          const noExcludeHasA = slotsNoExclude.indexOf(0) !== -1;
+          const noExcludeHasB = slotsNoExclude.indexOf(1) !== -1;
+          const noExcludeHasBasic = noExclude.some(function (c) { return c.kind === "basic"; });
+          const setExclude = plannerSeqBuildCandidateActions(synthSim, [skillA, skillB], {
+            disallowChargeSkills: false,
+            excludeSlots: new Set([0])
+          });
+          const slotsSetExclude = setExclude.map(function (c) { return c.slot; });
+          const setExcludeOk = slotsSetExclude.indexOf(0) === -1 && slotsSetExclude.indexOf(1) !== -1 && setExclude.some(function (c) { return c.kind === "basic"; });
+          const arrExclude = plannerSeqBuildCandidateActions(synthSim, [skillA, skillB], {
+            disallowChargeSkills: false,
+            excludeSlots: [1]
+          });
+          const slotsArrExclude = arrExclude.map(function (c) { return c.slot; });
+          const arrExcludeOk = slotsArrExclude.indexOf(1) === -1 && slotsArrExclude.indexOf(0) !== -1 && arrExclude.some(function (c) { return c.kind === "basic"; });
+          const passed = noExcludeHasA && noExcludeHasB && noExcludeHasBasic && setExcludeOk && arrExcludeOk;
+          addCheck(
+            "planner_sequence_exclude_slots_honored",
+            passed,
+            {
+              noExcludeSlots: slotsNoExclude,
+              setExcludeSlots: slotsSetExclude,
+              arrExcludeSlots: slotsArrExclude,
+              noExcludeHasA: noExcludeHasA,
+              noExcludeHasB: noExcludeHasB,
+              noExcludeHasBasic: noExcludeHasBasic,
+              setExcludeOk: setExcludeOk,
+              arrExcludeOk: arrExcludeOk
+            },
+            false
+          );
+        } else {
+          addCheck("planner_sequence_exclude_slots_honored", false, { reason: "fn_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_sequence_exclude_slots_honored threw", err);
+        addCheck("planner_sequence_exclude_slots_honored", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Planner rewrite v1.1 — `Config.planner.sequencePlanner.simBasicSwingsBetweenActions` is now implemented in the simulator.
+      //   Logic (bullet-list):
+      //     • Build a synthetic flat sim state (HP/MP set, basicSwingIntervalSec = 1s, expectedBasicHit = 50, mobFactor = 1).
+      //     • Define a long-cast skill (castTimeSec = 2.5s, immediateDamage = 100). With interleave ENABLED (default true) we expect
+      //       extraBasicSwings = 2 (two full swing intervals fit in 2.5s) and total damageDealt >= 100 + 2*50 = 200.
+      //     • Define an instant skill (castTimeSec = 0, clamped to 0.1s actionTimeSec). With interleave ENABLED we expect extraBasicSwings = 0
+      //       (0.1s < 1s interval) and damageDealt == immediateDamage = 100.
+      //     • Flip `Config.planner.sequencePlanner.simBasicSwingsBetweenActions = false`, repeat the long-cast simulation — expect extraBasicSwings = 0
+      //       and damageDealt == 100 (interleave disabled).
+      //     • Restore the previous config value before returning.
+      //   This verifies the flag is honored AND the math approximates the intended model.
+      try {
+        if (typeof plannerSeqSimulateAction === "function" && Config.planner && Config.planner.sequencePlanner) {
+          const prevFlag = Config.planner.sequencePlanner.simBasicSwingsBetweenActions;
+          const longSkill = {
+            slot: 0, name: "Long Cast", normalizedKey: "longcast",
+            isAttack: true, hasDirectDamage: true, manaCost: 0, castTimeSec: 2.5, cooldownSec: 0,
+            immediateDamage: 100, dotPerSec: 0, dotDurationSec: 0, damageType: "physical",
+            isCharge: false, chargeMaxSec: 0, chargeGearPct: 0, isAoe: false, isControl: false,
+            controlDurationSec: 0, tacticalRoles: ["offensive"], semantic: null
+          };
+          const instantSkill = {
+            slot: 1, name: "Instant", normalizedKey: "instant",
+            isAttack: true, hasDirectDamage: true, manaCost: 0, castTimeSec: 0, cooldownSec: 0,
+            immediateDamage: 100, dotPerSec: 0, dotDurationSec: 0, damageType: "physical",
+            isCharge: false, chargeMaxSec: 0, chargeGearPct: 0, isAoe: false, isControl: false,
+            controlDurationSec: 0, tacticalRoles: ["offensive"], semantic: null
+          };
+          function mkInterleaveSim() {
+            return {
+              elapsedSec: 0,
+              playerHpCur: 1000, playerHpMax: 1000,
+              playerMpCur: 100, playerMpMax: 100,
+              targetHpCur: 5000, targetHpMax: 5000,
+              enemyCount: 1, activeAttackers: 1, pressure: 0,
+              incomingHpLossPerSec: 0,
+              basicSwingIntervalSec: 1,
+              expectedBasicHit: 50,
+              basicAttackLikelyUnderway: false,
+              skillCooldownReadyAtSec: {},
+              targetFlags: {
+                hasMagicResistShred: false, hasSlow: false, hasDistract: false,
+                magicResistShredRemainingSec: 0, slowRemainingSec: 0, distractRemainingSec: 0
+              },
+              lastActionTimeSec: 0, mpWasted: 0, hpLost: 0, mobFactor: 1,
+              basicSwingAccumulatorSec: 0, extraBasicSwingsTotal: 0, extraBasicDamageTotal: 0
+            };
+          }
+          Config.planner.sequencePlanner.simBasicSwingsBetweenActions = true;
+          const longOn = plannerSeqSimulateAction(mkInterleaveSim(), {
+            kind: "skill", name: "Long Cast", slot: 0, skill: longSkill
+          });
+          const instantOn = plannerSeqSimulateAction(mkInterleaveSim(), {
+            kind: "skill", name: "Instant", slot: 1, skill: instantSkill
+          });
+          Config.planner.sequencePlanner.simBasicSwingsBetweenActions = false;
+          const longOff = plannerSeqSimulateAction(mkInterleaveSim(), {
+            kind: "skill", name: "Long Cast", slot: 0, skill: longSkill
+          });
+          Config.planner.sequencePlanner.simBasicSwingsBetweenActions = prevFlag;
+          const longOnSwings = longOn.action.extraBasicSwings;
+          const longOnDamage = longOn.damageDealt;
+          const instantOnSwings = instantOn.action.extraBasicSwings;
+          const instantOnDamage = instantOn.damageDealt;
+          const longOffSwings = longOff.action.extraBasicSwings;
+          const longOffDamage = longOff.damageDealt;
+          // Expectations.
+          const longOnSwingsExpected = longOnSwings === 2;
+          const longOnDamageExpected = longOnDamage >= 199.99 && longOnDamage <= 200.01; // 100 + 50 + 50
+          const instantOnSwingsExpected = instantOnSwings === 0;
+          const instantOnDamageExpected = instantOnDamage === 100;
+          const longOffSwingsExpected = longOffSwings === 0;
+          const longOffDamageExpected = longOffDamage === 100;
+          const passed = longOnSwingsExpected && longOnDamageExpected && instantOnSwingsExpected && instantOnDamageExpected && longOffSwingsExpected && longOffDamageExpected;
+          addCheck(
+            "planner_sequence_basic_swing_interleave",
+            passed,
+            {
+              longCastInterleaveOn: { swings: longOnSwings, damage: longOnDamage },
+              instantInterleaveOn: { swings: instantOnSwings, damage: instantOnDamage },
+              longCastInterleaveOff: { swings: longOffSwings, damage: longOffDamage },
+              longOnSwingsExpected: longOnSwingsExpected,
+              longOnDamageExpected: longOnDamageExpected,
+              instantOnSwingsExpected: instantOnSwingsExpected,
+              instantOnDamageExpected: instantOnDamageExpected,
+              longOffSwingsExpected: longOffSwingsExpected,
+              longOffDamageExpected: longOffDamageExpected
+            },
+            false
+          );
+        } else {
+          addCheck("planner_sequence_basic_swing_interleave", false, { reason: "fn_or_config_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_sequence_basic_swing_interleave threw", err);
+        addCheck("planner_sequence_basic_swing_interleave", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
       // AI CHANGED: Night mode — persistence round-trip via the shared autoFarmUi blob (key `ligmarbot.autoFarmUi.v1`).
       try {
         if (

@@ -3256,6 +3256,8 @@
 
   // AI CHANGED: Build candidate actions from current sim state. For each skill ready + mana-affordable, generate at least one action.
   // Charge skills additionally generate a partial-release variant so the planner can compare full vs partial release directly.
+  // AI CHANGED: Planner rewrite v1.1 — `opts.excludeSlots` (Set of slot indexes) is honored INSIDE candidate generation at all depths so
+  // excluded slots never appear in any sequence position (matches legacy openerHorizonSim hard-exclude semantics).
   function plannerSeqBuildCandidateActions(simState, normalizedSkills, opts) {
     const out = [];
     out.push({
@@ -3264,10 +3266,35 @@
       slot: null
     });
     const allowCharge = !(opts && opts.disallowChargeSkills === true);
-    const mpCur = Number.isFinite(simState.player.mpCur) ? simState.player.mpCur : null;
+    // AI CHANGED: Planner rewrite v1.1 — accept Set or Array via excludeSlots so callers can pass either shape; depth-0 + deeper depths filter equally.
+    let excludeSlots = null;
+    if (opts && opts.excludeSlots instanceof Set) {
+      excludeSlots = opts.excludeSlots;
+    } else if (opts && Array.isArray(opts.excludeSlots) && opts.excludeSlots.length > 0) {
+      excludeSlots = new Set();
+      for (let ex = 0; ex < opts.excludeSlots.length; ex += 1) {
+        const v = opts.excludeSlots[ex];
+        if (typeof v === "number" && v >= 0) {
+          excludeSlots.add(v);
+        }
+      }
+      if (excludeSlots.size === 0) {
+        excludeSlots = null;
+      }
+    }
+    // AI CHANGED: Planner rewrite v1.1 — fix latent bug: simState is FLAT (`playerMpCur`); previous code read `simState.player.mpCur` which threw
+    // a TypeError silently swallowed by the outer try/catch in plannerPickSkillOpeningPick, causing the new sequence planner to never actually run
+    // in production. Read the flat field instead. Falls back to `simState.player?.mpCur` only when a caller hand-builds a nested-shape state.
+    const mpCur = Number.isFinite(simState.playerMpCur)
+      ? simState.playerMpCur
+      : (simState.player && Number.isFinite(simState.player.mpCur) ? simState.player.mpCur : null);
     for (let i = 0; i < normalizedSkills.length; i += 1) {
       const s = normalizedSkills[i];
       if (!s || !s.isAttack || !s.hasDirectDamage) {
+        continue;
+      }
+      // AI CHANGED: Planner rewrite v1.1 — slot excluded for this burst (e.g. recent click failure / target-swap retry); skip entirely.
+      if (excludeSlots && typeof s.slot === "number" && excludeSlots.has(s.slot)) {
         continue;
       }
       // Cooldown gate from sim cooldowns (set after each cast simulation).
@@ -3325,6 +3352,8 @@
 
   // AI CHANGED: Simulate one action against simState; returns a fresh simState (immutable shape). All timing/HP/damage math lives here so
   // the search code can stay declarative.
+  // AI CHANGED: Planner rewrite v1.1 — additionally carries `basicSwingAccumulatorSec` plus totals (`extraBasicSwingsTotal`, `extraBasicDamageTotal`)
+  // so the simulator can correctly account for interleaved basic auto-attacks between skill casts when `simBasicSwingsBetweenActions` is enabled.
   function plannerSeqSimulateAction(simState, action) {
     const next = {
       elapsedSec: simState.elapsedSec,
@@ -3353,7 +3382,11 @@
       lastActionTimeSec: simState.lastActionTimeSec,
       mpWasted: simState.mpWasted,
       hpLost: simState.hpLost,
-      mobFactor: simState.mobFactor
+      mobFactor: simState.mobFactor,
+      // AI CHANGED: Planner rewrite v1.1 — interleaved basic-swing accounting state. Defaults to 0 when missing so callers using older sim shapes still work.
+      basicSwingAccumulatorSec: Number.isFinite(simState.basicSwingAccumulatorSec) ? simState.basicSwingAccumulatorSec : 0,
+      extraBasicSwingsTotal: Number.isFinite(simState.extraBasicSwingsTotal) ? simState.extraBasicSwingsTotal : 0,
+      extraBasicDamageTotal: Number.isFinite(simState.extraBasicDamageTotal) ? simState.extraBasicDamageTotal : 0
     };
     const swingInterval = next.basicSwingIntervalSec > 0 ? next.basicSwingIntervalSec : 1;
     let actionTimeSec = 0;
@@ -3440,6 +3473,49 @@
       }
       action2.simChargeSec = +chargeSec.toFixed(3);
     }
+    // AI CHANGED: Planner rewrite v1.1 — interleaved basic-swing accounting.
+    //   Logic (bullet-list):
+    //     • Config gate `Config.planner.sequencePlanner.simBasicSwingsBetweenActions` (default true) controls whether basics fire alongside skill casts.
+    //     • `basic` action: it IS one swing; reset accumulator to 0 (the next swing is `swingInterval` away from now).
+    //     • `skill` action (instant or short cast): the game's auto-attack continues during the brief skill animation; we accumulate `actionTimeSec`
+    //       and emit one basic-hit per `swingInterval`. This is the case the user explicitly called out ("game often auto-starts basic attack").
+    //     • `skill_charge` action: holding a charge suppresses auto-attack in-game (you're holding the bow / channel), so we DO NOT add basics during
+    //       the charge window; we also clear the accumulator so the swing timer effectively restarts when the charge ends.
+    //     • Interleaved swings benefit only from `expectedBasicHit * mobFactor` (no debuff scaling) — basics are not magic-shred amplified.
+    //     • Telemetry: per-action `extraBasicSwings` + `extraBasicDamage`; cumulative `extraBasicSwingsTotal` + `extraBasicDamageTotal` on simState.
+    //   Why this matters: previously TTK estimates for any short-cast skill ignored the basic damage that fires alongside, making short-cast openers
+    //   look weaker than they really are vs basic-only sequences; and full-charge Sniper Shot looked artificially cheap vs partial-release.
+    let extraBasicSwings = 0;
+    let extraBasicDamage = 0;
+    const interleaveEnabled = !(
+      Config.planner &&
+      Config.planner.sequencePlanner &&
+      Config.planner.sequencePlanner.simBasicSwingsBetweenActions === false
+    );
+    if (interleaveEnabled) {
+      if (action.kind === "skill") {
+        next.basicSwingAccumulatorSec += actionTimeSec;
+        if (Number.isFinite(next.expectedBasicHit) && next.expectedBasicHit > 0 && swingInterval > 0) {
+          while (next.basicSwingAccumulatorSec >= swingInterval) {
+            const hit = next.expectedBasicHit * (Number.isFinite(next.mobFactor) ? next.mobFactor : 1);
+            damageDealt += hit;
+            extraBasicSwings += 1;
+            extraBasicDamage += hit;
+            next.basicSwingAccumulatorSec -= swingInterval;
+          }
+        }
+      } else if (action.kind === "basic") {
+        // The action itself IS the basic swing; reset accumulator so the next swing is `swingInterval` away.
+        next.basicSwingAccumulatorSec = 0;
+      } else if (action.kind === "skill_charge") {
+        // Charge hold preempts the auto-attack; the swing timer is reset by the channel.
+        next.basicSwingAccumulatorSec = 0;
+      }
+    }
+    next.extraBasicSwingsTotal += extraBasicSwings;
+    next.extraBasicDamageTotal += extraBasicDamage;
+    action2.extraBasicSwings = extraBasicSwings;
+    action2.extraBasicDamage = +extraBasicDamage.toFixed(2);
     // Apply damage to target.
     if (Number.isFinite(next.targetHpCur)) {
       next.targetHpCur = Math.max(0, next.targetHpCur - damageDealt);
@@ -3523,7 +3599,12 @@
       lastActionTimeSec: 0,
       mpWasted: 0,
       hpLost: 0,
-      mobFactor: combatState.mobFactor
+      mobFactor: combatState.mobFactor,
+      // AI CHANGED: Planner rewrite v1.1 — initial interleaved basic-swing accounting state. Start at 0 to remain conservative on TTK
+      // (don't credit a pre-baked auto-basic that may not have actually landed). The simulator advances this per-action.
+      basicSwingAccumulatorSec: 0,
+      extraBasicSwingsTotal: 0,
+      extraBasicDamageTotal: 0
     };
     let beam = [{
       sim: initialSimState,
@@ -3544,7 +3625,11 @@
           completed.push(node);
           continue;
         }
-        const candidates = plannerSeqBuildCandidateActions(node.sim, normalizedSkills, { disallowChargeSkills: disallowCharge });
+        // AI CHANGED: Planner rewrite v1.1 — forward `excludeSlots` (set/array) into candidate generation so excluded slots never appear at any depth.
+        const candidates = plannerSeqBuildCandidateActions(node.sim, normalizedSkills, {
+          disallowChargeSkills: disallowCharge,
+          excludeSlots: opts && opts.excludeSlots ? opts.excludeSlots : null
+        });
         for (let c = 0; c < candidates.length; c += 1) {
           const cand = candidates[c];
           const stepped = plannerSeqSimulateAction(node.sim, cand);
@@ -3558,7 +3643,10 @@
               chargeMode: cand.chargeMode || null,
               chargeReleaseFraction: Number.isFinite(cand.chargeReleaseFraction) ? cand.chargeReleaseFraction : null,
               actionTimeSec: +stepped.actionTimeSec.toFixed(3),
-              damageDealt: +stepped.damageDealt.toFixed(2)
+              damageDealt: +stepped.damageDealt.toFixed(2),
+              // AI CHANGED: Planner rewrite v1.1 — surface interleaved-basic telemetry per step (always populated; zeros when interleave disabled or N/A).
+              extraBasicSwings: Number.isFinite(stepped.action.extraBasicSwings) ? stepped.action.extraBasicSwings : 0,
+              extraBasicDamage: Number.isFinite(stepped.action.extraBasicDamage) ? stepped.action.extraBasicDamage : 0
             }]),
             cumulativeDamage: node.cumulativeDamage + stepped.damageDealt,
             killedAtSec: null
@@ -3735,6 +3823,9 @@
 
   // AI CHANGED: Sequence-planner ENTRY POINT. Returns adapter-shape pick (or null when planner cannot decide / no skills).
   // Also stores last decision in Runtime.planner.lastSequencePlan for diagnostics.
+  // AI CHANGED: Planner rewrite v1.1 — `opts.excludeSlots` (Set or Array of slot indexes) is now honored INSIDE sequence search; excluded slots
+  // never appear as the first action OR any later action, matching legacy openerHorizonSim hard-exclude semantics so alternate-opener retries can
+  // safely ask the new planner for a next-best allowed sequence instead of silently falling back to the legacy planner.
   function plannerSelectSequencePick(userOpts) {
     const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
     const sp = Config.planner && Config.planner.sequencePlanner ? Config.planner.sequencePlanner : {};
@@ -3743,6 +3834,22 @@
     }
     if (sp.enabled === false) {
       return null;
+    }
+    // AI CHANGED: Planner rewrite v1.1 — normalize excludeSlots once into a Set, then pass to depth-0 feasibility check and the full beam search.
+    let excludeSlots = null;
+    if (opts.excludeSlots instanceof Set) {
+      excludeSlots = opts.excludeSlots;
+    } else if (Array.isArray(opts.excludeSlots) && opts.excludeSlots.length > 0) {
+      excludeSlots = new Set();
+      for (let ex = 0; ex < opts.excludeSlots.length; ex += 1) {
+        const v = opts.excludeSlots[ex];
+        if (typeof v === "number" && v >= 0) {
+          excludeSlots.add(v);
+        }
+      }
+      if (excludeSlots.size === 0) {
+        excludeSlots = null;
+      }
     }
     const combatState = plannerSeqBuildCombatState(opts);
     if (!combatState || combatState.fight.combatMode === "easy") {
@@ -3754,13 +3861,15 @@
       return null;
     }
     // Mana / cooldown gate: at least one feasible candidate must exist at depth 0.
+    // AI CHANGED: Planner rewrite v1.1 — pass excludeSlots here so the depth-0 feasibility check matches what the beam search will actually expand.
     const initialSim = {
       elapsedSec: 0,
       playerMpCur: combatState.player.mpCur,
       skillCooldownReadyAtSec: {}
     };
     const initialActions = plannerSeqBuildCandidateActions(initialSim, normalizedSkills, {
-      disallowChargeSkills: opts.disallowChargeSkills === true
+      disallowChargeSkills: opts.disallowChargeSkills === true,
+      excludeSlots: excludeSlots
     });
     const hasFeasibleSkill = initialActions.some(function (a) { return a.kind === "skill" || a.kind === "skill_charge"; });
     if (!hasFeasibleSkill) {
@@ -3769,18 +3878,21 @@
         ok: false,
         reason: "no_feasible_skill_at_depth0",
         combatState: combatState,
-        candidates: initialActions
+        candidates: initialActions,
+        excludeSlotsApplied: excludeSlots ? Array.from(excludeSlots) : null
       };
       return null;
     }
     const seqs = plannerSeqSearchSequences(combatState, normalizedSkills, {
-      disallowChargeSkills: opts.disallowChargeSkills === true
+      disallowChargeSkills: opts.disallowChargeSkills === true,
+      excludeSlots: excludeSlots
     });
     if (!seqs || seqs.length === 0) {
       Runtime.planner.lastSequencePlan = {
         ok: false,
         reason: "no_sequences_returned",
-        combatState: combatState
+        combatState: combatState,
+        excludeSlotsApplied: excludeSlots ? Array.from(excludeSlots) : null
       };
       return null;
     }
@@ -3798,7 +3910,8 @@
       bestSequence: plannerSeqDescribeNode(best, combatState),
       topSequences: diagnosticTop,
       firstAction: firstAction || null,
-      secondActionHint: secondAction || null
+      secondActionHint: secondAction || null,
+      excludeSlotsApplied: excludeSlots ? Array.from(excludeSlots) : null
     };
     if (Config.planner.sequencePlanner && Config.planner.sequencePlanner.debugLog === true) {
       Logger.log("PLANNER", "sequencePlanner pick", Runtime.planner.lastSequencePlan);
@@ -3808,7 +3921,8 @@
       best: best,
       firstAction: firstAction,
       secondAction: secondAction,
-      normalizedSkills: normalizedSkills
+      normalizedSkills: normalizedSkills,
+      excludeSlotsApplied: excludeSlots ? Array.from(excludeSlots) : null
     };
   }
 
@@ -4066,8 +4180,11 @@
       Config.planner.sequencePlanner.enabled !== false
     ) {
       try {
+        // AI CHANGED: Planner rewrite v1.1 — forward the same `exclude` Set used by the legacy filter so the new sequence planner
+        // can avoid excluded slots INSIDE search instead of only catching them after adaptation, preserving alternate-opener retry behavior.
         const seqPick = plannerSelectSequencePick({
           disallowChargeSkills: disallowChargeSkills,
+          excludeSlots: exclude,
           liveState: st
         });
         if (seqPick) {
@@ -4097,7 +4214,9 @@
                     excluded: breakdown.exclude,
                     chargeGuard: breakdown.chargeGuard
                   },
-                  postRetargetNoChargeGuard: disallowChargeSkills
+                  postRetargetNoChargeGuard: disallowChargeSkills,
+                  // AI CHANGED: Planner rewrite v1.1 — surface excluded slots that the sequence planner honored, so retry-loop callers can verify.
+                  excludeSlotsApplied: exclude && exclude.size ? Array.from(exclude) : null
                 };
                 return {
                   slot: pickedSlot,
