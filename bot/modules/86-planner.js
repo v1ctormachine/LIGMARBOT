@@ -4123,7 +4123,7 @@
     if (Config.planner.sequencePlanner && Config.planner.sequencePlanner.debugLog === true) {
       Logger.log("PLANNER", "sequencePlanner pick", Runtime.planner.lastSequencePlan);
     }
-    return {
+    const seqPickResult = {
       combatState: combatState,
       best: best,
       firstAction: firstAction,
@@ -4131,6 +4131,25 @@
       normalizedSkills: normalizedSkills,
       excludeSlotsApplied: excludeSlots ? Array.from(excludeSlots) : null
     };
+    // AI CHANGED: Planner Part 2 — side-effect: build + store the runtime-consumed execution plan unless caller opted out.
+    //   This keeps the existing `plannerPickSkillOpeningPick` runtime path synced with `Runtime.planner.activeExecutionPlan`
+    //   without requiring 85-combat.js to know about the new plan layer at every call site.
+    if (opts.skipExecutionPlanSync !== true) {
+      try {
+        const liveStateForPlan = opts.liveState && typeof opts.liveState === "object" ? opts.liveState : null;
+        const executionPlan = plannerExecutionPlanFromSeqPick(seqPickResult, {
+          liveState: liveStateForPlan,
+          disallowChargeSkills: opts.disallowChargeSkills === true,
+          firstBurstAfterRetarget: opts.firstBurstAfterRetarget === true
+        });
+        if (executionPlan) {
+          plannerSetActiveExecutionPlan(executionPlan);
+        }
+      } catch (err) {
+        Logger.warn("PLANNER", "plannerSelectSequencePick: execution plan sync failed", err);
+      }
+    }
+    return seqPickResult;
   }
 
   // AI CHANGED: Compatibility adapter — translate a sequence-planner pick into the legacy { slot, record, chargeReleasePlan, queuedAction } shape
@@ -4230,7 +4249,596 @@
   }
 
   // ───────────────────────────────────────────────────────────────────────────
-  // End planner rewrite v1 foundation.
+  // Planner rewrite Part 2 — execution plan layer (runtime CONSUMES this, not just diagnostics).
+  // ───────────────────────────────────────────────────────────────────────────
+  //
+  // Purpose:
+  //   Convert a sequence-planner pick (`plannerSelectSequencePick().best.actions`) into a concrete
+  //   "execution plan" object that the combat runtime (`85-combat.js`) follows step-by-step.
+  //
+  // Plan shape (stable, see runUiTestBundle `planner_execution_plan_shape`):
+  //   {
+  //     version: 2,
+  //     planId, builtAt, targetFingerprint,
+  //     combatStateAtBuild: { compact snapshot — player HP/MP, target HP, enemy count, attackerCount, pressure },
+  //     actions: [
+  //       {
+  //         index, kind ("basic" | "skill" | "skill_charge"),
+  //         slot (null for basic), name, normalizedKey, damageType,
+  //         chargeMode (null | "full" | "partial"), chargeReleaseFraction,
+  //         predictedDamageDealt, predictedActionTimeSec, predictedEndElapsedSec,
+  //         reasonTags: [ ... semantic-scoring reason tags from sequence search ... ]
+  //       }, ...
+  //     ],
+  //     totalActions, currentIndex,
+  //     selectionReason, predictedKillAtSec, score,
+  //     valid (bool), invalidReason (string|null), replanReason (string|null),
+  //     stepHistory: [ { index, kind, slot, name, result, at } ],
+  //     excludeSlotsApplied
+  //   }
+  //
+  // Lifecycle:
+  //   1. `plannerBuildExecutionPlan(opts)` runs the sequence planner and stores plan in `Runtime.planner.activeExecutionPlan`.
+  //   2. Runtime executes step 0 (opener click), then arms the combat queue with step 1 (via `plannerNextCombatQueueAction`).
+  //   3. As the queue fires step 1, it calls `plannerAdvanceExecutionPlanStep` and the chain continues with step 2+.
+  //   4. Invalidation: `plannerInvalidateExecutionPlan(reason)` on retarget / fingerprint change / no_progress / target death.
+  //   5. `plannerShouldReplanForExecutionPlan({ liveState })` lets the executor probe whether to rebuild before next burst.
+  //
+  // Fail-safe:
+  //   When no plan can be built (planner disabled, no feasible skill, easy mode), `plannerBuildExecutionPlan` returns null and runtime
+  //   keeps the legacy basic-attack fallback through `plannerBuildCombatQueueAction`. Plan-driven queue rearm gracefully degrades to legacy.
+  // ───────────────────────────────────────────────────────────────────────────
+
+  function plannerGenerateExecutionPlanId() {
+    return "ep_" + Date.now().toString(36) + "_" + Math.floor(Math.random() * 1e6).toString(36);
+  }
+
+  function plannerExecutionPlanCompactState(combatState, liveState) {
+    const live = liveState && typeof liveState === "object" ? liveState : null;
+    const target = combatState && combatState.target ? combatState.target : null;
+    const player = combatState && combatState.player ? combatState.player : null;
+    const fight = combatState && combatState.fight ? combatState.fight : null;
+    return {
+      target: target
+        ? {
+            fingerprintKey: target.fingerprintKey || null,
+            hpCur: Number.isFinite(target.hpCur) ? target.hpCur : null,
+            hpMax: Number.isFinite(target.hpMax) ? target.hpMax : null,
+            magicResistShred: target.flags && target.flags.hasMagicResistShred === true,
+            shredRemainingSec:
+              target.flags && Number.isFinite(target.flags.magicResistShredRemainingSec)
+                ? target.flags.magicResistShredRemainingSec
+                : null
+          }
+        : null,
+      player: player
+        ? {
+            hpCur: Number.isFinite(player.hpCur) ? player.hpCur : null,
+            hpMax: Number.isFinite(player.hpMax) ? player.hpMax : null,
+            mpCur: Number.isFinite(player.mpCur) ? player.mpCur : null,
+            mpMax: Number.isFinite(player.mpMax) ? player.mpMax : null
+          }
+        : null,
+      fight: fight
+        ? {
+            enemyCount: Number.isFinite(fight.enemyCount) ? fight.enemyCount : null,
+            activeAttackerCount: Number.isFinite(fight.activeAttackerCount) ? fight.activeAttackerCount : null,
+            pressure: Number.isFinite(fight.pressure) ? +fight.pressure.toFixed(3) : null,
+            combatMode: fight.combatMode || null
+          }
+        : null,
+      livePlayerHpCur:
+        live && live.player && live.player.hp && live.player.hp.valid && Number.isFinite(live.player.hp.cur)
+          ? live.player.hp.cur
+          : null,
+      liveTargetHpCur:
+        live && live.combat && live.combat.targetHp && live.combat.targetHp.valid && Number.isFinite(live.combat.targetHp.cur)
+          ? live.combat.targetHp.cur
+          : null
+    };
+  }
+
+  function plannerExecutionPlanMaterializeAction(rawAction, index, combatState) {
+    const kind = rawAction && rawAction.kind === "skill_charge"
+      ? "skill_charge"
+      : rawAction && rawAction.kind === "skill"
+      ? "skill"
+      : "basic";
+    const skill = rawAction && rawAction.skill && typeof rawAction.skill === "object" ? rawAction.skill : null;
+    const slot = skill && Number.isFinite(skill.slot) ? skill.slot : null;
+    const damageType =
+      skill && typeof skill.damageType === "string" && skill.damageType.length > 0 ? skill.damageType : "unknown";
+    const chargeMode =
+      kind === "skill_charge" && rawAction.chargeMode === "partial"
+        ? "partial"
+        : kind === "skill_charge"
+        ? "full"
+        : null;
+    const chargeFrac =
+      kind === "skill_charge" && Number.isFinite(rawAction.chargeReleaseFraction)
+        ? Math.max(0, Math.min(1, rawAction.chargeReleaseFraction))
+        : null;
+    // Predicted timing: each sim action has actionTimeSec recorded into the simulator state by `plannerSeqSimulateAction`.
+    // We expose the predicted end-of-action elapsed time and damageDealt where the search node already carries them.
+    const predictedDamageDealt =
+      Number.isFinite(rawAction.damageDealt) ? +rawAction.damageDealt.toFixed(2) : null;
+    const predictedActionTimeSec =
+      Number.isFinite(rawAction.actionTimeSec) ? +rawAction.actionTimeSec.toFixed(3) : null;
+    const predictedEndElapsedSec =
+      Number.isFinite(rawAction.elapsedAfterSec) ? +rawAction.elapsedAfterSec.toFixed(3) : null;
+    const reasonTags =
+      Array.isArray(rawAction.semanticReasonTags) ? rawAction.semanticReasonTags.slice(0, 6) : [];
+    return {
+      index: index,
+      kind: kind,
+      slot: slot,
+      name: skill && typeof skill.name === "string" ? skill.name : (kind === "basic" ? "Basic Attack" : ""),
+      normalizedKey: skill && typeof skill.normalizedKey === "string" ? skill.normalizedKey : null,
+      damageType: damageType,
+      chargeMode: chargeMode,
+      chargeReleaseFraction: chargeFrac,
+      predictedDamageDealt: predictedDamageDealt,
+      predictedActionTimeSec: predictedActionTimeSec,
+      predictedEndElapsedSec: predictedEndElapsedSec,
+      reasonTags: reasonTags
+    };
+  }
+
+  function plannerExecutionPlanFromSeqPick(seqPick, userOpts) {
+    if (!seqPick || !seqPick.best || !Array.isArray(seqPick.best.actions) || seqPick.best.actions.length === 0) {
+      return null;
+    }
+    const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
+    const combatState = seqPick.combatState || null;
+    const targetFingerprint =
+      combatState && combatState.target && combatState.target.fingerprintKey
+        ? combatState.target.fingerprintKey
+        : (typeof plannerResolveCombatEpisodeTargetKey === "function" ? plannerResolveCombatEpisodeTargetKey() : null);
+    const liveState = opts.liveState && typeof opts.liveState === "object" ? opts.liveState : null;
+    const actions = seqPick.best.actions.map(function (a, i) {
+      return plannerExecutionPlanMaterializeAction(a, i, combatState);
+    });
+    return {
+      version: 2,
+      planId: plannerGenerateExecutionPlanId(),
+      builtAt: Date.now(),
+      targetFingerprint: targetFingerprint,
+      combatStateAtBuild: plannerExecutionPlanCompactState(combatState, liveState),
+      actions: actions,
+      totalActions: actions.length,
+      currentIndex: 0,
+      selectionReason: "sequence_planner_v1",
+      predictedKillAtSec:
+        Number.isFinite(seqPick.best.killedAtSec) ? +seqPick.best.killedAtSec.toFixed(3) : null,
+      score:
+        Number.isFinite(seqPick.best._finalScore)
+          ? +seqPick.best._finalScore.toFixed(3)
+          : (Number.isFinite(seqPick.best._provisionalScore) ? +seqPick.best._provisionalScore.toFixed(3) : null),
+      valid: true,
+      invalidReason: null,
+      replanReason: null,
+      stepHistory: [],
+      excludeSlotsApplied: Array.isArray(seqPick.excludeSlotsApplied) ? seqPick.excludeSlotsApplied.slice() : null,
+      disallowChargeSkills: !!opts.disallowChargeSkills,
+      firstBurstAfterRetarget: !!opts.firstBurstAfterRetarget
+    };
+  }
+
+  // AI CHANGED: Planner Part 2 — store the active execution plan in runtime + bump telemetry. Safe to pass null (clears).
+  function plannerSetActiveExecutionPlan(plan) {
+    if (!Runtime || !Runtime.planner) {
+      return;
+    }
+    Runtime.planner.activeExecutionPlan = plan || null;
+    if (Runtime.autoFarm && Runtime.autoFarm.combatExecution) {
+      Runtime.autoFarm.combatExecution.planId = plan && plan.planId ? plan.planId : null;
+      Runtime.autoFarm.combatExecution.currentStepIndex = plan ? plan.currentIndex : null;
+      if (plan) {
+        Runtime.autoFarm.combatExecution.plansBuilt = (Runtime.autoFarm.combatExecution.plansBuilt || 0) + 1;
+      }
+    }
+  }
+
+  // AI CHANGED: Planner Part 2 — primary public entry to build the execution plan. Wraps `plannerSelectSequencePick` so callers
+  // do not need to know about the seqPick intermediate shape. Returns null when planner cannot decide (caller falls back to legacy basic path).
+  function plannerBuildExecutionPlan(userOpts) {
+    const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
+    const seqPick = plannerSelectSequencePick(opts);
+    if (!seqPick) {
+      return null;
+    }
+    const plan = plannerExecutionPlanFromSeqPick(seqPick, opts);
+    if (!plan) {
+      return null;
+    }
+    plannerSetActiveExecutionPlan(plan);
+    return plan;
+  }
+
+  // AI CHANGED: Planner Part 2 — accessors used by runtime + diagnostics.
+  function plannerGetActiveExecutionPlan() {
+    return Runtime && Runtime.planner ? Runtime.planner.activeExecutionPlan || null : null;
+  }
+  function plannerGetActiveExecutionPlanStep(planArg) {
+    const plan = planArg || plannerGetActiveExecutionPlan();
+    if (!plan || !plan.valid || !Array.isArray(plan.actions)) {
+      return null;
+    }
+    const idx = Number.isFinite(plan.currentIndex) ? plan.currentIndex : 0;
+    if (idx < 0 || idx >= plan.actions.length) {
+      return null;
+    }
+    return plan.actions[idx];
+  }
+  function plannerPeekExecutionPlanStep(planArg, offset) {
+    const plan = planArg || plannerGetActiveExecutionPlan();
+    if (!plan || !plan.valid || !Array.isArray(plan.actions)) {
+      return null;
+    }
+    const idx = (Number.isFinite(plan.currentIndex) ? plan.currentIndex : 0) + (Number.isFinite(offset) ? offset : 0);
+    if (idx < 0 || idx >= plan.actions.length) {
+      return null;
+    }
+    return plan.actions[idx];
+  }
+
+  // AI CHANGED: Planner Part 2 — invalidation helper. Sets valid=false + reason, mirrors reason into runtime telemetry.
+  function plannerInvalidateExecutionPlan(reason, details) {
+    const plan = plannerGetActiveExecutionPlan();
+    if (!plan) {
+      if (Runtime && Runtime.planner) {
+        Runtime.planner.lastExecutionPlanInvalidationReason = reason || "no_active_plan";
+      }
+      return null;
+    }
+    plan.valid = false;
+    plan.invalidReason = reason || "unspecified";
+    plan.invalidDetails = details && typeof details === "object" ? details : null;
+    if (Runtime && Runtime.planner) {
+      Runtime.planner.lastExecutionPlanInvalidationReason = plan.invalidReason;
+    }
+    if (Runtime.autoFarm && Runtime.autoFarm.combatExecution) {
+      Runtime.autoFarm.combatExecution.lastInvalidationReason = plan.invalidReason;
+      Runtime.autoFarm.combatExecution.plansInvalidated = (Runtime.autoFarm.combatExecution.plansInvalidated || 0) + 1;
+    }
+    return plan;
+  }
+
+  // AI CHANGED: Planner Part 2 — advance cursor + record step history. Returns the advanced plan (or null if no plan).
+  function plannerAdvanceExecutionPlanStep(stepResult) {
+    const plan = plannerGetActiveExecutionPlan();
+    if (!plan || !plan.valid || !Array.isArray(plan.actions)) {
+      return null;
+    }
+    const idx = Number.isFinite(plan.currentIndex) ? plan.currentIndex : 0;
+    const action = idx >= 0 && idx < plan.actions.length ? plan.actions[idx] : null;
+    if (action) {
+      plan.stepHistory.push({
+        index: action.index,
+        kind: action.kind,
+        slot: action.slot,
+        name: action.name,
+        result: stepResult && typeof stepResult === "object" ? stepResult.result || null : null,
+        source: stepResult && typeof stepResult === "object" ? stepResult.source || null : null,
+        at: Date.now()
+      });
+      if (plan.stepHistory.length > 20) {
+        plan.stepHistory.splice(0, plan.stepHistory.length - 20);
+      }
+    }
+    plan.currentIndex = idx + 1;
+    if (Runtime.autoFarm && Runtime.autoFarm.combatExecution) {
+      Runtime.autoFarm.combatExecution.currentStepIndex = plan.currentIndex;
+      Runtime.autoFarm.combatExecution.lastStepKind = action ? action.kind : null;
+      Runtime.autoFarm.combatExecution.lastStepSlot = action ? action.slot : null;
+      Runtime.autoFarm.combatExecution.lastStepName = action ? action.name : null;
+      Runtime.autoFarm.combatExecution.lastStepResult =
+        stepResult && typeof stepResult === "object" ? stepResult.result || null : null;
+      Runtime.autoFarm.combatExecution.lastStepAt = Date.now();
+      if (plan.currentIndex >= 2) {
+        Runtime.autoFarm.combatExecution.planFollowedBeyondFirstStep =
+          (Runtime.autoFarm.combatExecution.planFollowedBeyondFirstStep || 0) + 1;
+      }
+    }
+    if (plan.currentIndex >= plan.actions.length) {
+      plan.valid = false;
+      plan.invalidReason = "plan_exhausted";
+      if (Runtime && Runtime.planner) {
+        Runtime.planner.lastExecutionPlanInvalidationReason = "plan_exhausted";
+      }
+    }
+    return plan;
+  }
+
+  // AI CHANGED: Planner Part 2 — inspectable replan decision. Returns { shouldReplan, reason, details } so executor + diagnostics
+  // can both consume it. Inputs:
+  //   userOpts.liveState        — current basicState (optional, will be read if absent)
+  //   userOpts.targetFingerprint — current fingerprint string (optional, will be resolved)
+  //   userOpts.hpDeltaFraction  — override min target-HP-drift ratio to trigger replan (default 0.4)
+  //   userOpts.maxPlanAgeMs     — override plan max age (default Config.planner.executionPlan.maxAgeMs || 9000)
+  function plannerShouldReplanForExecutionPlan(userOpts) {
+    const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
+    const plan = opts.plan || plannerGetActiveExecutionPlan();
+    const record = function (reason, details) {
+      if (Runtime && Runtime.planner) {
+        Runtime.planner.lastShouldReplanReason = reason;
+      }
+      if (Runtime.autoFarm && Runtime.autoFarm.combatExecution) {
+        Runtime.autoFarm.combatExecution.lastReplanReason = reason;
+      }
+      return { shouldReplan: true, reason: reason, details: details || null };
+    };
+    if (!plan) {
+      return record("no_active_plan", null);
+    }
+    if (plan.valid === false) {
+      return record(plan.invalidReason || "plan_invalid", { invalidReason: plan.invalidReason });
+    }
+    if (!Array.isArray(plan.actions) || plan.actions.length === 0) {
+      return record("plan_actions_missing", null);
+    }
+    if (!Number.isFinite(plan.currentIndex) || plan.currentIndex >= plan.actions.length) {
+      return record("plan_exhausted", { currentIndex: plan.currentIndex, total: plan.actions.length });
+    }
+    const liveState =
+      opts.liveState && typeof opts.liveState === "object"
+        ? opts.liveState
+        : (typeof readBasicState === "function" ? readBasicState() : null);
+    // Target fingerprint drift.
+    const fpNow =
+      typeof opts.targetFingerprint === "string" && opts.targetFingerprint.length > 0
+        ? opts.targetFingerprint
+        : (typeof plannerResolveCombatEpisodeTargetKey === "function"
+            ? plannerResolveCombatEpisodeTargetKey(liveState)
+            : null);
+    if (plan.targetFingerprint && fpNow && plan.targetFingerprint !== fpNow) {
+      return record("target_fingerprint_changed", { was: plan.targetFingerprint, now: fpNow });
+    }
+    // Target death (live current HP <= 0).
+    if (liveState && liveState.combat && liveState.combat.targetHp) {
+      const th = liveState.combat.targetHp;
+      if (th.valid && Number.isFinite(th.cur) && th.cur <= 0) {
+        return record("target_died", { cur: th.cur, max: th.max });
+      }
+    }
+    // Enemy count zero.
+    if (liveState && liveState.combat && Number.isFinite(liveState.combat.enemyCount) && liveState.combat.enemyCount <= 0) {
+      return record("no_enemies", { enemyCount: liveState.combat.enemyCount });
+    }
+    // Active attacker count materially higher than at build time (more pressure than planner accounted for).
+    const builtAtk =
+      plan.combatStateAtBuild && plan.combatStateAtBuild.fight && Number.isFinite(plan.combatStateAtBuild.fight.activeAttackerCount)
+        ? plan.combatStateAtBuild.fight.activeAttackerCount
+        : null;
+    const liveAtk =
+      typeof readActiveAttackerCount === "function" ? readActiveAttackerCount() : null;
+    if (Number.isFinite(builtAtk) && Number.isFinite(liveAtk) && liveAtk - builtAtk >= 2) {
+      return record("active_attacker_count_jumped", { was: builtAtk, now: liveAtk });
+    }
+    // Target HP drift beyond hpDeltaFraction since plan build (e.g. another mob hit the bar).
+    const hpDeltaFraction = Number.isFinite(opts.hpDeltaFraction) ? opts.hpDeltaFraction : 0.4;
+    const builtTargetHpCur =
+      plan.combatStateAtBuild && plan.combatStateAtBuild.target && Number.isFinite(plan.combatStateAtBuild.target.hpCur)
+        ? plan.combatStateAtBuild.target.hpCur
+        : null;
+    const builtTargetHpMax =
+      plan.combatStateAtBuild && plan.combatStateAtBuild.target && Number.isFinite(plan.combatStateAtBuild.target.hpMax)
+        ? plan.combatStateAtBuild.target.hpMax
+        : null;
+    if (
+      Number.isFinite(builtTargetHpCur) &&
+      Number.isFinite(builtTargetHpMax) &&
+      builtTargetHpMax > 0 &&
+      liveState &&
+      liveState.combat &&
+      liveState.combat.targetHp &&
+      liveState.combat.targetHp.valid &&
+      Number.isFinite(liveState.combat.targetHp.cur) &&
+      Number.isFinite(liveState.combat.targetHp.max)
+    ) {
+      const liveTh = liveState.combat.targetHp;
+      // Different max HP entirely → another mob → replan.
+      if (Math.abs(liveTh.max - builtTargetHpMax) > 0.5) {
+        return record("target_max_hp_changed", { wasMax: builtTargetHpMax, nowMax: liveTh.max });
+      }
+      // Upward HP jump beyond threshold → fresh same-max swap → replan.
+      const upJump = (liveTh.cur - builtTargetHpCur) / builtTargetHpMax;
+      if (upJump >= hpDeltaFraction) {
+        return record("target_hp_upward_swap", { was: builtTargetHpCur, now: liveTh.cur, frac: +upJump.toFixed(3) });
+      }
+    }
+    // Current planned step's skill on cooldown / mana gate / not in slots.
+    const step = plan.actions[plan.currentIndex];
+    if (step && (step.kind === "skill" || step.kind === "skill_charge") && Number.isFinite(step.slot)) {
+      const slots = Runtime && Runtime.skills && Array.isArray(Runtime.skills.slots) ? Runtime.skills.slots : [];
+      const row = slots[step.slot] || null;
+      if (!row || row.kind !== "skill") {
+        return record("step_skill_invalid", { slot: step.slot });
+      }
+      if (typeof isActionBarSlotShowingCooldown === "function" && isActionBarSlotShowingCooldown(step.slot)) {
+        return record("step_skill_on_cooldown", { slot: step.slot });
+      }
+      const manaCost = Number.isFinite(row.manaCost) ? row.manaCost : 0;
+      const mpCur =
+        liveState && liveState.player && liveState.player.mp && liveState.player.mp.valid && Number.isFinite(liveState.player.mp.cur)
+          ? liveState.player.mp.cur
+          : null;
+      if (manaCost > 0 && Number.isFinite(mpCur) && mpCur < manaCost) {
+        return record("step_mp_gate", { slot: step.slot, manaCost: manaCost, mpCur: mpCur });
+      }
+      // Charge step requested but charges disallowed by caller context (e.g. retarget guard).
+      if (step.kind === "skill_charge" && plan.disallowChargeSkills === true) {
+        return record("step_charge_disallowed_now", { slot: step.slot });
+      }
+    }
+    // Plan age — if planner pick is older than max age, replan (state may have shifted).
+    const maxAgeMs =
+      Number.isFinite(opts.maxPlanAgeMs)
+        ? opts.maxPlanAgeMs
+        : (Config.planner && Config.planner.executionPlan && Number.isFinite(Config.planner.executionPlan.maxAgeMs)
+            ? Config.planner.executionPlan.maxAgeMs
+            : 9000);
+    if (Number.isFinite(plan.builtAt) && Number.isFinite(maxAgeMs) && Date.now() - plan.builtAt > maxAgeMs) {
+      return record("plan_too_old", { ageMs: Date.now() - plan.builtAt, maxAgeMs: maxAgeMs });
+    }
+    if (Runtime && Runtime.planner) {
+      Runtime.planner.lastShouldReplanReason = null;
+    }
+    return { shouldReplan: false, reason: null, details: null };
+  }
+
+  // AI CHANGED: Planner Part 2 — derive a combat-queue action shape from a specific plan step. Charges are never queued (legacy queue
+  // does not support charge release), so returns null in that case and the caller can decide to (a) wait for the charge step to be
+  // executed by the opener click path on the next burst or (b) skip past the charge step.
+  function plannerExecutionPlanStepToQueueAction(plan, stepIndex) {
+    if (!plan || !Array.isArray(plan.actions)) {
+      return null;
+    }
+    const idx = Number.isFinite(stepIndex) ? stepIndex : 0;
+    if (idx < 0 || idx >= plan.actions.length) {
+      return null;
+    }
+    const step = plan.actions[idx];
+    if (!step) {
+      return null;
+    }
+    if (step.kind === "skill_charge") {
+      // Queue cannot fire a charge skill cleanly. The caller will decide what to do (skip to next non-charge step OR rebuild plan).
+      return null;
+    }
+    if (step.kind === "basic") {
+      return {
+        mode: "basic",
+        slot: null,
+        name: "Basic Attack",
+        source: "execution_plan_step_" + step.index
+      };
+    }
+    if (step.kind === "skill" && Number.isFinite(step.slot)) {
+      return {
+        mode: "skill",
+        slot: step.slot,
+        name: step.name || "",
+        source: "execution_plan_step_" + step.index
+      };
+    }
+    return null;
+  }
+
+  // AI CHANGED: Planner Part 2 — the queue-fire callback uses this to fetch the NEXT queue action. Prefers the plan when one is active
+  // (advancing cursor and skipping unsupported charge steps), otherwise falls back to the legacy `plannerBuildCombatQueueAction`.
+  // Inputs (all optional): afterSlot, liveState, disallowChargeSkills, followUpHint, mpAvailable.
+  function plannerNextCombatQueueAction(userOpts) {
+    const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
+    const plan = plannerGetActiveExecutionPlan();
+    if (plan && plan.valid && Array.isArray(plan.actions)) {
+      let scanIdx = Number.isFinite(plan.currentIndex) ? plan.currentIndex : 0;
+      // Skip over charge steps that the queue cannot drive — they need an opener click on the next burst.
+      while (scanIdx < plan.actions.length && plan.actions[scanIdx] && plan.actions[scanIdx].kind === "skill_charge") {
+        scanIdx += 1;
+      }
+      if (scanIdx < plan.actions.length) {
+        const qa = plannerExecutionPlanStepToQueueAction(plan, scanIdx);
+        if (qa) {
+          // Tag for telemetry so test+diag can see "plan-sourced queue advance".
+          qa.fromExecutionPlan = true;
+          qa.planStepIndex = scanIdx;
+          if (Runtime.autoFarm && Runtime.autoFarm.combatExecution) {
+            Runtime.autoFarm.combatExecution.queueAdvancesFromPlan =
+              (Runtime.autoFarm.combatExecution.queueAdvancesFromPlan || 0) + 1;
+          }
+          return qa;
+        }
+      }
+    }
+    // Fall back to legacy single-step lookahead.
+    const legacy = typeof plannerBuildCombatQueueAction === "function"
+      ? plannerBuildCombatQueueAction({
+          afterSlot: Number.isFinite(opts.afterSlot) ? opts.afterSlot : null,
+          liveState: opts.liveState || null,
+          disallowChargeSkills: opts.disallowChargeSkills !== false,
+          followUpHint: opts.followUpHint || null,
+          mpAvailable: Number.isFinite(opts.mpAvailable) ? opts.mpAvailable : null
+        })
+      : null;
+    if (legacy && Runtime.autoFarm && Runtime.autoFarm.combatExecution) {
+      Runtime.autoFarm.combatExecution.queueAdvancesFromLegacy =
+        (Runtime.autoFarm.combatExecution.queueAdvancesFromLegacy || 0) + 1;
+    }
+    return legacy;
+  }
+
+  // AI CHANGED: Planner Part 2 — adapter for any step within an execution plan into the legacy opener shape. Used when the executor
+  // needs to translate a plan step (typically `currentIndex`) into `{ slot, record, chargeReleasePlan, queuedAction }` so the existing
+  // opener click + charge release code paths stay reusable.
+  function plannerAdaptExecutionPlanStepToOpenerShape(plan, stepIndex) {
+    if (!plan || !Array.isArray(plan.actions)) {
+      return null;
+    }
+    const idx = Number.isFinite(stepIndex) ? stepIndex : 0;
+    if (idx < 0 || idx >= plan.actions.length) {
+      return null;
+    }
+    const step = plan.actions[idx];
+    if (!step) {
+      return null;
+    }
+    if (step.kind === "basic") {
+      return { slot: null, record: null, chargeReleasePlan: null, queuedAction: null };
+    }
+    if (step.kind !== "skill" && step.kind !== "skill_charge") {
+      return null;
+    }
+    if (!Number.isFinite(step.slot)) {
+      return null;
+    }
+    const slots = Runtime && Runtime.skills && Array.isArray(Runtime.skills.slots) ? Runtime.skills.slots : [];
+    const record = slots[step.slot] || null;
+    if (!record || record.kind !== "skill") {
+      return null;
+    }
+    let chargeReleasePlan = null;
+    if (step.kind === "skill_charge" && typeof plannerBuildChargeReleasePlan === "function") {
+      const liveState = typeof readBasicState === "function" ? readBasicState() : null;
+      const builtPlan = plannerBuildChargeReleasePlan(record, {
+        enemyKey: plan.targetFingerprint || null,
+        liveState: liveState,
+        mpAvailable:
+          liveState && liveState.player && liveState.player.mp && liveState.player.mp.valid
+            ? liveState.player.mp.cur
+            : null
+      });
+      if (
+        builtPlan &&
+        step.chargeMode === "partial" &&
+        Number.isFinite(step.chargeReleaseFraction) &&
+        Number.isFinite(builtPlan.channelMaxMs)
+      ) {
+        const overrideMs = Math.max(1, Math.round(builtPlan.channelMaxMs * step.chargeReleaseFraction));
+        const minHoldRaw = Config.combat && Number.isFinite(Config.combat.chargeSkillReleaseMinHoldMs)
+          ? Config.combat.chargeSkillReleaseMinHoldMs
+          : 0;
+        const minHoldMs = Math.max(0, Math.min(Math.round(minHoldRaw), builtPlan.channelMaxMs));
+        const finalReleaseMs = Math.max(minHoldMs, Math.min(builtPlan.channelMaxMs, overrideMs));
+        builtPlan.releaseMs = finalReleaseMs;
+        builtPlan.releaseSec = +(finalReleaseMs / 1000).toFixed(3);
+        builtPlan.releaseFraction = +(finalReleaseMs / builtPlan.channelMaxMs).toFixed(4);
+        builtPlan.releaseSource = "execution_plan_partial_release";
+        builtPlan.strategy = finalReleaseMs >= builtPlan.channelMaxMs ? "full_charge" : "cancel_release";
+        builtPlan.selectionMode = "execution_plan_override";
+      }
+      chargeReleasePlan = builtPlan || null;
+    }
+    return {
+      slot: step.slot,
+      record: record,
+      chargeReleasePlan: chargeReleasePlan,
+      queuedAction: null
+    };
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // End planner rewrite v1 foundation + Part 2 execution-plan layer.
   // ───────────────────────────────────────────────────────────────────────────
 
   // AI CHANGED: Phase C4 slice 8+12+15 — pick opener with optional horizonSim (paper damage window); else first feasible heuristic order.

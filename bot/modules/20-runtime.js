@@ -61,10 +61,32 @@
         postRetargetGuarded: false,
         lastMatchedCastText: null,
         advanceCount: 0,
-        anchorNeedsReset: false
+        anchorNeedsReset: false,
+        // AI CHANGED: Planner Part 2 — true when the currently queued action originated from the active execution plan.
+        fromExecutionPlan: false,
+        planStepIndex: null
       },
       // AI CHANGED: Combat episode v1 — last burst’s ordered opener + follow-up plan snapshot (`86-planner` + `85-combat`); cleared on target change / secure cycle / post-kill retarget.
       combatEpisode: null,
+      // AI CHANGED: Planner Part 2 — runtime telemetry of plan-driven execution (which plan step ran, replan/invalidation reasons, plan-followed counter).
+      //   Used by 85-combat.js to record what actually happened during the burst, exposed for diagnostics (`getCombatExecutionState()`).
+      combatExecution: {
+        planId: null,
+        currentStepIndex: null,
+        lastStepKind: null,
+        lastStepSlot: null,
+        lastStepName: null,
+        lastStepResult: null,
+        lastStepAt: null,
+        lastReplanReason: null,
+        lastInvalidationReason: null,
+        planFollowedBeyondFirstStep: 0,
+        plansBuilt: 0,
+        plansReused: 0,
+        plansInvalidated: 0,
+        queueAdvancesFromPlan: 0,
+        queueAdvancesFromLegacy: 0
+      },
       // AI CHANGED: AUTO ON chat spammer — next due time, last sent line, and recent send/fail telemetry.
       chatSpammer: {
         nextSendAt: null,
@@ -256,6 +278,19 @@
       forcedOpenerReason: null,
       // AI CHANGED: Planner rewrite v1 — last sequence-planner decision snapshot (combat state + normalized skills + top sequences + chosen first/second actions).
       //   Populated by plannerSelectSequencePick(); read by `getPlannerLastSequencePlan()` / `previewPlannerSequences()` / runUiTestBundle checks.
-      lastSequencePlan: null
+      lastSequencePlan: null,
+      // AI CHANGED: Planner Part 2 — active execution plan that combat runtime CONSUMES (not just diagnostic).
+      //   Built by `plannerBuildExecutionPlan()` (which wraps `plannerSelectSequencePick()`), hydrated with skill records + per-step
+      //   adapter shapes, has step cursor (`currentIndex`) and validity (`valid` + `invalidReason`). Read by `getActiveExecutionPlan()`.
+      //   Shape: {
+      //     planId, builtAt, targetFingerprint, combatStateAtBuild, actions[], totalActions,
+      //     currentIndex, selectionReason, predictedKillAtSec, score, valid, invalidReason,
+      //     replanReason, stepHistory[], excludeSlotsApplied, version
+      //   }
+      activeExecutionPlan: null,
+      // AI CHANGED: Planner Part 2 — last reason an execution plan was invalidated (target_fingerprint_changed, target_died, no_progress, post_kill_retarget, plan_exhausted, ...).
+      lastExecutionPlanInvalidationReason: null,
+      // AI CHANGED: Planner Part 2 — last reason the should-replan helper voted to replan ahead of the next burst.
+      lastShouldReplanReason: null
     }
   };

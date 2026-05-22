@@ -3249,6 +3249,452 @@
         addCheck("planner_semantic_uses_simulated_state", false, { error: String(err && err.message ? err.message : err) }, false);
       }
 
+      // AI CHANGED: Planner Part 2 — execution-plan SHAPE test.
+      //   Build a synthetic seqPick (no live state needed) and convert it to an execution plan via the internal helper
+      //   `plannerExecutionPlanFromSeqPick`. Verify the runtime-facing fields exist and look correct: `planId`, `builtAt`,
+      //   `actions[]`, `totalActions`, `currentIndex === 0`, `valid === true`, etc. Modules share IIFE scope inside the
+      //   concatenated bot.user.js so the helpers are referenced directly by name.
+      try {
+        if (typeof plannerExecutionPlanFromSeqPick === "function") {
+          const synthSeq = {
+            combatState: {
+              target: { fingerprintKey: "test-fp-001", hpCur: 1800, hpMax: 2000, flags: { hasMagicResistShred: false } },
+              player: { hpCur: 950, hpMax: 1000, mpCur: 800, mpMax: 1000 },
+              fight: { enemyCount: 1, activeAttackerCount: 1, pressure: 0.2, combatMode: "fast" },
+              timing: { maxHorizonSec: 6 }
+            },
+            best: {
+              actions: [
+                { kind: "skill", skill: { slot: 2, name: "Piercing Strike", damageType: "physical", normalizedKey: "piercing strike" }, damageDealt: 120, actionTimeSec: 0.6, elapsedAfterSec: 0.6 },
+                { kind: "skill", skill: { slot: 3, name: "Ice Shard", damageType: "magic", normalizedKey: "ice shard" }, damageDealt: 360, actionTimeSec: 0.7, elapsedAfterSec: 1.3 },
+                { kind: "basic" }
+              ],
+              cumulativeDamage: 540,
+              killedAtSec: null,
+              sim: { targetHpCur: 1460, playerHpCur: 950, playerMpCur: 700, elapsedSec: 2.0, hpLost: 0, playerHpMax: 1000 },
+              _finalScore: 12.5
+            },
+            firstAction: null,
+            secondAction: null,
+            normalizedSkills: [],
+            excludeSlotsApplied: null
+          };
+          const ep = plannerExecutionPlanFromSeqPick(synthSeq, { liveState: null });
+          const hasId = ep && typeof ep.planId === "string" && ep.planId.length > 3;
+          const hasBuiltAt = ep && Number.isFinite(ep.builtAt) && ep.builtAt > 0;
+          const fpOk = ep && ep.targetFingerprint === "test-fp-001";
+          const versionOk = ep && ep.version === 2;
+          const totalOk = ep && ep.totalActions === 3 && Array.isArray(ep.actions) && ep.actions.length === 3;
+          const cursorOk = ep && ep.currentIndex === 0;
+          const validOk = ep && ep.valid === true && ep.invalidReason === null;
+          const stepZero = ep ? ep.actions[0] : null;
+          const stepOne = ep ? ep.actions[1] : null;
+          const stepTwo = ep ? ep.actions[2] : null;
+          const stepZeroOk =
+            stepZero && stepZero.index === 0 && stepZero.kind === "skill" && stepZero.slot === 2 && stepZero.damageType === "physical";
+          const stepOneOk =
+            stepOne && stepOne.index === 1 && stepOne.kind === "skill" && stepOne.slot === 3 && stepOne.damageType === "magic";
+          const stepTwoOk =
+            stepTwo && stepTwo.index === 2 && stepTwo.kind === "basic" && stepTwo.slot === null;
+          const compactStateOk =
+            ep && ep.combatStateAtBuild &&
+            ep.combatStateAtBuild.target &&
+            ep.combatStateAtBuild.target.fingerprintKey === "test-fp-001" &&
+            ep.combatStateAtBuild.fight &&
+            ep.combatStateAtBuild.fight.enemyCount === 1;
+          const passed =
+            !!ep && hasId && hasBuiltAt && fpOk && versionOk && totalOk && cursorOk && validOk &&
+            stepZeroOk && stepOneOk && stepTwoOk && compactStateOk;
+          addCheck(
+            "planner_execution_plan_shape",
+            passed,
+            {
+              planId: ep ? ep.planId : null,
+              version: ep ? ep.version : null,
+              total: ep ? ep.totalActions : null,
+              currentIndex: ep ? ep.currentIndex : null,
+              valid: ep ? ep.valid : null,
+              steps: ep ? ep.actions.map(function (a) { return { i: a.index, k: a.kind, s: a.slot, t: a.damageType }; }) : null,
+              compact: ep ? ep.combatStateAtBuild : null
+            },
+            false
+          );
+        } else {
+          addCheck("planner_execution_plan_shape", false, { reason: "fn_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_execution_plan_shape threw", err);
+        addCheck("planner_execution_plan_shape", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Planner Part 2 — execution plan STEP ADVANCE test.
+      //   Build a synthetic plan, install as active, advance the cursor twice, verify cursor + stepHistory + plan-exhausted
+      //   invalidation. This validates that runtime can continue to step 2+ within a single plan.
+      try {
+        if (
+          typeof plannerExecutionPlanFromSeqPick === "function" &&
+          typeof plannerSetActiveExecutionPlan === "function" &&
+          typeof plannerAdvanceExecutionPlanStep === "function"
+        ) {
+          const prevPlan = Runtime.planner ? Runtime.planner.activeExecutionPlan : null;
+          const ep = plannerExecutionPlanFromSeqPick(
+            {
+              combatState: {
+                target: { fingerprintKey: "test-adv-001", hpCur: 600, hpMax: 1000, flags: { hasMagicResistShred: false } },
+                player: { hpCur: 1000, hpMax: 1000, mpCur: 1000, mpMax: 1000 },
+                fight: { enemyCount: 1, activeAttackerCount: 1, pressure: 0.1, combatMode: "fast" },
+                timing: { maxHorizonSec: 6 }
+              },
+              best: {
+                actions: [
+                  { kind: "skill", skill: { slot: 2, name: "Piercing Strike", damageType: "physical" }, damageDealt: 120, actionTimeSec: 0.6, elapsedAfterSec: 0.6 },
+                  { kind: "skill", skill: { slot: 3, name: "Ice Shard", damageType: "magic" }, damageDealt: 360, actionTimeSec: 0.7, elapsedAfterSec: 1.3 }
+                ],
+                cumulativeDamage: 480,
+                killedAtSec: null,
+                sim: { targetHpCur: 120, playerHpCur: 1000, playerMpCur: 900, elapsedSec: 1.3, hpLost: 0, playerHpMax: 1000 },
+                _finalScore: 8.4
+              },
+              excludeSlotsApplied: null
+            },
+            {}
+          );
+          plannerSetActiveExecutionPlan(ep);
+          const before = ep.currentIndex;
+          plannerAdvanceExecutionPlanStep({ result: "test_advance_1", source: "test" });
+          const afterFirst = ep.currentIndex;
+          plannerAdvanceExecutionPlanStep({ result: "test_advance_2", source: "test" });
+          const afterSecond = ep.currentIndex;
+          const exhaustedOk = ep.valid === false && ep.invalidReason === "plan_exhausted";
+          const historyOk =
+            Array.isArray(ep.stepHistory) &&
+            ep.stepHistory.length === 2 &&
+            ep.stepHistory[0].index === 0 &&
+            ep.stepHistory[1].index === 1 &&
+            ep.stepHistory[0].result === "test_advance_1" &&
+            ep.stepHistory[1].result === "test_advance_2";
+          const passed = before === 0 && afterFirst === 1 && afterSecond === 2 && exhaustedOk && historyOk;
+          addCheck(
+            "planner_execution_plan_step_advance",
+            passed,
+            {
+              before: before,
+              afterFirst: afterFirst,
+              afterSecond: afterSecond,
+              exhaustedReason: ep.invalidReason,
+              historyLen: Array.isArray(ep.stepHistory) ? ep.stepHistory.length : null
+            },
+            false
+          );
+          // Restore previous active plan to avoid leaking the synthetic into production runtime.
+          plannerSetActiveExecutionPlan(prevPlan);
+        } else {
+          addCheck("planner_execution_plan_step_advance", false, { reason: "advance_fns_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_execution_plan_step_advance threw", err);
+        addCheck("planner_execution_plan_step_advance", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Planner Part 2 — should-replan HELPER shape test.
+      //   Construct a known plan + varied live-state scenarios, verify each reason fires and the helper returns the
+      //   expected `{ shouldReplan, reason, details }` triple for inspection.
+      try {
+        const mkPlan = function (fp) {
+          return {
+            version: 2,
+            planId: "ep_test_replan",
+            builtAt: Date.now(),
+            targetFingerprint: fp || "test-replan-001",
+            combatStateAtBuild: {
+              target: { fingerprintKey: fp || "test-replan-001", hpCur: 800, hpMax: 1000, magicResistShred: false, shredRemainingSec: null },
+              player: { hpCur: 1000, hpMax: 1000, mpCur: 1000, mpMax: 1000 },
+              fight: { enemyCount: 1, activeAttackerCount: 1, pressure: 0.1, combatMode: "fast" }
+            },
+            actions: [
+              { index: 0, kind: "skill", slot: 2, name: "Piercing Strike", damageType: "physical", chargeMode: null, chargeReleaseFraction: null, predictedDamageDealt: 120, predictedActionTimeSec: 0.6, predictedEndElapsedSec: 0.6, reasonTags: [] }
+            ],
+            totalActions: 1,
+            currentIndex: 0,
+            selectionReason: "test",
+            predictedKillAtSec: null,
+            score: 1,
+            valid: true,
+            invalidReason: null,
+            replanReason: null,
+            stepHistory: [],
+            excludeSlotsApplied: null,
+            disallowChargeSkills: false,
+            firstBurstAfterRetarget: false
+          };
+        };
+        if (typeof plannerShouldReplanForExecutionPlan === "function") {
+          const planOk = mkPlan("fp-OK");
+          const liveOk = {
+            combat: { enemyCount: 1, targetHp: { valid: true, cur: 800, max: 1000 } },
+            player: { mp: { valid: true, cur: 1000 } }
+          };
+          const decisionOk = plannerShouldReplanForExecutionPlan({ plan: planOk, liveState: liveOk, targetFingerprint: "fp-OK" });
+          const planFpMismatch = mkPlan("fp-old");
+          const decisionFp = plannerShouldReplanForExecutionPlan({ plan: planFpMismatch, liveState: liveOk, targetFingerprint: "fp-new" });
+          const planDied = mkPlan("fp-died");
+          const liveDied = {
+            combat: { enemyCount: 1, targetHp: { valid: true, cur: 0, max: 1000 } },
+            player: { mp: { valid: true, cur: 1000 } }
+          };
+          const decisionDied = plannerShouldReplanForExecutionPlan({ plan: planDied, liveState: liveDied, targetFingerprint: "fp-died" });
+          const planExhausted = mkPlan("fp-exh");
+          planExhausted.currentIndex = 1;
+          const decisionExh = plannerShouldReplanForExecutionPlan({ plan: planExhausted, liveState: liveOk, targetFingerprint: "fp-exh" });
+          const decisionNoPlan = plannerShouldReplanForExecutionPlan({ plan: null, liveState: liveOk });
+          const planMax = mkPlan("fp-max");
+          const liveMaxDiff = {
+            combat: { enemyCount: 1, targetHp: { valid: true, cur: 1500, max: 2000 } },
+            player: { mp: { valid: true, cur: 1000 } }
+          };
+          const decisionMax = plannerShouldReplanForExecutionPlan({ plan: planMax, liveState: liveMaxDiff, targetFingerprint: "fp-max" });
+          const planOld = mkPlan("fp-old2");
+          planOld.builtAt = Date.now() - 60000;
+          const decisionOld = plannerShouldReplanForExecutionPlan({ plan: planOld, liveState: liveOk, targetFingerprint: "fp-old2", maxPlanAgeMs: 5000 });
+          const passed =
+            decisionOk && decisionOk.shouldReplan === false &&
+            decisionFp && decisionFp.shouldReplan === true && decisionFp.reason === "target_fingerprint_changed" &&
+            decisionDied && decisionDied.shouldReplan === true && decisionDied.reason === "target_died" &&
+            decisionExh && decisionExh.shouldReplan === true && decisionExh.reason === "plan_exhausted" &&
+            decisionNoPlan && decisionNoPlan.shouldReplan === true && decisionNoPlan.reason === "no_active_plan" &&
+            decisionMax && decisionMax.shouldReplan === true && decisionMax.reason === "target_max_hp_changed" &&
+            decisionOld && decisionOld.shouldReplan === true && decisionOld.reason === "plan_too_old";
+          addCheck(
+            "planner_should_replan_helper_shape",
+            passed,
+            {
+              ok: decisionOk,
+              fp: decisionFp,
+              died: decisionDied,
+              exh: decisionExh,
+              noPlan: decisionNoPlan,
+              max: decisionMax,
+              old: decisionOld
+            },
+            false
+          );
+        } else {
+          addCheck("planner_should_replan_helper_shape", false, { reason: "fn_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_should_replan_helper_shape threw", err);
+        addCheck("planner_should_replan_helper_shape", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Planner Part 2 — execution-plan CHARGE STEP shape test.
+      //   Verify a charge step survives plan materialization with chargeMode + chargeReleaseFraction preserved, AND that
+      //   `plannerExecutionPlanStepToQueueAction` correctly returns null for the charge step (queue cannot fire charges).
+      try {
+        if (
+          typeof plannerExecutionPlanFromSeqPick === "function" &&
+          typeof plannerExecutionPlanStepToQueueAction === "function"
+        ) {
+          const ep = plannerExecutionPlanFromSeqPick(
+            {
+              combatState: {
+                target: { fingerprintKey: "fp-chg-001", hpCur: 1900, hpMax: 2000, flags: { hasMagicResistShred: false } },
+                player: { hpCur: 1000, hpMax: 1000, mpCur: 1000, mpMax: 1000 },
+                fight: { enemyCount: 1, activeAttackerCount: 1, pressure: 0.1, combatMode: "fast" },
+                timing: { maxHorizonSec: 6 }
+              },
+              best: {
+                actions: [
+                  {
+                    kind: "skill_charge",
+                    skill: { slot: 4, name: "Sniper Shot", damageType: "physical" },
+                    chargeMode: "partial",
+                    chargeReleaseFraction: 0.62,
+                    damageDealt: 480,
+                    actionTimeSec: 1.5,
+                    elapsedAfterSec: 1.5
+                  },
+                  { kind: "basic" }
+                ],
+                cumulativeDamage: 480,
+                killedAtSec: null,
+                sim: { targetHpCur: 1420, playerHpCur: 1000, playerMpCur: 900, elapsedSec: 1.5, hpLost: 0, playerHpMax: 1000 },
+                _finalScore: 7
+              },
+              excludeSlotsApplied: null
+            },
+            {}
+          );
+          const step0 = ep ? ep.actions[0] : null;
+          const step1 = ep ? ep.actions[1] : null;
+          const chargeShapeOk =
+            step0 && step0.kind === "skill_charge" && step0.slot === 4 &&
+            step0.chargeMode === "partial" &&
+            typeof step0.chargeReleaseFraction === "number" &&
+            Math.abs(step0.chargeReleaseFraction - 0.62) < 0.0001;
+          const qa0 = plannerExecutionPlanStepToQueueAction(ep, 0);
+          const qa1 = plannerExecutionPlanStepToQueueAction(ep, 1);
+          const queueRejectsChargeOk = qa0 === null;
+          const queueAcceptsBasicOk = qa1 && qa1.mode === "basic" && qa1.slot === null;
+          // Also verify `plannerNextCombatQueueAction` skips the charge step and falls back to the basic at index 1.
+          let nextSkipsCharge = false;
+          if (typeof plannerSetActiveExecutionPlan === "function" && typeof plannerNextCombatQueueAction === "function") {
+            const prev = Runtime.planner ? Runtime.planner.activeExecutionPlan : null;
+            plannerSetActiveExecutionPlan(ep);
+            const nextAct = plannerNextCombatQueueAction({ disallowChargeSkills: true });
+            nextSkipsCharge = !!(nextAct && nextAct.mode === "basic" && nextAct.fromExecutionPlan === true && nextAct.planStepIndex === 1);
+            plannerSetActiveExecutionPlan(prev);
+          }
+          const passed = chargeShapeOk && queueRejectsChargeOk && queueAcceptsBasicOk && nextSkipsCharge;
+          addCheck(
+            "planner_execution_plan_charge_step_preserved",
+            passed,
+            {
+              step0: step0
+                ? { kind: step0.kind, slot: step0.slot, chargeMode: step0.chargeMode, chargeReleaseFraction: step0.chargeReleaseFraction }
+                : null,
+              queueForCharge: qa0,
+              queueForBasic: qa1,
+              nextSkipsCharge: nextSkipsCharge
+            },
+            false
+          );
+        } else {
+          addCheck("planner_execution_plan_charge_step_preserved", false, { reason: "fns_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_execution_plan_charge_step_preserved threw", err);
+        addCheck("planner_execution_plan_charge_step_preserved", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Planner Part 2 — execution-plan INVALIDATION on retarget test.
+      //   Build a synthetic plan, install it as active, call `plannerInvalidateExecutionPlan("post_kill_retarget")`, verify
+      //   plan.valid=false + invalidReason matches + Runtime.planner.lastExecutionPlanInvalidationReason populated +
+      //   combatExecution counter incremented.
+      try {
+        if (
+          typeof plannerExecutionPlanFromSeqPick === "function" &&
+          typeof plannerSetActiveExecutionPlan === "function" &&
+          typeof plannerInvalidateExecutionPlan === "function"
+        ) {
+          const prevPlan = Runtime.planner ? Runtime.planner.activeExecutionPlan : null;
+          const ep = plannerExecutionPlanFromSeqPick(
+            {
+              combatState: {
+                target: { fingerprintKey: "fp-inv-001", hpCur: 800, hpMax: 1000, flags: { hasMagicResistShred: false } },
+                player: { hpCur: 1000, hpMax: 1000, mpCur: 1000, mpMax: 1000 },
+                fight: { enemyCount: 2, activeAttackerCount: 1, pressure: 0.1, combatMode: "fast" },
+                timing: { maxHorizonSec: 6 }
+              },
+              best: {
+                actions: [
+                  { kind: "skill", skill: { slot: 2, name: "Piercing Strike", damageType: "physical" }, damageDealt: 120, actionTimeSec: 0.6, elapsedAfterSec: 0.6 }
+                ],
+                cumulativeDamage: 120,
+                killedAtSec: null,
+                sim: { targetHpCur: 680, playerHpCur: 1000, playerMpCur: 950, elapsedSec: 0.6, hpLost: 0, playerHpMax: 1000 },
+                _finalScore: 2
+              },
+              excludeSlotsApplied: null
+            },
+            {}
+          );
+          plannerSetActiveExecutionPlan(ep);
+          const beforeCount =
+            Runtime.autoFarm && Runtime.autoFarm.combatExecution && Number.isFinite(Runtime.autoFarm.combatExecution.plansInvalidated)
+              ? Runtime.autoFarm.combatExecution.plansInvalidated
+              : 0;
+          plannerInvalidateExecutionPlan("post_kill_retarget", { test: true });
+          const planFromRuntime = Runtime.planner ? Runtime.planner.activeExecutionPlan : null;
+          const afterCount =
+            Runtime.autoFarm && Runtime.autoFarm.combatExecution && Number.isFinite(Runtime.autoFarm.combatExecution.plansInvalidated)
+              ? Runtime.autoFarm.combatExecution.plansInvalidated
+              : 0;
+          const validOk = planFromRuntime && planFromRuntime.valid === false;
+          const reasonOk = planFromRuntime && planFromRuntime.invalidReason === "post_kill_retarget";
+          const reasonMirrorOk =
+            Runtime.planner && Runtime.planner.lastExecutionPlanInvalidationReason === "post_kill_retarget";
+          const counterOk = afterCount === beforeCount + 1;
+          const passed = validOk && reasonOk && reasonMirrorOk && counterOk;
+          addCheck(
+            "planner_execution_plan_invalidates_on_retarget",
+            passed,
+            {
+              validAfter: planFromRuntime ? planFromRuntime.valid : null,
+              invalidReason: planFromRuntime ? planFromRuntime.invalidReason : null,
+              runtimeMirror: Runtime.planner ? Runtime.planner.lastExecutionPlanInvalidationReason : null,
+              beforeCount: beforeCount,
+              afterCount: afterCount
+            },
+            false
+          );
+          plannerSetActiveExecutionPlan(prevPlan);
+        } else {
+          addCheck("planner_execution_plan_invalidates_on_retarget", false, { reason: "fns_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_execution_plan_invalidates_on_retarget threw", err);
+        addCheck("planner_execution_plan_invalidates_on_retarget", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Planner Part 2 — runtime DIAGNOSTICS surface test.
+      //   `ligmarBot.getActiveExecutionPlan` / `getCombatExecutionState` / `getPlannerLastExecutionPlanInvalidationReason` /
+      //   `getPlannerLastShouldReplanReason` must exist and return shape-compatible values. Also verifies all the Part 2
+      //   helpers are wired through to `ligmarBot`.
+      try {
+        const bot = window.ligmarBot || null;
+        if (bot) {
+          const hasGetPlan = typeof bot.getActiveExecutionPlan === "function";
+          const hasGetExec = typeof bot.getCombatExecutionState === "function";
+          const hasGetInvReason = typeof bot.getPlannerLastExecutionPlanInvalidationReason === "function";
+          const hasGetReplanReason = typeof bot.getPlannerLastShouldReplanReason === "function";
+          const hasBuild = typeof bot.plannerBuildExecutionPlan === "function";
+          const hasShouldReplan = typeof bot.plannerShouldReplanForExecutionPlan === "function";
+          const hasInvalidate = typeof bot.plannerInvalidateExecutionPlan === "function";
+          const hasAdvance = typeof bot.plannerAdvanceExecutionPlanStep === "function";
+          const hasAdapter = typeof bot.plannerAdaptExecutionPlanStepToOpenerShape === "function";
+          const hasNextQueue = typeof bot.plannerNextCombatQueueAction === "function";
+          const execState = hasGetExec ? bot.getCombatExecutionState() : null;
+          const execShapeOk =
+            !execState ||
+            (
+              "planId" in execState &&
+              "currentStepIndex" in execState &&
+              "lastStepResult" in execState &&
+              "lastReplanReason" in execState &&
+              "lastInvalidationReason" in execState &&
+              "planFollowedBeyondFirstStep" in execState
+            );
+          const passed =
+            hasGetPlan && hasGetExec && hasGetInvReason && hasGetReplanReason &&
+            hasBuild && hasShouldReplan && hasInvalidate && hasAdvance && hasAdapter && hasNextQueue &&
+            execShapeOk;
+          addCheck(
+            "planner_execution_plan_runtime_diagnostics",
+            passed,
+            {
+              hasGetPlan: hasGetPlan,
+              hasGetExec: hasGetExec,
+              hasGetInvReason: hasGetInvReason,
+              hasGetReplanReason: hasGetReplanReason,
+              hasBuild: hasBuild,
+              hasShouldReplan: hasShouldReplan,
+              hasInvalidate: hasInvalidate,
+              hasAdvance: hasAdvance,
+              hasAdapter: hasAdapter,
+              hasNextQueue: hasNextQueue,
+              execShapeOk: execShapeOk,
+              execStateKeys: execState ? Object.keys(execState).slice(0, 16) : null
+            },
+            false
+          );
+        } else {
+          addCheck("planner_execution_plan_runtime_diagnostics", false, { reason: "ligmarBot_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_execution_plan_runtime_diagnostics threw", err);
+        addCheck("planner_execution_plan_runtime_diagnostics", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
       // AI CHANGED: Planner rewrite v1.2 — diagnostics is now read-only (no class-profile mutation).
       //   Logic (bullet-list):
       //     • Capture a known `Config.planner.skillMpReserve` value, set a sentinel value, call `getPlannerOpeningPickDiagnostics()` (which previously

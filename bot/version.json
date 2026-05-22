@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "1.0.9-alpha",
-    "description":  "planner correction pass v1.3: active basic timing model, typed runtime path, simulated-state semantics clarity",
-    "builtAt":  "2026-05-22T19:24:16.3678301+03:00",
+    "version":  "1.1.0-alpha",
+    "description":  "planner part 2: execute short sequence plans with replanning and charge integration",
+    "builtAt":  "2026-05-22T20:10:16.6115985+03:00",
     "history":  [
+                    {
+                        "version":  "1.1.0-alpha",
+                        "description":  "planner part 2: execute short sequence plans with replanning and charge integration",
+                        "date":  "2026-05-22T20:10:16.6115985+03:00"
+                    },
                     {
                         "version":  "1.0.9-alpha",
                         "description":  "planner correction pass v1.3: active basic timing model, typed runtime path, simulated-state semantics clarity",
@@ -247,11 +252,6 @@
                         "version":  "0.3.186",
                         "description":  "opener danger: sustain HP loss in pressure model, fresh sustain before opener pick, TEST + fieldValidation sample",
                         "date":  "2026-05-13T17:13:27.3439974+03:00"
-                    },
-                    {
-                        "version":  "0.3.185",
-                        "description":  "horizon: unified live-target overkill cap helper for opener and charge",
-                        "date":  "2026-05-13T16:55:18.3884536+03:00"
                     }
                 ]
 }

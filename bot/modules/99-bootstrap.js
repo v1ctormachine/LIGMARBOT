@@ -366,6 +366,37 @@
         typeof plannerSelectSequencePick === "function" ? plannerSelectSequencePick : null,
       plannerAdaptSequencePickToOpenerShape:
         typeof plannerAdaptSequencePickToOpenerShape === "function" ? plannerAdaptSequencePickToOpenerShape : null,
+      // AI CHANGED: Planner Part 2 — execution-plan API (build / inspect / invalidate / replan-check / adapter).
+      plannerBuildExecutionPlan:
+        typeof plannerBuildExecutionPlan === "function" ? plannerBuildExecutionPlan : null,
+      plannerShouldReplanForExecutionPlan:
+        typeof plannerShouldReplanForExecutionPlan === "function" ? plannerShouldReplanForExecutionPlan : null,
+      plannerInvalidateExecutionPlan:
+        typeof plannerInvalidateExecutionPlan === "function" ? plannerInvalidateExecutionPlan : null,
+      plannerAdvanceExecutionPlanStep:
+        typeof plannerAdvanceExecutionPlanStep === "function" ? plannerAdvanceExecutionPlanStep : null,
+      plannerGetActiveExecutionPlanStep:
+        typeof plannerGetActiveExecutionPlanStep === "function" ? plannerGetActiveExecutionPlanStep : null,
+      plannerAdaptExecutionPlanStepToOpenerShape:
+        typeof plannerAdaptExecutionPlanStepToOpenerShape === "function" ? plannerAdaptExecutionPlanStepToOpenerShape : null,
+      plannerNextCombatQueueAction:
+        typeof plannerNextCombatQueueAction === "function" ? plannerNextCombatQueueAction : null,
+      plannerExecutionPlanStepToQueueAction:
+        typeof plannerExecutionPlanStepToQueueAction === "function" ? plannerExecutionPlanStepToQueueAction : null,
+      getActiveExecutionPlan: function () {
+        return Runtime && Runtime.planner ? Runtime.planner.activeExecutionPlan || null : null;
+      },
+      getCombatExecutionState: function () {
+        return Runtime && Runtime.autoFarm && Runtime.autoFarm.combatExecution
+          ? Runtime.autoFarm.combatExecution
+          : null;
+      },
+      getPlannerLastExecutionPlanInvalidationReason: function () {
+        return Runtime && Runtime.planner ? Runtime.planner.lastExecutionPlanInvalidationReason || null : null;
+      },
+      getPlannerLastShouldReplanReason: function () {
+        return Runtime && Runtime.planner ? Runtime.planner.lastShouldReplanReason || null : null;
+      },
       // AI CHANGED: Best-effort live readers for active-attacker count + visible target effects (40-state.js).
       readActiveAttackerCount:
         typeof readActiveAttackerCount === "function" ? readActiveAttackerCount : null,

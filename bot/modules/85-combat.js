@@ -3690,10 +3690,19 @@
     if (!Object.prototype.hasOwnProperty.call(queue, "anchorNeedsReset")) {
       queue.anchorNeedsReset = false;
     }
+    // AI CHANGED: Planner Part 2 — track whether the currently queued action came from the active execution plan so the fire
+    // path can advance the plan cursor (and so diagnostics can show plan-driven vs legacy queue advances).
+    if (!Object.prototype.hasOwnProperty.call(queue, "fromExecutionPlan")) {
+      queue.fromExecutionPlan = false;
+    }
+    if (!Object.prototype.hasOwnProperty.call(queue, "planStepIndex")) {
+      queue.planStepIndex = null;
+    }
     return queue;
   }
 
   // AI CHANGED: Combat episode v1 — drop structured burst plan when target/context resets (logged once when something was stored).
+  // AI CHANGED: Planner Part 2 — also invalidate the active execution plan so the next burst rebuilds against the fresh state.
   function clearCombatEpisode(reason) {
     if (!Runtime || !Runtime.autoFarm) {
       return;
@@ -3702,6 +3711,13 @@
       Logger.log("COMBAT", "combatEpisode cleared", { reason: reason || "unspecified" });
     }
     Runtime.autoFarm.combatEpisode = null;
+    if (typeof plannerInvalidateExecutionPlan === "function") {
+      try {
+        plannerInvalidateExecutionPlan(reason || "combat_episode_cleared");
+      } catch (err) {
+        Logger.warn("COMBAT", "plannerInvalidateExecutionPlan failed during clearCombatEpisode", err);
+      }
+    }
   }
 
   function clearCombatActionQueue(reason, detail) {
@@ -3709,6 +3725,8 @@
     queue.active = false;
     queue.clearedAt = Date.now();
     queue.clearReason = reason || null;
+    queue.fromExecutionPlan = false;
+    queue.planStepIndex = null;
     if (detail && typeof detail === "object") {
       if (Object.prototype.hasOwnProperty.call(detail, "mode")) {
         queue.mode = detail.mode;
@@ -3818,6 +3836,9 @@
     queue.slot = Number.isFinite(action.slot) ? action.slot : null;
     queue.name = resolveCombatQueueActionName(action.mode, action.name || "");
     queue.source = action.source || null;
+    // AI CHANGED: Planner Part 2 — propagate plan provenance so `fireCombatActionQueue` can advance the plan cursor on fire.
+    queue.fromExecutionPlan = !!(action && action.fromExecutionPlan);
+    queue.planStepIndex = action && Number.isFinite(action.planStepIndex) ? action.planStepIndex : null;
     queue.anchorMode = meta && meta.anchorMode ? meta.anchorMode : null;
     queue.anchorSlot = meta && Number.isFinite(meta.anchorSlot) ? meta.anchorSlot : null;
     queue.anchorName = meta && meta.anchorName ? resolveCombatQueueActionName(meta.anchorMode, meta.anchorName) : null;
@@ -4016,28 +4037,50 @@
       anchorName: queue.anchorName,
       anchorSource: queue.anchorSource,
       openerSlot: queue.openerSlot,
-      openerName: queue.openerName
+      openerName: queue.openerName,
+      fromExecutionPlan: !!(queue.fromExecutionPlan)
     });
     plannerRecordOpenerRuntimeEvent("queued_action_fired", {
       mode: queuedAction.mode,
       slot: queuedAction.slot,
-      openerSlot: queue.openerSlot
+      openerSlot: queue.openerSlot,
+      fromExecutionPlan: !!(queue.fromExecutionPlan)
     });
+    // AI CHANGED: Planner Part 2 — when the queue just fired a plan-sourced step, advance the active plan's cursor so the
+    // chain continues from step N+1 (which `plannerNextCombatQueueAction` will then fetch below). This is what makes the
+    // executor *follow the plan past step 1* during a single burst.
+    if (queue.fromExecutionPlan && typeof plannerAdvanceExecutionPlanStep === "function") {
+      try {
+        plannerAdvanceExecutionPlanStep({ result: "queue_fired", source: "fireCombatActionQueue" });
+      } catch (err) {
+        Logger.warn("COMBAT", "plannerAdvanceExecutionPlanStep failed after queue fire", err);
+      }
+    }
     queue.anchorMode = queuedAction.mode;
     queue.anchorSlot = queuedAction.slot;
     queue.anchorName = queuedAction.name;
     queue.anchorSource = queuedAction.source;
     queue.anchorNeedsReset = true;
     const postQueueState = readBasicState();
+    // AI CHANGED: Planner Part 2 — prefer the active execution plan's next step over the legacy single-step lookahead.
+    // `plannerNextCombatQueueAction` transparently falls back to `plannerBuildCombatQueueAction` when no plan is active.
     const nextQueuedAction =
-      typeof plannerBuildCombatQueueAction === "function"
-        ? plannerBuildCombatQueueAction({
+      typeof plannerNextCombatQueueAction === "function"
+        ? plannerNextCombatQueueAction({
             afterSlot: queuedAction.mode === "skill" ? queuedAction.slot : null,
             liveState: postQueueState,
             disallowChargeSkills: opts.disallowChargeSkills !== false
           })
-        : null;
+        : (typeof plannerBuildCombatQueueAction === "function"
+            ? plannerBuildCombatQueueAction({
+                afterSlot: queuedAction.mode === "skill" ? queuedAction.slot : null,
+                liveState: postQueueState,
+                disallowChargeSkills: opts.disallowChargeSkills !== false
+              })
+            : null);
     if (!nextQueuedAction || !nextQueuedAction.mode) {
+      queue.fromExecutionPlan = false;
+      queue.planStepIndex = null;
       clearCombatActionQueue("no_followup_after_queue_fire", {
         anchorMode: queue.anchorMode,
         anchorSlot: queue.anchorSlot,
@@ -4057,6 +4100,9 @@
     queue.slot = Number.isFinite(nextQueuedAction.slot) ? nextQueuedAction.slot : null;
     queue.name = resolveCombatQueueActionName(nextQueuedAction.mode, nextQueuedAction.name || "");
     queue.source = nextQueuedAction.source || null;
+    queue.fromExecutionPlan = !!(nextQueuedAction && nextQueuedAction.fromExecutionPlan);
+    queue.planStepIndex =
+      nextQueuedAction && Number.isFinite(nextQueuedAction.planStepIndex) ? nextQueuedAction.planStepIndex : null;
     queue.armedAt = Date.now();
     queue.targetHpMaxAtArm =
       postQueueState &&
@@ -4581,33 +4627,68 @@
         queuedActionFired = true;
       }
     };
-    if (queueAllowedOpen && open && open.queuedAction) {
-      const queuedState = armCombatActionQueue(open.queuedAction, {
-        anchorMode: open.skillSlot != null ? "skill" : "basic",
-        anchorSlot: open.skillSlot,
-        anchorName: open.skillRecord && open.skillRecord.name ? open.skillRecord.name : "Basic Attack",
-        anchorSource: open.skillSlot != null ? "opening_attack" : "opening_basic",
-        openerSlot: open.skillSlot,
-        openerName: open.skillRecord && open.skillRecord.name ? open.skillRecord.name : (open.skillSlot == null ? "Basic Attack" : null),
-        liveState: readBasicState(),
-        postRetargetGuarded: false
-      });
-      if (queuedState) {
-        Logger.log("COMBAT", "Queued combat action armed", {
-          mode: queuedState.mode,
-          slot: queuedState.slot,
-          name: queuedState.name,
-          source: queuedState.source,
-          anchorMode: queuedState.anchorMode,
-          anchorSlot: queuedState.anchorSlot,
-          anchorName: queuedState.anchorName,
-          openerSlot: queuedState.openerSlot,
-          postRetargetGuarded: queuedState.postRetargetGuarded
+    if (queueAllowedOpen) {
+      // AI CHANGED: Planner Part 2 — opener has fired (step 0 of the execution plan). Advance the plan cursor so the queue arms
+      // against step 1+. Prefer the plan's next non-charge step over the legacy single-step `open.queuedAction` hint, then fall
+      // back to that hint or legacy lookahead if no plan was synced. This is what lets the executor actually FOLLOW the planned
+      // short sequence past the first action.
+      const livePlan =
+        typeof plannerGetActiveExecutionPlan === "function" ? plannerGetActiveExecutionPlan() : null;
+      let advancedPlanForOpener = false;
+      if (livePlan && livePlan.valid) {
+        try {
+          plannerAdvanceExecutionPlanStep({ result: "opener_fired", source: "attackUntilProgress_open" });
+          advancedPlanForOpener = true;
+        } catch (err) {
+          Logger.warn("COMBAT", "plannerAdvanceExecutionPlanStep failed for opener", err);
+        }
+      }
+      let queuedAction = null;
+      if (typeof plannerNextCombatQueueAction === "function") {
+        queuedAction = plannerNextCombatQueueAction({
+          afterSlot: open.skillSlot,
+          liveState: readBasicState(),
+          disallowChargeSkills: !!(opts && opts.disallowChargeSkills)
         });
-        plannerRecordOpenerRuntimeEvent("queued_action_armed", {
-          mode: queuedState.mode,
-          slot: queuedState.slot,
-          openerSlot: queuedState.openerSlot
+      }
+      if (!queuedAction && open && open.queuedAction && open.queuedAction.mode) {
+        queuedAction = open.queuedAction;
+      }
+      if (queuedAction && queuedAction.mode) {
+        const queuedState = armCombatActionQueue(queuedAction, {
+          anchorMode: open.skillSlot != null ? "skill" : "basic",
+          anchorSlot: open.skillSlot,
+          anchorName: open.skillRecord && open.skillRecord.name ? open.skillRecord.name : "Basic Attack",
+          anchorSource: open.skillSlot != null ? "opening_attack" : "opening_basic",
+          openerSlot: open.skillSlot,
+          openerName: open.skillRecord && open.skillRecord.name ? open.skillRecord.name : (open.skillSlot == null ? "Basic Attack" : null),
+          liveState: readBasicState(),
+          postRetargetGuarded: false
+        });
+        if (queuedState) {
+          Logger.log("COMBAT", "Queued combat action armed", {
+            mode: queuedState.mode,
+            slot: queuedState.slot,
+            name: queuedState.name,
+            source: queuedState.source,
+            anchorMode: queuedState.anchorMode,
+            anchorSlot: queuedState.anchorSlot,
+            anchorName: queuedState.anchorName,
+            openerSlot: queuedState.openerSlot,
+            postRetargetGuarded: queuedState.postRetargetGuarded,
+            fromExecutionPlan: queuedState.fromExecutionPlan === true,
+            planStepIndex: queuedState.planStepIndex
+          });
+          plannerRecordOpenerRuntimeEvent("queued_action_armed", {
+            mode: queuedState.mode,
+            slot: queuedState.slot,
+            openerSlot: queuedState.openerSlot,
+            fromExecutionPlan: queuedState.fromExecutionPlan === true
+          });
+        }
+      } else if (advancedPlanForOpener) {
+        Logger.log("COMBAT", "Execution plan exhausted at step 1 — no queue follow-up to arm", {
+          openerSlot: open.skillSlot
         });
       }
     }
@@ -4909,6 +4990,16 @@
 
     Logger.warn("LOOP", "No attack progress detected (enemy count + target HP unchanged for baseline)");
     clearCombatActionQueue("no_progress_detected");
+    if (typeof plannerInvalidateExecutionPlan === "function") {
+      try {
+        plannerInvalidateExecutionPlan("no_progress", {
+          initialSlot: open.skillSlot,
+          triedSlots: triedSlots.slice(0, 8)
+        });
+      } catch (err) {
+        Logger.warn("COMBAT", "plannerInvalidateExecutionPlan failed on no-progress", err);
+      }
+    }
     if (triedSlots.length > 0 || open.skillSlot != null) {
       plannerRecordOpenerRuntimeEvent("ranked_no_progress", {
         initialSlot: open.skillSlot,
