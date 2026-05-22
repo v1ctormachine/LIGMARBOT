@@ -3486,6 +3486,111 @@
         addCheck("planner_should_replan_helper_shape", false, { error: String(err && err.message ? err.message : err) }, false);
       }
 
+      // AI CHANGED: Planner Part 2.1 — targeted BUGFIX test for `active_attacker_count_jumped`.
+      //   The old code did `Number.isFinite(readActiveAttackerCount())` on the object return shape and so this replan
+      //   condition was structurally dead. This test injects a deterministic `liveAttackerInfo` (the same shape that
+      //   `readActiveAttackerCount` returns: `{ count, buttonVisible, source }`) plus the simpler `liveAttackerCount`
+      //   path, and proves the helper now:
+      //     1) returns `shouldReplan: true` and `reason: "active_attacker_count_jumped"` when count jumps by ≥ 2
+      //     2) does NOT fire when the jump is < 2 (so the existing OK case still passes)
+      //     3) propagates the reader source in `details.liveAttackerSource` so live runtime can log provenance.
+      try {
+        if (typeof plannerShouldReplanForExecutionPlan === "function") {
+          const mkAtkPlan = function (builtAtkCount) {
+            return {
+              version: 2,
+              planId: "ep_test_atk_jump",
+              builtAt: Date.now(),
+              targetFingerprint: "fp-atk",
+              combatStateAtBuild: {
+                target: { fingerprintKey: "fp-atk", hpCur: 900, hpMax: 1000, magicResistShred: false, shredRemainingSec: null },
+                player: { hpCur: 1000, hpMax: 1000, mpCur: 1000, mpMax: 1000 },
+                fight: { enemyCount: 1, activeAttackerCount: builtAtkCount, pressure: 0.1, combatMode: "fast" }
+              },
+              actions: [
+                { index: 0, kind: "skill", slot: 2, name: "Piercing Strike", damageType: "physical", chargeMode: null, chargeReleaseFraction: null, predictedDamageDealt: 120, predictedActionTimeSec: 0.6, predictedEndElapsedSec: 0.6, reasonTags: [] }
+              ],
+              totalActions: 1,
+              currentIndex: 0,
+              selectionReason: "test_atk_jump",
+              predictedKillAtSec: null,
+              score: 1,
+              valid: true,
+              invalidReason: null,
+              replanReason: null,
+              stepHistory: [],
+              excludeSlotsApplied: null,
+              disallowChargeSkills: false,
+              firstBurstAfterRetarget: false
+            };
+          };
+          const liveOk = {
+            combat: { enemyCount: 1, targetHp: { valid: true, cur: 900, max: 1000 } },
+            player: { mp: { valid: true, cur: 1000 } }
+          };
+          // 1) Object override matching real `readActiveAttackerCount()` shape — count jumped from 1 -> 4 (Δ = 3 ≥ 2).
+          const planAtk = mkAtkPlan(1);
+          const decisionJumpObj = plannerShouldReplanForExecutionPlan({
+            plan: planAtk,
+            liveState: liveOk,
+            targetFingerprint: "fp-atk",
+            liveAttackerInfo: { count: 4, buttonVisible: true, source: "badge_value" }
+          });
+          // 2) Number override — count jumped from 1 -> 3 (Δ = 2, exactly threshold).
+          const planAtk2 = mkAtkPlan(1);
+          const decisionJumpNum = plannerShouldReplanForExecutionPlan({
+            plan: planAtk2,
+            liveState: liveOk,
+            targetFingerprint: "fp-atk",
+            liveAttackerCount: 3
+          });
+          // 3) Sub-threshold delta — 1 -> 2 (Δ = 1) must NOT fire active_attacker_count_jumped.
+          const planAtkNoJump = mkAtkPlan(1);
+          const decisionNoJump = plannerShouldReplanForExecutionPlan({
+            plan: planAtkNoJump,
+            liveState: liveOk,
+            targetFingerprint: "fp-atk",
+            liveAttackerInfo: { count: 2, buttonVisible: true, source: "badge_value" }
+          });
+          const passedObj =
+            decisionJumpObj &&
+            decisionJumpObj.shouldReplan === true &&
+            decisionJumpObj.reason === "active_attacker_count_jumped" &&
+            decisionJumpObj.details &&
+            decisionJumpObj.details.was === 1 &&
+            decisionJumpObj.details.now === 4 &&
+            decisionJumpObj.details.liveAttackerSource === "badge_value";
+          const passedNum =
+            decisionJumpNum &&
+            decisionJumpNum.shouldReplan === true &&
+            decisionJumpNum.reason === "active_attacker_count_jumped" &&
+            decisionJumpNum.details &&
+            decisionJumpNum.details.was === 1 &&
+            decisionJumpNum.details.now === 3 &&
+            decisionJumpNum.details.liveAttackerSource === "opts.liveAttackerCount";
+          const passedNoJump =
+            decisionNoJump &&
+            decisionNoJump.shouldReplan === false &&
+            decisionNoJump.reason == null;
+          const passed = !!(passedObj && passedNum && passedNoJump);
+          addCheck(
+            "planner_should_replan_active_attacker_jump",
+            passed,
+            {
+              jumpObj: decisionJumpObj,
+              jumpNum: decisionJumpNum,
+              noJump: decisionNoJump
+            },
+            false
+          );
+        } else {
+          addCheck("planner_should_replan_active_attacker_jump", false, { reason: "fn_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_should_replan_active_attacker_jump threw", err);
+        addCheck("planner_should_replan_active_attacker_jump", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
       // AI CHANGED: Planner Part 2 — execution-plan CHARGE STEP shape test.
       //   Verify a charge step survives plan materialization with chargeMode + chargeReleaseFraction preserved, AND that
       //   `plannerExecutionPlanStepToQueueAction` correctly returns null for the charge step (queue cannot fire charges).

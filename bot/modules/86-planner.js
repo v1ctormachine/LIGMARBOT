@@ -4605,15 +4605,32 @@
     if (liveState && liveState.combat && Number.isFinite(liveState.combat.enemyCount) && liveState.combat.enemyCount <= 0) {
       return record("no_enemies", { enemyCount: liveState.combat.enemyCount });
     }
-    // Active attacker count materially higher than at build time (more pressure than planner accounted for).
+    // AI CHANGED: Planner Part 2.1 BUGFIX — `readActiveAttackerCount()` returns `{ count, buttonVisible, source } | null`,
+    //   NOT a plain number. The previous code did `Number.isFinite(liveAtk)` on the object, which is always false, so the
+    //   `active_attacker_count_jumped` replan condition was structurally dead. Read `count` (and propagate `source` for
+    //   diagnostics). Accept `opts.liveAttackerInfo` as a deterministic override so tests do not need DOM mocks; accept
+    //   `opts.liveAttackerCount` for simpler test injection.
     const builtAtk =
       plan.combatStateAtBuild && plan.combatStateAtBuild.fight && Number.isFinite(plan.combatStateAtBuild.fight.activeAttackerCount)
         ? plan.combatStateAtBuild.fight.activeAttackerCount
         : null;
+    let liveAtkInfo = null;
+    if (opts.liveAttackerInfo && typeof opts.liveAttackerInfo === "object") {
+      liveAtkInfo = opts.liveAttackerInfo;
+    } else if (Number.isFinite(opts.liveAttackerCount)) {
+      liveAtkInfo = { count: opts.liveAttackerCount, buttonVisible: true, source: "opts.liveAttackerCount" };
+    } else if (typeof readActiveAttackerCount === "function") {
+      liveAtkInfo = readActiveAttackerCount();
+    }
     const liveAtk =
-      typeof readActiveAttackerCount === "function" ? readActiveAttackerCount() : null;
+      liveAtkInfo && Number.isFinite(liveAtkInfo.count) ? liveAtkInfo.count : null;
+    const liveAttackerSource = liveAtkInfo && typeof liveAtkInfo.source === "string" ? liveAtkInfo.source : null;
     if (Number.isFinite(builtAtk) && Number.isFinite(liveAtk) && liveAtk - builtAtk >= 2) {
-      return record("active_attacker_count_jumped", { was: builtAtk, now: liveAtk });
+      return record("active_attacker_count_jumped", {
+        was: builtAtk,
+        now: liveAtk,
+        liveAttackerSource: liveAttackerSource
+      });
     }
     // Target HP drift beyond hpDeltaFraction since plan build (e.g. another mob hit the bar).
     const hpDeltaFraction = Number.isFinite(opts.hpDeltaFraction) ? opts.hpDeltaFraction : 0.4;

@@ -5200,6 +5200,36 @@
           `engaging target (remaining=${current.combat.enemyCount}, burst=${attackBursts}/${maxBursts}, find=${findAttempts})`
         );
         const beforeAttack = readBasicState();
+        // AI CHANGED: Planner Part 2.1 — between-burst safe boundary: consult
+        // plannerShouldReplanForExecutionPlan() before committing the next burst.
+        // The previous burst has fully resolved here (await attackUntilProgress
+        // has returned), so this point is NOT mid-cast. If the helper says the
+        // active plan is stale (fingerprint drift, target died, attacker jump,
+        // hp drift, etc.) we invalidate the plan so the next opener pick rebuilds
+        // a fresh sequence rather than continuing a dead plan. Existing retarget
+        // / no-progress invalidation paths still run; this is purely additive.
+        if (typeof plannerGetActiveExecutionPlan === "function") {
+          try {
+            const livePlan = plannerGetActiveExecutionPlan();
+            if (livePlan && livePlan.valid !== false) {
+              const decision = typeof plannerShouldReplanForExecutionPlan === "function"
+                ? plannerShouldReplanForExecutionPlan({ plan: livePlan, liveState: beforeAttack })
+                : null;
+              if (decision && decision.shouldReplan === true && typeof plannerInvalidateExecutionPlan === "function") {
+                Logger.log("LOOP", "Between-burst replan check invalidated active plan", {
+                  reason: decision.reason,
+                  details: decision.details,
+                  planId: livePlan.id,
+                  burst: attackBursts,
+                  findAttempts: findAttempts
+                });
+                plannerInvalidateExecutionPlan(decision.reason, decision.details);
+              }
+            }
+          } catch (replanErr) {
+            Logger.warn("LOOP", "Between-burst plannerShouldReplanForExecutionPlan threw", replanErr);
+          }
+        }
         const attackProgressed = await attackUntilProgress(beforeAttack, {
           useRankedSkillOpener: useRankedBurst,
           firstBurstAfterRetarget: firstBurstAfterRetarget,
