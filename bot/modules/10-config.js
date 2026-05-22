@@ -10,6 +10,8 @@
       // AI CHANGED: Tighter generic verify polling (retarget / target-acquired / find-enemy caps).
       pollMs: 25,
       timeoutMs: 1250,
+      // AI CHANGED: Audit fix #11 — throttle the per-poll health re-evaluation so 25 ms polls don't burn CPU on `readBasicState` + ~15 selectors every tick. Predicate itself still runs every `pollMs`.
+      healthEvalThrottleMs: 250,
       // AI CHANGED: Loot/shrine completion — require this long with no highlight loot button and no busy battle-status text.
       lootSettleStableMs: 400,
       // AI CHANGED: Longer cap than generic verify; altar/shrine animations can run several seconds.
@@ -97,6 +99,14 @@
       useCombatPotions: true,
       // AI CHANGED: Potion cooldown reported by the user; used as a safety mirror on top of DOM cooldown hints.
       combatPotionCooldownMs: 15000,
+      // AI CHANGED: Audit fix #5 — when client-side cooldown timer still says "cooling", skip the candidate even if the bar slot CD overlay is not visible (DOM lag / brief overlay flicker).
+      combatPotionEnforceClientCooldown: true,
+      // AI CHANGED: Audit fix #3 — fraction of max HP a target's `cur` must jump up by to count as "fresh target = progress" in `hasCombatProgressSince` (catches same-maxHP target swap that previously stalled the loop).
+      progressTargetSwapJumpFrac: 0.25,
+      // AI CHANGED: Audit fix #9 — only flag HP-spike safety buff when player is already below this fraction of max HP at the spike sample (rejects false spikes from misreads or potion HoT ticks while the player is near full).
+      safetyHpSpikeRequireHpBelowFrac: 0.85,
+      // AI CHANGED: Audit fix #9 — minimum gap between consecutive HP-spike safety buff fires; rejects rapid re-flagging when one cast is already on cooldown / settling.
+      safetyHpSpikeCooldownMs: 4000,
       // AI CHANGED: Treat HP/MP potion cooldown as shared unless proven otherwise, so the bot does not chain impossible consumables.
       combatPotionSharedCooldown: true,
       // AI CHANGED: Heal-over-time potions in the current build run for 10s; used as a fallback when the tooltip omits duration.

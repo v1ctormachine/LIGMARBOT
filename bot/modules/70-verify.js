@@ -3,6 +3,11 @@
     const timeoutMs = options && options.timeoutMs ? options.timeoutMs : Config.verification.timeoutMs;
     const pollMs = options && options.pollMs ? options.pollMs : Config.verification.pollMs;
     const start = Date.now();
+    // AI CHANGED: Audit fix #11 — throttle the per-poll health evaluation (`evaluateAutoFarmHealth(readBasicState())` reads ~15 DOM selectors). Predicate still runs every `pollMs`; health eval runs at most every `healthEvalThrottleMs` (default 250 ms — much slower than typical 25–90 ms polls).
+    const healthEvalThrottleMs = Number.isFinite(Config.verification && Config.verification.healthEvalThrottleMs)
+      ? Math.max(50, Config.verification.healthEvalThrottleMs)
+      : 250;
+    let lastHealthEvalAt = 0;
     return new Promise((resolve) => {
       const tick = () => {
         // AI CHANGED: slice 21 — cooperative stop so verify waits don’t block Stop.
@@ -11,7 +16,14 @@
           resolve(false);
           return;
         }
-        if (Runtime.autoFarm.running && typeof evaluateAutoFarmHealth === "function" && typeof shouldAbortWaitForSessionRisk === "function") {
+        const nowEvalCheck = Date.now();
+        if (
+          Runtime.autoFarm.running &&
+          typeof evaluateAutoFarmHealth === "function" &&
+          typeof shouldAbortWaitForSessionRisk === "function" &&
+          nowEvalCheck - lastHealthEvalAt >= healthEvalThrottleMs
+        ) {
+          lastHealthEvalAt = nowEvalCheck;
           const healthSummary = evaluateAutoFarmHealth(readBasicState(), {
             reason: label
           });
@@ -339,6 +351,27 @@
     if (centerAlreadyVisible) {
       Logger.log("MAP", "Map already open");
       return { ok: true, action: "already_open" };
+    }
+    // AI CHANGED: Audit fix #6 — center button may be momentarily hidden (animation, popup) while the map canvas is still mounted. Clicking the toggle in that state would close the map. If the canvas is already in the DOM, treat as already-open and wait briefly for the center button to reappear instead of toggling.
+    const mapCanvasSelector =
+      Config.selectors && typeof Config.selectors.mapCanvas === "string" ? Config.selectors.mapCanvas : null;
+    if (mapCanvasSelector) {
+      const canvas = document.querySelector(mapCanvasSelector);
+      if (canvas && isElementVisible(canvas)) {
+        const reappear = await waitForCondition(
+          "map center button reappear",
+          function () {
+            const cb = document.querySelector(Config.selectors.centerMapButton);
+            return !!cb && isElementVisible(cb);
+          },
+          { timeoutMs: 600, pollMs: 80 }
+        );
+        if (reappear) {
+          Logger.log("MAP", "Map already open (center button was transiently hidden)");
+          return { ok: true, action: "already_open_canvas" };
+        }
+        Logger.warn("MAP", "Map canvas visible but center button missing — toggling anyway");
+      }
     }
     const attempts = Number.isFinite(Config.recovery && Config.recovery.mapOpenRetryCount)
       ? Math.max(1, Config.recovery.mapOpenRetryCount)

@@ -75,11 +75,14 @@
     const bypassStop = o.bypassStop === true;
     const total = Math.max(0, Number(ms) || 0);
     const stepMs = 80;
+    // AI CHANGED: Audit fix #1 — even on cooperative-stop or zero-ms sleep, always yield one macro-task so callers in a tight `await sleep(X)` loop cannot spin-freeze the page during the Stop wind-down. Minimum 30 ms keeps the event loop breathing.
+    const MIN_YIELD_MS = 30;
     return new Promise((resolve) => {
       let elapsed = 0;
       const tick = () => {
         if (!bypassStop && Runtime.autoFarm.stopRequested) {
-          resolve();
+          // AI CHANGED: Audit fix #1 — defer resolve so synchronous loops still hit the macro-task queue.
+          setTimeout(resolve, MIN_YIELD_MS);
           return;
         }
         if (elapsed >= total) {
@@ -90,6 +93,11 @@
         elapsed += slice;
         setTimeout(tick, slice);
       };
+      // AI CHANGED: Audit fix #1 — total === 0 callers still get a real tick so they cannot starve the renderer.
+      if (total === 0) {
+        setTimeout(resolve, MIN_YIELD_MS);
+        return;
+      }
       tick();
     });
   }
@@ -121,6 +129,11 @@
 
   // AI CHANGED: Game stable input path — Angular appsmartclick ignores HTMLElement.click(); dispatch real pointer/mouse events at center.
   function dispatchUserClickSequence(element, label) {
+    // AI CHANGED: Audit fix #8 — TOCTOU between `isElementVisible` (in `clickElementSafe`) and the dispatch. An animation / popup may have hidden the element in between; re-check just before reading the rect.
+    if (!isElementVisible(element)) {
+      Logger.warn("ACTION", `${label} user-click skipped: element became invisible before dispatch`);
+      return false;
+    }
     const rect = element.getBoundingClientRect();
     const x = rect.left + rect.width / 2;
     const y = rect.top + rect.height / 2;

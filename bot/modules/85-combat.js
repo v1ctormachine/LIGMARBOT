@@ -1366,6 +1366,14 @@
   function listCombatPotionCandidates(resource, userOpts) {
     const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
     const readyOnly = opts.readyOnly !== false;
+    // AI CHANGED: Audit fix #5 — cross-check the client-side potion cooldown timer (shared cooldown) against the DOM cooldown overlay so we never click a freshly-used potion just because the overlay hasn't appeared yet (network lag).
+    const enforceClientCooldown =
+      readyOnly && !!(Config.combat && Config.combat.combatPotionEnforceClientCooldown !== false);
+    const sustain = enforceClientCooldown ? getCombatSustainRuntime() : null;
+    const nowMsForCooldown = Date.now();
+    const clientCoolingUntil =
+      sustain && Number.isFinite(sustain.potionCooldownUntil) ? sustain.potionCooldownUntil : 0;
+    const clientCooling = enforceClientCooldown && clientCoolingUntil > nowMsForCooldown;
     const slots = Runtime.skills && Array.isArray(Runtime.skills.slots) ? Runtime.skills.slots : [];
     const rows = [];
     for (let i = 0; i < slots.length; i += 1) {
@@ -1382,6 +1390,10 @@
         continue;
       }
       if (readyOnly && typeof isActionBarSlotShowingCooldown === "function" && isActionBarSlotShowingCooldown(slotIdx)) {
+        continue;
+      }
+      // AI CHANGED: Audit fix #5 — shared client cooldown still active = skip even if DOM overlay isn't there yet.
+      if (clientCooling) {
         continue;
       }
       rows.push({
@@ -1496,16 +1508,43 @@
             const lost = sustain.lastHpSampleCur - hpCur;
             const needFrac = Number.isFinite(sCfg.hpDropImmediateMaxFrac) ? sCfg.hpDropImmediateMaxFrac : 0.25;
             if (lost > 0 && lost / hpMax >= needFrac) {
+              // AI CHANGED: Audit fix #9 — require current HP to actually be low. A misread or potion HoT tick can look like a "spike" while player is at full HP; do not waste long-CD defensive on those.
+              const requireBelowFrac = Number.isFinite(Config.combat && Config.combat.safetyHpSpikeRequireHpBelowFrac)
+                ? Math.max(0.1, Math.min(1, Config.combat.safetyHpSpikeRequireHpBelowFrac))
+                : 0.85;
+              const hpFracNow = hpCur / hpMax;
+              const cooldownMs = Number.isFinite(Config.combat && Config.combat.safetyHpSpikeCooldownMs)
+                ? Math.max(500, Config.combat.safetyHpSpikeCooldownMs)
+                : 4000;
               const rt = getSupportBuffLineRuntime();
-              rt.safetyHpSpikePending = true;
-              rt.safetyHpSpikeLost = +lost.toFixed(2);
-              rt.safetyHpSpikeAt = now;
-              Logger.log("COMBAT", "HP spike flagged for safety buff", {
-                lost: +lost.toFixed(2),
-                hpMax: hpMax,
-                frac: +(lost / hpMax).toFixed(4),
-                dtSec: +dtSpike.toFixed(3)
-              });
+              const recentlyFired =
+                Number.isFinite(rt.lastSafetyBuffCastAt) && now - rt.lastSafetyBuffCastAt < cooldownMs;
+              if (hpFracNow > requireBelowFrac) {
+                Logger.log("COMBAT", "HP spike rejected: current HP still high (likely misread or HoT tick)", {
+                  lost: +lost.toFixed(2),
+                  hpCur: hpCur,
+                  hpMax: hpMax,
+                  hpFrac: +hpFracNow.toFixed(3),
+                  requireBelowFrac: requireBelowFrac
+                });
+              } else if (recentlyFired) {
+                Logger.log("COMBAT", "HP spike rejected: safety buff fired recently — within cooldown", {
+                  lost: +lost.toFixed(2),
+                  msSinceLastFire: now - rt.lastSafetyBuffCastAt,
+                  cooldownMs: cooldownMs
+                });
+              } else {
+                rt.safetyHpSpikePending = true;
+                rt.safetyHpSpikeLost = +lost.toFixed(2);
+                rt.safetyHpSpikeAt = now;
+                Logger.log("COMBAT", "HP spike flagged for safety buff", {
+                  lost: +lost.toFixed(2),
+                  hpMax: hpMax,
+                  frac: +(lost / hpMax).toFixed(4),
+                  dtSec: +dtSpike.toFixed(3),
+                  hpFracNow: +hpFracNow.toFixed(3)
+                });
+              }
             }
           }
         }
@@ -3829,6 +3868,29 @@
       if (b && b.valid && t && t.valid && b.max === t.max && t.cur < b.cur) {
         return true;
       }
+      // AI CHANGED: Audit fix #3 — same-maxHP target swap could fool the original same-max gate when a fresh mob spawns with identical max and full HP. If we observe a large upward jump (cur rose by ≥ `targetSwapJumpFrac` of max) while max stayed equal, treat it as a target swap = progress signal so the loop does not stall fighting "the same HP bar" indefinitely.
+      if (b && b.valid && t && t.valid && b.max === t.max && Number.isFinite(b.cur) && Number.isFinite(t.cur)) {
+        const jumpFrac = Number.isFinite(Config.combat && Config.combat.progressTargetSwapJumpFrac)
+          ? Math.max(0.05, Math.min(0.95, Config.combat.progressTargetSwapJumpFrac))
+          : 0.25;
+        if (t.max > 0 && t.cur - b.cur >= t.max * jumpFrac) {
+          Logger.log("COMBAT", "Combat progress: target swap detected (HP jumped up)", {
+            baselineCur: b.cur,
+            liveCur: t.cur,
+            max: t.max,
+            jumpFrac: +(((t.cur - b.cur) / t.max) || 0).toFixed(3)
+          });
+          return true;
+        }
+      }
+      // AI CHANGED: Audit fix #3 — fresh enemy with different max HP after find/re-find = progress.
+      if (b && b.valid && t && t.valid && Number.isFinite(b.max) && Number.isFinite(t.max) && b.max !== t.max) {
+        Logger.log("COMBAT", "Combat progress: target swap detected (different max HP)", {
+          baselineMax: b.max,
+          liveMax: t.max
+        });
+        return true;
+      }
       return false;
     };
   }
@@ -3912,6 +3974,27 @@
     if (chargePlan.strategy === "cancel_release") {
       // AI CHANGED: Log after successful cancel click; distinguish hint-missing vs cast-bar gate / map-gap failure.
       const expectedN = open.skillRecord && open.skillRecord.name ? String(open.skillRecord.name) : "";
+      // AI CHANGED: Audit fix #4 — race: `sleep(releaseMs)` is imprecise (80 ms chunks). If we overshot past full charge the game has already auto-fired and the cancel hint is gone. Re-probe the hint before clicking so we don't dispatch a cancel onto a queued follow-up action.
+      const hintStillVisible = typeof isChargingSkillCancelHintVisible === "function" ? isChargingSkillCancelHintVisible() : true;
+      if (!hintStillVisible) {
+        Logger.log("LOOP", "Charge release: hint already gone (full charge auto-fired or settled) — skipping cancel click", {
+          slot: open.skillSlot,
+          releaseMs: chargePlan.releaseMs
+        });
+        if (settleRanked > 0) {
+          await sleep(settleRanked);
+        }
+        if (Runtime.autoFarm.stopRequested) {
+          return { handled: true, progressed: false };
+        }
+        // Continue into the progress wait below; the shot has likely landed already.
+        const okFired = await waitForCondition(
+          "attack progress (charge auto-fired)",
+          buildAttackProgressOrQueueAdvancePredicate(beforeState, {}),
+          attackProgressWaitOptions(cancelReleaseTimeout, pollMs)
+        );
+        return { handled: true, progressed: !!okFired };
+      }
       const released = clickChargingSkillCancelUi({ expectedSkillName: expectedN });
       if (released) {
         Logger.log("LOOP", "Charge skill release via cancel UI", {

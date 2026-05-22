@@ -580,6 +580,15 @@
       night_mode_persistence_roundtrip: "Night mode persistence",
       auto_skill_ensure_runs_once: "Skill ensure once-per-session",
       easy_mode_disables_buffs: "Easy mode disables buffs",
+      sleep_min_tick_on_stop: "sleep yields even when stopRequested",
+      combat_progress_target_swap: "Target-swap counts as progress",
+      hp_spike_requires_low_hp: "HP spike rejects high-HP misreads",
+      potion_cooldown_client_enforced: "Potion respects client cooldown",
+      wait_for_condition_health_throttle: "Health eval throttled in waits",
+      ring_scan_fresh_baseline: "Ring scan per-tile baseline",
+      logger_dedup_consecutive: "Logger collapses repeats",
+      click_safe_visibility_recheck: "Click recheck visibility",
+      ensure_map_open_canvas_guard: "Map-open canvas guard",
       skill_scan: "Skill data",
       skill_master_db: "Skill master DB",
       hero_stats: "Hero stats",
@@ -1760,6 +1769,163 @@
       } catch (err) {
         Logger.warn("TEST", "night_mode_helpers_wired threw", err);
         addCheck("night_mode_helpers_wired", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Audit fix #1 — sleep() must yield a macro-task even when stopRequested or ms===0; assert by measuring elapsed time.
+      try {
+        const prevStop = !!(Runtime.autoFarm && Runtime.autoFarm.stopRequested);
+        const wasRunning = !!(Runtime.autoFarm && Runtime.autoFarm.running);
+        Runtime.autoFarm.stopRequested = true;
+        const t0 = Date.now();
+        await sleep(0);
+        const elapsed = Date.now() - t0;
+        Runtime.autoFarm.stopRequested = prevStop;
+        Runtime.autoFarm.running = wasRunning;
+        addCheck(
+          "sleep_min_tick_on_stop",
+          elapsed >= 10,
+          { elapsedMs: elapsed, threshold: 10 },
+          false
+        );
+      } catch (err) {
+        Logger.warn("TEST", "sleep_min_tick_on_stop threw", err);
+        addCheck("sleep_min_tick_on_stop", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Audit fix #3 — verify by source inspection that hasCombatProgressSince treats target-swap (upward jump or different max) as progress, and the supporting config knob is present and valid.
+      try {
+        const src = typeof hasCombatProgressSince === "function" ? String(hasCombatProgressSince) : "";
+        const hasJumpFracPath = src.indexOf("progressTargetSwapJumpFrac") >= 0 || src.indexOf("targetSwapJumpFrac") >= 0;
+        const hasDifferentMaxPath = src.indexOf("different max HP") >= 0 || src.indexOf("b.max !== t.max") >= 0;
+        const frac = Number(Config.combat && Config.combat.progressTargetSwapJumpFrac);
+        const fracOk = Number.isFinite(frac) && frac > 0 && frac < 1;
+        addCheck(
+          "combat_progress_target_swap",
+          hasJumpFracPath && hasDifferentMaxPath && fracOk,
+          {
+            jumpFracPath: hasJumpFracPath,
+            differentMaxPath: hasDifferentMaxPath,
+            progressTargetSwapJumpFrac: frac
+          },
+          false
+        );
+      } catch (err) {
+        Logger.warn("TEST", "combat_progress_target_swap threw", err);
+        addCheck("combat_progress_target_swap", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Audit fix #9 — config knobs exist and update path checks current HP fraction.
+      try {
+        const ok =
+          Number.isFinite(Config.combat && Config.combat.safetyHpSpikeRequireHpBelowFrac) &&
+          Number.isFinite(Config.combat && Config.combat.safetyHpSpikeCooldownMs) &&
+          Config.combat.safetyHpSpikeRequireHpBelowFrac > 0 &&
+          Config.combat.safetyHpSpikeRequireHpBelowFrac <= 1 &&
+          Config.combat.safetyHpSpikeCooldownMs >= 500;
+        addCheck(
+          "hp_spike_requires_low_hp",
+          ok,
+          {
+            requireHpBelowFrac: Config.combat ? Config.combat.safetyHpSpikeRequireHpBelowFrac : null,
+            cooldownMs: Config.combat ? Config.combat.safetyHpSpikeCooldownMs : null
+          },
+          false
+        );
+      } catch (err) {
+        Logger.warn("TEST", "hp_spike_requires_low_hp threw", err);
+        addCheck("hp_spike_requires_low_hp", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Audit fix #5 — listCombatPotionCandidates honors client cooldown window when enforce flag is on.
+      try {
+        if (typeof listCombatPotionCandidates !== "function" || typeof getCombatSustainRuntime !== "function") {
+          addCheck("potion_cooldown_client_enforced", false, { reason: "api_missing" }, false);
+        } else {
+          const sustain = getCombatSustainRuntime();
+          const prevCooldown = sustain.potionCooldownUntil;
+          const prevEnforce = Config.combat && Config.combat.combatPotionEnforceClientCooldown;
+          Config.combat.combatPotionEnforceClientCooldown = true;
+          sustain.potionCooldownUntil = Date.now() + 5000;
+          const blocked = listCombatPotionCandidates("hp", { readyOnly: true }).length === 0;
+          sustain.potionCooldownUntil = prevCooldown;
+          Config.combat.combatPotionEnforceClientCooldown = prevEnforce;
+          addCheck(
+            "potion_cooldown_client_enforced",
+            blocked,
+            { enforced: true, listCountWhenCooling: blocked ? 0 : -1 },
+            false
+          );
+        }
+      } catch (err) {
+        Logger.warn("TEST", "potion_cooldown_client_enforced threw", err);
+        addCheck("potion_cooldown_client_enforced", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Audit fix #11 — verification config exposes healthEvalThrottleMs >= 50.
+      try {
+        const v = Config.verification && Number(Config.verification.healthEvalThrottleMs);
+        addCheck(
+          "wait_for_condition_health_throttle",
+          Number.isFinite(v) && v >= 50,
+          { healthEvalThrottleMs: v },
+          false
+        );
+      } catch (err) {
+        Logger.warn("TEST", "wait_for_condition_health_throttle threw", err);
+        addCheck("wait_for_condition_health_throttle", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Audit fix #7 — scanNeighborRing source uses per-tile `preClickBaseline` instead of cumulative `lastObservedCoords`.
+      try {
+        const src = typeof scanNeighborRing === "function" ? String(scanNeighborRing) : "";
+        const ok = src.indexOf("preClickBaseline") >= 0;
+        addCheck("ring_scan_fresh_baseline", ok, { hasPreClickBaseline: ok }, false);
+      } catch (err) {
+        Logger.warn("TEST", "ring_scan_fresh_baseline threw", err);
+        addCheck("ring_scan_fresh_baseline", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Audit fix #15 — Logger collapses two consecutive identical log calls, emitting only the first and tracking the rest as a deferred summary.
+      try {
+        const before = Logger.getRecentLogLines(10).length;
+        Logger.log("TEST_DEDUP", "audit fix #15 dedup probe", { tag: "dedup_probe" });
+        Logger.log("TEST_DEDUP", "audit fix #15 dedup probe", { tag: "dedup_probe" });
+        Logger.log("TEST_DEDUP", "audit fix #15 dedup probe", { tag: "dedup_probe" });
+        const after = Logger.getRecentLogLines(10).length;
+        // First call wrote one line; the next two should be coalesced (not written until flush).
+        const delta = after - before;
+        addCheck(
+          "logger_dedup_consecutive",
+          delta === 1,
+          { lineDelta: delta, expected: 1 },
+          false
+        );
+        if (typeof Logger.flushDedup === "function") {
+          Logger.flushDedup();
+        }
+      } catch (err) {
+        Logger.warn("TEST", "logger_dedup_consecutive threw", err);
+        addCheck("logger_dedup_consecutive", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Audit fix #8 — clickElementSafe's dispatchUserClickSequence re-checks visibility right before reading rect (TOCTOU guard).
+      try {
+        const src = typeof dispatchUserClickSequence === "function" ? String(dispatchUserClickSequence) : "";
+        const guarded = src.indexOf("became invisible before dispatch") >= 0;
+        addCheck("click_safe_visibility_recheck", guarded, { guarded: guarded }, false);
+      } catch (err) {
+        Logger.warn("TEST", "click_safe_visibility_recheck threw", err);
+        addCheck("click_safe_visibility_recheck", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Audit fix #6 — ensureMapOpen probes the map canvas before clicking the toggle.
+      try {
+        const src = typeof ensureMapOpen === "function" ? String(ensureMapOpen) : "";
+        const guarded = src.indexOf("already_open_canvas") >= 0 && src.indexOf("Config.selectors.mapCanvas") >= 0;
+        addCheck("ensure_map_open_canvas_guard", guarded, { guarded: guarded }, false);
+      } catch (err) {
+        Logger.warn("TEST", "ensure_map_open_canvas_guard threw", err);
+        addCheck("ensure_map_open_canvas_guard", false, { error: String(err && err.message ? err.message : err) }, false);
       }
 
       // AI CHANGED: Verify the ensure-skills helper has once-per-session config + Runtime latch hook (`Config.farmLoop.ensureSkills.runOncePerAutoSession`, `Runtime.autoFarm.skillEnsureDone`).

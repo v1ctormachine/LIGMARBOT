@@ -184,6 +184,12 @@
     let lastObservedCoords = baseline;
     for (let i = 0; i < ring.length; i += 1) {
       const point = ring[i];
+      // AI CHANGED: Audit fix #7 — refresh per-tile baseline from the live popup just before the click instead of trusting the cumulative `lastObservedCoords`. A stale popup from a prior tile could otherwise cause us to compare against the wrong reference and misclassify the tile.
+      const preClickFresh = readCurrentCoordsFromPopup();
+      const preClickBaseline =
+        preClickFresh && Number.isFinite(preClickFresh.x) && Number.isFinite(preClickFresh.y)
+          ? preClickFresh
+          : lastObservedCoords;
       const clicked = clickMapRelative(point.dx, point.dy);
       if (!clicked) {
         results.push({
@@ -195,12 +201,12 @@
         });
         continue;
       }
-      // AI CHANGED: Wait for coordinate change from previously selected tile, not just popup visibility.
+      // AI CHANGED: Wait for coordinate change from the just-read per-tile baseline (audit fix #7), not from `lastObservedCoords` which may have drifted.
       let coordsChangedInTime = await waitForCondition(
         `scan ${point.key} coords change`,
         () => {
           const c = readCurrentCoordsFromPopup();
-          return !!(c && (c.x !== lastObservedCoords.x || c.y !== lastObservedCoords.y));
+          return !!(c && (c.x !== preClickBaseline.x || c.y !== preClickBaseline.y));
         },
         // AI CHANGED: Use faster polling/timeout for quicker ring scan.
         { timeoutMs: Config.scan.tileTimeoutMs, pollMs: Config.scan.pollMs }
@@ -219,7 +225,7 @@
             `scan ${point.key} coords change`,
             () => {
               const c = readCurrentCoordsFromPopup();
-              return !!(c && (c.x !== lastObservedCoords.x || c.y !== lastObservedCoords.y));
+              return !!(c && (c.x !== preClickBaseline.x || c.y !== preClickBaseline.y));
             },
             { timeoutMs: Config.scan.tileTimeoutMs, pollMs: Config.scan.pollMs }
           );
@@ -229,10 +235,10 @@
         }
       }
       // AI CHANGED: Classify tiles by coordinate change only, independent of popup detail parsing.
-      const currentCoords = readCurrentCoordsFromPopup() || lastObservedCoords;
+      const currentCoords = readCurrentCoordsFromPopup() || preClickBaseline;
       const details = readTilePopupDetails();
       const coordsChanged =
-        currentCoords.x !== lastObservedCoords.x || currentCoords.y !== lastObservedCoords.y;
+        currentCoords.x !== preClickBaseline.x || currentCoords.y !== preClickBaseline.y;
       if (!coordsChanged) {
         results.push({
           key: point.key,
