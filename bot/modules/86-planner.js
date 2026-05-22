@@ -2985,12 +2985,14 @@
 
   // AI CHANGED: Build the planner-facing normalized representation of a single skill slot. Pulls together raw scan + master conception + parsed
   // effects + planner-side semantic enrichment so the simulator has one coherent view of what the skill DOES.
-  // AI CHANGED: Planner rewrite v1.2 — typed damage normalization + Sniper Shot charge guarantee.
+  // AI CHANGED: Planner rewrite v1.2 + v1.3 — typed damage normalization + Sniper Shot charge guarantee.
   //   Logic (bullet-list):
   //     • Per-effect typed mob-factor: `plannerHorizonPaperEffectiveMobFactor(mf, anchoring, damageType)` reproduces legacy horizon paper logic
   //       (full mf for basic-anchored basic_proc/channel_gear; blended `1 + (mf-1)*w` for instant/dot using physical vs magic weights).
-  //     • `immediateDamageByType` and `dotPerSecByType` split damage so the simulator can boost ONLY the magic portion under magic-resist-shred
-  //       instead of multiplying the entire damage tank.
+  //     • `immediateDamageByType` and `dotPerSecByType` split damage so the active runtime path (simulator + `plannerSeqMagicShredBonus`) can
+  //       boost ONLY the magic portion under magic-resist-shred (Piercing Strike) instead of multiplying the entire damage tank. In v1.3 the
+  //       shred bonus is applied identically in the `skill` AND `skill_charge` paths via the shared helper, so charge skills with magic damage
+  //       are also surgically boosted (the gear multiplier scales the magic portion just like the rest of the immediate hit).
   //     • Sniper Shot charge guarantee: if the normalized skill name resolves to `snipershot` and the parsed effects didn't expose `channel_gear`
   //       (parser miss / locale variant), force `isCharge = true` with a fallback `chargeMaxSec` (4s) and `chargeGearPct` (200) so the planner
   //       always generates full + partial release candidates. This is NOT combo hardcoding — it is guaranteeing the skill's OWN intrinsic charge
@@ -3434,25 +3436,85 @@
     return out;
   }
 
-  // AI CHANGED: Simulate one action against simState; returns a fresh simState (immutable shape). All timing/HP/damage math lives here so
-  // the search code can stay declarative.
-  // AI CHANGED: Planner rewrite v1.2 — basic-attack timing model is now CONSERVATIVE and schedule-based, not "free basics during cast":
-  //   • `nextBasicReadyAtSec` is a scheduled-arrival timestamp for the next auto-basic.
-  //   • `basicAttackLikelyUnderway` (carried from combat state) materially affects the model: when true at depth 0, the game's auto-basic is
-  //     mid-flight and lands at the start of the first action. When false (cold start), no auto-basic is credited until the planner explicitly
-  //     issues a `basic` action.
-  //   • During a `skill` or `skill_charge` action's cast/channel window, auto-basics are SUPPRESSED in-game; the simulator credits no basics
-  //     during cast and reschedules `nextBasicReadyAtSec = end_of_action + swingInterval` (so a basic that "would have" landed during cast is
-  //     consumed by the cast, matching observed behavior). This is the conservative model the user explicitly requested.
-  //   • Carry-over: when `simState.basicAttackLikelyUnderway === true` AND the action is a skill/charge AND `nextBasicReadyAtSec` has already
-  //     elapsed (or is exactly at start), credit ONE auto-basic at the START of the action. This is the only "free" basic the simulator credits.
-  //   • A `basic` action remains an explicit one-swing action; it consumes `swingInterval`, deals `expectedBasicHit * mobFactor`, and the next
-  //     auto-basic is scheduled `swingInterval` after it.
-  // AI CHANGED: Planner rewrite v1.2 — typed shred handling is now SURGICAL:
-  //   • Skills carry `immediateDamageByType` (and `dotPerSecByType`) from normalization so the simulator can boost ONLY the magic portion of
-  //     a skill's damage when magic-resist-shred is active. Previously the boost multiplied the WHOLE damage even when only part of it was
-  //     magic-typed, which over-credited multi-type skills and made shred follow-up feel handwavy.
+  // AI CHANGED: Planner rewrite v1.3 — magic-resist-shred bonus helper. Returns the EXTRA damage credited by an active shred (e.g. Piercing Strike)
+  // on top of the skill's base damage. The bonus is **strictly surgical**: it only ever touches the magic-typed portion of immediate damage and
+  // the magic-typed portion of any DoT within the remaining shred window. Returns 0 when shred is inactive, when the skill has no magic damage,
+  // or when normalization didn't expose `immediateDamageByType`/`dotPerSecByType` (with a single back-compat fallback for hand-built test skills
+  // tagged `damageType === "magic"`).
+  //   Parameters:
+  //     • simNext: the simulator's `next` state (read `targetFlags.hasMagicResistShred` / `magicResistShredRemainingSec` and `elapsedSec`).
+  //     • sNorm: the normalized skill (read `immediateDamageByType` / `dotPerSecByType` / `dotDurationSec` / fallback `immediateDamage` + `damageType`).
+  //     • actionEndSec: the simulated end-of-action timestamp (= `next.elapsedSec + actionTimeSec`) — used to clamp the DoT horizon overlap.
+  //     • immediateMultiplier: scales the magic immediate portion (e.g. charge `gearMultiplier`); pass `1` for plain skills.
+  function plannerSeqMagicShredBonus(simNext, sNorm, actionEndSec, immediateMultiplier) {
+    if (!simNext || !simNext.targetFlags || simNext.targetFlags.hasMagicResistShred !== true) {
+      return 0;
+    }
+    if (!sNorm) {
+      return 0;
+    }
+    const cfgRoot = Config.planner && Config.planner.sequencePlanner && Config.planner.sequencePlanner.archerSemantics
+      ? Config.planner.sequencePlanner.archerSemantics
+      : null;
+    const boost = cfgRoot && cfgRoot.piercingStrike && Number.isFinite(cfgRoot.piercingStrike.followUpMagicDamageBoost)
+      ? cfgRoot.piercingStrike.followUpMagicDamageBoost
+      : 0.2;
+    const mult = Number.isFinite(immediateMultiplier) ? immediateMultiplier : 1;
+    let extra = 0;
+    const byType = sNorm.immediateDamageByType || null;
+    const magicImmediate = byType && Number.isFinite(byType.magic) ? byType.magic : 0;
+    if (magicImmediate > 0) {
+      extra += magicImmediate * mult * boost;
+    } else if (!byType && sNorm.damageType === "magic" && Number.isFinite(sNorm.immediateDamage) && sNorm.immediateDamage > 0) {
+      // Back-compat for hand-built skills in tests / synthetic state without `immediateDamageByType`.
+      extra += sNorm.immediateDamage * mult * boost;
+    }
+    const dotByType = sNorm.dotPerSecByType || null;
+    const magicDotPerSec = dotByType && Number.isFinite(dotByType.magic) ? dotByType.magic : 0;
+    if (magicDotPerSec > 0 && Number.isFinite(sNorm.dotDurationSec) && sNorm.dotDurationSec > 0) {
+      const maxHorizon = Number.isFinite(Config.planner && Config.planner.sequencePlanner && Config.planner.sequencePlanner.maxHorizonSec)
+        ? Config.planner.sequencePlanner.maxHorizonSec
+        : 6;
+      const remHorizon = maxHorizon - actionEndSec;
+      const dotWindow = Math.max(0, Math.min(sNorm.dotDurationSec, remHorizon));
+      const shredOverlapSec = Math.max(0, Math.min(dotWindow, simNext.targetFlags.magicResistShredRemainingSec));
+      if (shredOverlapSec > 0) {
+        extra += magicDotPerSec * shredOverlapSec * boost;
+      }
+    }
+    return extra;
+  }
+
+  // AI CHANGED: Planner rewrite v1.3 — surgical correction pass. ONE explicit, conservative basic-attack timing model lives here. The previous
+  // v1.2 model carried both a `basicAttackLikelyUnderway` flag AND a `nextBasicReadyAtSec` schedule in the simulator state and required BOTH to
+  // align for a carry-over to fire — that double-check was redundant and made the active path ambiguous. The flag is now an INPUT-ONLY signal
+  // (read from `combatState.player.basicAttackLikelyUnderway` at depth-0 init); the simulator state itself tracks only the schedule.
+  //   Active basic-attack timing model (single source of truth):
+  //     1. `nextBasicReadyAtSec` is a scheduled arrival timestamp for the SOLE potential carry-over auto-basic (the in-flight game basic that
+  //        was already animating when the planner ran).
+  //     2. Depth-0 init: `nextBasicReadyAtSec = 0` when `combatState.player.basicAttackLikelyUnderway === true`, else `Number.POSITIVE_INFINITY`
+  //        (cold start — no carry-over possible).
+  //     3. Carry-over fires AT MOST ONCE, ONLY when the simulator is about to step a `skill` or `skill_charge` AND `nextBasicReadyAtSec <=
+  //        simState.elapsedSec + 1e-9` AND `expectedBasicHit > 0` AND the config knob `simBasicSwingsBetweenActions !== false`. The credit is
+  //        `expectedBasicHit * mobFactor` and is recorded on `action.extraBasicSwings`/`extraBasicDamage` for telemetry.
+  //     4. After ANY action resolves, `nextBasicReadyAtSec = Number.POSITIVE_INFINITY` (consumed/burned by the action). The schedule never
+  //        re-arms inside the sim, so no further carry-over can fire at depth 1+. This makes the conservative "no free basics during cast"
+  //        contract impossible to violate by construction.
+  //     5. A `basic` action remains an explicit one-swing action; it consumes `swingInterval`, deals `expectedBasicHit * mobFactor`, sets
+  //        `nextBasicReadyAtSec = Infinity` (the basic IS the swing — no separate carry-over). No basics ever auto-fire from the schedule.
+  //   Active typed-damage / shred path:
+  //     • Normalization (`plannerSeqNormalizeOneSkill`) splits damage into `immediateDamageByType: { physical, magic, unknown }` and
+  //       `dotPerSecByType` using `plannerHorizonPaperEffectiveMobFactor(mf, anchoring, damageType)` per effect.
+  //     • The simulator adds the per-skill base damage (already-typed at normalization) and then calls `plannerSeqMagicShredBonus(...)` to add
+  //       ONLY the magic-typed bonus when shred is active. The bonus is applied identically in both the `skill` path (multiplier 1) and the
+  //       `skill_charge` path (multiplier = `gearMultiplier`) — there is no blanket "multiply all damage" path anywhere in the active runtime.
   function plannerSeqSimulateAction(simState, action) {
+    // AI CHANGED: Planner rewrite v1.3 — sim state no longer carries `basicAttackLikelyUnderway`. The schedule (`nextBasicReadyAtSec`) is the
+    // SINGLE source of truth for whether a depth-0 carry-over basic is pending. We accept any numeric value (including `+Infinity`); we only
+    // fall back to a finite default when the caller passes a non-number (legacy hand-built sim states in tests).
+    const incomingSchedule = typeof simState.nextBasicReadyAtSec === "number"
+      ? simState.nextBasicReadyAtSec
+      : (Number.isFinite(simState.basicSwingIntervalSec) && simState.basicSwingIntervalSec > 0 ? simState.basicSwingIntervalSec : 1);
     const next = {
       elapsedSec: simState.elapsedSec,
       playerHpCur: simState.playerHpCur,
@@ -3467,7 +3529,6 @@
       incomingHpLossPerSec: simState.incomingHpLossPerSec,
       basicSwingIntervalSec: simState.basicSwingIntervalSec,
       expectedBasicHit: simState.expectedBasicHit,
-      basicAttackLikelyUnderway: simState.basicAttackLikelyUnderway,
       skillCooldownReadyAtSec: Object.assign({}, simState.skillCooldownReadyAtSec),
       targetFlags: {
         hasMagicResistShred: simState.targetFlags.hasMagicResistShred,
@@ -3481,10 +3542,7 @@
       mpWasted: simState.mpWasted,
       hpLost: simState.hpLost,
       mobFactor: simState.mobFactor,
-      // AI CHANGED: Planner rewrite v1.2 — schedule-based basic-swing model. Carries scheduled arrival time of the next auto-basic plus telemetry totals.
-      nextBasicReadyAtSec: Number.isFinite(simState.nextBasicReadyAtSec)
-        ? simState.nextBasicReadyAtSec
-        : (Number.isFinite(simState.basicSwingIntervalSec) && simState.basicSwingIntervalSec > 0 ? simState.basicSwingIntervalSec : 1),
+      nextBasicReadyAtSec: incomingSchedule,
       extraBasicSwingsTotal: Number.isFinite(simState.extraBasicSwingsTotal) ? simState.extraBasicSwingsTotal : 0,
       extraBasicDamageTotal: Number.isFinite(simState.extraBasicDamageTotal) ? simState.extraBasicDamageTotal : 0
     };
@@ -3492,9 +3550,11 @@
     let actionTimeSec = 0;
     let damageDealt = 0;
     let action2 = Object.assign({}, action);
-    // AI CHANGED: Planner rewrite v1.2 — carry-over auto-basic credit (the ONE case where the simulator credits an "interleaved" basic): when the
-    // hero entered the sim with `basicAttackLikelyUnderway === true` AND the planner's first action is a skill/charge, credit one auto-basic at
-    // the start of that action. After this single credit the underway flag is cleared so the rest of the sequence is fully under the planner's control.
+    // AI CHANGED: Planner rewrite v1.3 — depth-0 carry-over auto-basic. ONLY firing condition:
+    //   schedule (`incomingSchedule`) has elapsed AT OR BEFORE the action's start (`simState.elapsedSec`), action is a skill/charge, expected
+    //   basic hit is positive, and the interleave config knob is not disabled. The schedule itself encodes the underway signal (it was set to
+    //   `0` at depth-0 init when `combatState.player.basicAttackLikelyUnderway === true`, else `+Infinity`). After the simulator runs ANY
+    //   action below, `next.nextBasicReadyAtSec` is set to `+Infinity` so a second carry-over CANNOT fire at depth 1+.
     let extraBasicSwings = 0;
     let extraBasicDamage = 0;
     const interleaveEnabled = !(
@@ -3504,12 +3564,10 @@
     );
     if (
       interleaveEnabled &&
-      simState.basicAttackLikelyUnderway === true &&
       (action.kind === "skill" || action.kind === "skill_charge") &&
       Number.isFinite(next.expectedBasicHit) &&
       next.expectedBasicHit > 0 &&
-      // The carry-over basic only counts when it would have landed at-or-before the action's start (which is `simState.elapsedSec`).
-      next.nextBasicReadyAtSec <= simState.elapsedSec + 1e-9
+      incomingSchedule <= simState.elapsedSec + 1e-9
     ) {
       const hit = next.expectedBasicHit * (Number.isFinite(next.mobFactor) ? next.mobFactor : 1);
       damageDealt += hit;
@@ -3524,55 +3582,24 @@
     } else if (action.kind === "skill" && action.skill) {
       const s = action.skill;
       actionTimeSec = Math.max(0.1, s.castTimeSec || 0);
+      // AI CHANGED: Planner rewrite v1.3 — base immediate + DoT use the per-skill totals (already typed at normalization via
+      // `plannerHorizonPaperEffectiveMobFactor`). The magic-shred bonus is ADDITIVE on top of these totals and ONLY ever touches the magic
+      // portion. There is NO blanket damage multiplier in this path.
       damageDealt += s.immediateDamage;
-      // DoT — count only the portion that lands inside the remaining sim horizon.
       if (s.dotPerSec > 0 && s.dotDurationSec > 0) {
         const remHorizon = (Config.planner.sequencePlanner.maxHorizonSec || 6) - (next.elapsedSec + actionTimeSec);
         const dotWindow = Math.max(0, Math.min(s.dotDurationSec, remHorizon));
         damageDealt += s.dotPerSec * dotWindow;
       }
-      // AI CHANGED: Planner rewrite v1.2 — typed shred boost. Apply ONLY to the magic-typed portion of this skill's damage instead of
-      // multiplying the whole damageDealt. `immediateDamageByType.magic` is populated at normalization time when an effect's `damageType === "magic"`.
-      if (next.targetFlags.hasMagicResistShred) {
-        const boost = Number.isFinite(Config.planner.sequencePlanner.archerSemantics && Config.planner.sequencePlanner.archerSemantics.piercingStrike && Config.planner.sequencePlanner.archerSemantics.piercingStrike.followUpMagicDamageBoost)
-          ? Config.planner.sequencePlanner.archerSemantics.piercingStrike.followUpMagicDamageBoost
-          : 0.2;
-        const byType = s.immediateDamageByType || null;
-        const magicImmediate = byType && Number.isFinite(byType.magic) ? byType.magic : 0;
-        if (magicImmediate > 0) {
-          damageDealt += magicImmediate * boost;
-        } else if (!byType && s.damageType === "magic" && Number.isFinite(s.immediateDamage) && s.immediateDamage > 0) {
-          // Back-compat path for hand-built skills in tests/synthetic state without `immediateDamageByType`.
-          damageDealt += s.immediateDamage * boost;
-        }
-        // DoT magic portion within the lingering shred window.
-        const dotByType = s.dotPerSecByType || null;
-        const magicDotPerSec = dotByType && Number.isFinite(dotByType.magic) ? dotByType.magic : 0;
-        if (magicDotPerSec > 0 && s.dotDurationSec > 0) {
-          const remHorizon2 = (Config.planner.sequencePlanner.maxHorizonSec || 6) - (next.elapsedSec + actionTimeSec);
-          const dotWindow2 = Math.max(0, Math.min(s.dotDurationSec, remHorizon2));
-          // Shred boost only counts for the part of the DoT inside the shred remaining window — clamp by `magicResistShredRemainingSec`.
-          const shredOverlapSec = Math.max(0, Math.min(dotWindow2, next.targetFlags.magicResistShredRemainingSec));
-          if (shredOverlapSec > 0) {
-            damageDealt += magicDotPerSec * shredOverlapSec * boost;
-          }
-        }
+      damageDealt += plannerSeqMagicShredBonus(next, s, next.elapsedSec + actionTimeSec, 1);
+      // AoE: planner's target is a single fingerprint, but AoE still kills faster against multi-mob; AoE benefit is encoded later in survival pressure relief.
+      if (s.manaCost > 0 && Number.isFinite(next.playerMpCur)) {
+        next.playerMpCur = Math.max(0, next.playerMpCur - s.manaCost);
       }
-      // AoE: planner's target is a single fingerprint, but AoE still kills faster against multi-mob; we add a fraction of "extra hit damage" against extras.
-      if (s.isAoe && Number.isFinite(next.enemyCount) && next.enemyCount > 1) {
-        // We do not reduce our own target's HP for extras; the AoE benefit is encoded later in survival pressure relief.
-      }
-      // Mana spend.
-      if (s.manaCost > 0) {
-        if (Number.isFinite(next.playerMpCur)) {
-          next.playerMpCur = Math.max(0, next.playerMpCur - s.manaCost);
-        }
-      }
-      // Self cooldown.
       if (s.cooldownSec > 0 && Number.isFinite(s.slot)) {
         next.skillCooldownReadyAtSec[s.slot] = next.elapsedSec + actionTimeSec + s.cooldownSec;
       }
-      // Semantic side-effects (debuffs/tempo).
+      // Semantic side-effects (debuffs / tempo).
       const sem = s.semantic;
       if (sem) {
         if (sem.__semKey === "piercingstrike") {
@@ -3600,7 +3627,8 @@
       const releaseFraction = Math.max(0.1, Math.min(1, Number.isFinite(action.chargeReleaseFraction) ? action.chargeReleaseFraction : 1));
       const chargeSec = Math.max(0.1, (s.chargeMaxSec || 1) * releaseFraction);
       actionTimeSec = chargeSec;
-      // base + gear contribution scaled by release fraction.
+      // AI CHANGED: Planner rewrite v1.3 — base hit + gear contribution scaled by release fraction; DoT and magic-shred bonus both apply
+      // identically here as in the skill path so typed semantics live in ONE helper and the active path is fully typed (no blanket multiply).
       const baseHit = s.immediateDamage || 0;
       const gearMultiplier = 1 + ((s.chargeGearPct || 0) / 100) * releaseFraction;
       damageDealt += baseHit * gearMultiplier;
@@ -3609,6 +3637,7 @@
         const dotWindow = Math.max(0, Math.min(s.dotDurationSec, remHorizon));
         damageDealt += s.dotPerSec * dotWindow;
       }
+      damageDealt += plannerSeqMagicShredBonus(next, s, next.elapsedSec + actionTimeSec, gearMultiplier);
       if (s.manaCost > 0 && Number.isFinite(next.playerMpCur)) {
         next.playerMpCur = Math.max(0, next.playerMpCur - s.manaCost);
       }
@@ -3665,12 +3694,10 @@
     }
     next.elapsedSec += actionTimeSec;
     next.lastActionTimeSec = actionTimeSec;
-    // AI CHANGED: Planner rewrite v1.2 — schedule the next auto-basic after this action resolves.
-    //   • basic action: next swing one cycle after the swing landed.
-    //   • skill / skill_charge: the cast/channel preempts AA in-game; next auto-basic is one cycle after the cast ends.
-    next.nextBasicReadyAtSec = next.elapsedSec + swingInterval;
-    // Taking any explicit action consumes the "basic-likely-underway" hint exactly once (either credited as carry-over above or burned by the cast).
-    next.basicAttackLikelyUnderway = false;
+    // AI CHANGED: Planner rewrite v1.3 — the in-flight auto-basic slot is consumed/burned by every action (either credited as carry-over
+    // above, or absorbed by the cast/swing). After any action the schedule is `+Infinity`, so the simulator can NEVER credit a second
+    // carry-over at depth 1+. This is the contract that makes "no free basics during cast/channel" impossible to violate by construction.
+    next.nextBasicReadyAtSec = Number.POSITIVE_INFINITY;
     // Track tempo / mana waste tiebreaks.
     if (action.kind !== "basic" && action.skill && action.skill.manaCost > 0) {
       if (Number.isFinite(next.targetHpCur) && next.targetHpCur <= 0) {
@@ -3688,6 +3715,11 @@
     const maxActions = Number.isFinite(sp.maxActions) ? sp.maxActions : 5;
     const maxHorizonSec = Number.isFinite(sp.maxHorizonSec) ? sp.maxHorizonSec : 6;
     const disallowCharge = opts && opts.disallowChargeSkills === true;
+    // AI CHANGED: Planner rewrite v1.3 — single source of truth for the depth-0 carry-over auto-basic is `nextBasicReadyAtSec`:
+    //   • `combatState.player.basicAttackLikelyUnderway === true` → schedule = 0 (carry-over is pending and fires on first skill/charge).
+    //   • Otherwise (cold start) → schedule = `+Infinity` (no carry-over possible; only explicit `basic` actions deal swing damage).
+    // The flag itself is NOT copied into sim state; the simulator only ever consults the schedule. After any action the schedule becomes
+    // `+Infinity` (consumed/burned), guaranteeing no second carry-over fires at depth 1+.
     const initialSimState = {
       elapsedSec: 0,
       playerHpCur: combatState.player.hpCur,
@@ -3702,23 +3734,15 @@
       incomingHpLossPerSec: combatState.fight.incomingHpLossPerSec,
       basicSwingIntervalSec: combatState.player.basicSwingIntervalSec,
       expectedBasicHit: combatState.player.expectedBasicHit,
-      basicAttackLikelyUnderway: combatState.player.basicAttackLikelyUnderway,
       skillCooldownReadyAtSec: {},
       targetFlags: Object.assign({}, combatState.target.flags),
       lastActionTimeSec: 0,
       mpWasted: 0,
       hpLost: 0,
       mobFactor: combatState.mobFactor,
-      // AI CHANGED: Planner rewrite v1.2 — schedule-based basic-swing accounting.
-      //   • When `basicAttackLikelyUnderway` is true the in-flight game auto-basic is essentially "now" (next swing at 0s); the simulator
-      //     uses this to credit ONE carry-over basic if the planner's first action is a skill/charge (see plannerSeqSimulateAction).
-      //   • Otherwise (cold start), the next auto-basic would be one full swing-interval away — but it never lands unless the planner
-      //     explicitly issues a `basic` action. This matches the user-requested conservative model.
       nextBasicReadyAtSec: combatState.player && combatState.player.basicAttackLikelyUnderway === true
         ? 0
-        : (Number.isFinite(combatState.player && combatState.player.basicSwingIntervalSec) && combatState.player.basicSwingIntervalSec > 0
-            ? combatState.player.basicSwingIntervalSec
-            : 1),
+        : Number.POSITIVE_INFINITY,
       extraBasicSwingsTotal: 0,
       extraBasicDamageTotal: 0
     };
@@ -3762,6 +3786,12 @@
           const preEffectiveActiveAttackers = Number.isFinite(node.sim.activeAttackers)
             ? Math.max(0, node.sim.activeAttackers - (node.sim.targetFlags && node.sim.targetFlags.hasDistract ? preDistractReliefCount : 0))
             : null;
+          // AI CHANGED: Planner rewrite v1.3 — `basicCarryOverPending` is derived from the schedule (the canonical signal), not from a separate
+          // flag field. At depth 0 with underway=true the schedule is 0, so this evaluates true once; after any action the schedule becomes
+          // `+Infinity`, so it evaluates false at depth 1+. The legacy alias `basicAttackLikelyUnderway` mirrors the same boolean for back-compat
+          // with diagnostic callers that already read that name.
+          const preBasicCarryOverPending = typeof node.sim.nextBasicReadyAtSec === "number"
+            && node.sim.nextBasicReadyAtSec <= node.sim.elapsedSec + 1e-9;
           const preSnapshot = {
             elapsedSec: +node.sim.elapsedSec.toFixed(3),
             targetHpPct: preTargetHpPct,
@@ -3773,7 +3803,8 @@
             hasMagicResistShred: !!(node.sim.targetFlags && node.sim.targetFlags.hasMagicResistShred),
             hasSlow: !!(node.sim.targetFlags && node.sim.targetFlags.hasSlow),
             hasDistract: !!(node.sim.targetFlags && node.sim.targetFlags.hasDistract),
-            basicAttackLikelyUnderway: node.sim.basicAttackLikelyUnderway === true
+            basicCarryOverPending: preBasicCarryOverPending,
+            basicAttackLikelyUnderway: preBasicCarryOverPending
           };
           const stepped = plannerSeqSimulateAction(node.sim, cand);
           const nextNode = {
@@ -3787,7 +3818,7 @@
               chargeReleaseFraction: Number.isFinite(cand.chargeReleaseFraction) ? cand.chargeReleaseFraction : null,
               actionTimeSec: +stepped.actionTimeSec.toFixed(3),
               damageDealt: +stepped.damageDealt.toFixed(2),
-              // AI CHANGED: Planner rewrite v1.2 — carry-over basic telemetry per step (1 only when basicAttackLikelyUnderway credited it at depth 0).
+              // AI CHANGED: Planner rewrite v1.3 — carry-over basic telemetry per step (1 only when the schedule credited a carry-over at depth 0).
               extraBasicSwings: Number.isFinite(stepped.action.extraBasicSwings) ? stepped.action.extraBasicSwings : 0,
               extraBasicDamage: Number.isFinite(stepped.action.extraBasicDamage) ? stepped.action.extraBasicDamage : 0,
               // AI CHANGED: Planner rewrite v1.2 — pre-action simulated snapshot so scoring uses the current sequence moment, not just initial combat state.

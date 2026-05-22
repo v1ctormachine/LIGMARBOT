@@ -2575,16 +2575,18 @@
             semantic: { __semKey: "distractingshot", role: "survival_tempo_distract",
               distractDurationSec: 6, calmOpenerPenaltySec: 1.4, pressureReliefBonusSec: 1.2, activeAttackerReliefCount: 1 }
           };
+          // AI CHANGED: Planner rewrite v1.3 — sim state uses `nextBasicReadyAtSec` (single source of truth); no separate underway flag.
           function mkSim(playerHpRatio) {
             return {
               elapsedSec: 0, playerHpCur: playerHpRatio * 1000, playerHpMax: 1000,
               playerMpCur: 100, playerMpMax: 100, targetHpCur: 1000, targetHpMax: 1000,
               enemyCount: 1, activeAttackers: 1, pressure: 0,
               incomingHpLossPerSec: 0, basicSwingIntervalSec: 1, expectedBasicHit: 50,
-              basicAttackLikelyUnderway: false, skillCooldownReadyAtSec: {},
+              skillCooldownReadyAtSec: {},
               targetFlags: { hasMagicResistShred: false, hasSlow: false, hasDistract: false,
                 magicResistShredRemainingSec: 0, slowRemainingSec: 0, distractRemainingSec: 0 },
-              lastActionTimeSec: 0, mpWasted: 0, hpLost: 0, mobFactor: 1
+              lastActionTimeSec: 0, mpWasted: 0, hpLost: 0, mobFactor: 1,
+              nextBasicReadyAtSec: Number.POSITIVE_INFINITY, extraBasicSwingsTotal: 0, extraBasicDamageTotal: 0
             };
           }
           // 1) Under pressure: full-charge vs partial-release Sniper Shot — partial-release should score better (lower is better).
@@ -2767,22 +2769,24 @@
         addCheck("planner_sequence_exclude_slots_honored", false, { error: String(err && err.message ? err.message : err) }, false);
       }
 
-      // AI CHANGED: Planner rewrite v1.2 — corrected basic-attack timing model.
-      //   Logic (bullet-list):
-      //     • Conservative model: skill / skill_charge actions DO NOT credit free basics during their cast/channel window.
-      //     • `basic` action remains an explicit one-swing action.
-      //     • `basicAttackLikelyUnderway` materially affects behavior: when true, the first skill/charge action gets a single carry-over basic
-      //       at the start (the in-flight game auto-basic landing); when false (cold start), no carry-over.
-      //     • After any non-basic action, the next auto-basic is scheduled at `end_of_action + swingInterval` (cast suppresses AA).
+      // AI CHANGED: Planner rewrite v1.3 — conservative basic-attack timing model is now ENFORCED BY CONSTRUCTION via a single
+      // `nextBasicReadyAtSec` schedule (the simulator no longer tracks a redundant `basicAttackLikelyUnderway` flag in sim state).
+      //   Active model under test:
+      //     • Depth-0 init: underway → schedule = 0; cold → schedule = `+Infinity`.
+      //     • Carry-over fires AT MOST ONCE, and only when schedule has elapsed AT OR BEFORE the action's start AND action is skill/charge.
+      //     • After ANY action, schedule = `+Infinity` (consumed/burned) — a second carry-over CANNOT fire at depth 1+.
+      //     • `basic` action remains an explicit one-swing action (no extra), schedules to Infinity.
+      //     • Config flag `simBasicSwingsBetweenActions === false` disables the carry-over path entirely.
       //   Test sub-cases:
-      //     1) Cold-start long-cast skill (no underway flag) → extraBasicSwings = 0, damage = immediateDamage only.
-      //     2) Underway long-cast skill → extraBasicSwings = 1, damage = immediateDamage + 1 carry-over basic.
-      //     3) Cold-start instant skill → extraBasicSwings = 0, damage = immediateDamage only.
-      //     4) Underway instant skill → extraBasicSwings = 1, damage = immediateDamage + 1 carry-over basic.
+      //     1) Cold-start long-cast skill → extraBasicSwings = 0, damage = immediateDamage only.
+      //     2) Underway long-cast skill → extraBasicSwings = 1, damage = immediateDamage + 1 carry-over basic (= 150).
+      //     3) Cold-start instant skill → extraBasicSwings = 0.
+      //     4) Underway instant skill → extraBasicSwings = 1, damage = 150.
       //     5) Underway charge skill → extraBasicSwings = 1 (carry-over at start of channel).
-      //     6) Basic action → extraBasicSwings = 0 (the action IS a swing, no extra), damage = expectedBasicHit, schedules next basic at +swingInterval.
-      //     7) After a skill resolves, sim.nextBasicReadyAtSec === elapsed + swingInterval (no leftover during-cast scheduling).
-      //     8) Config flag off → carry-over also suppressed (the flag fully disables auto-basic interleave including carry-over).
+      //     6) Basic action (cold) → extraBasicSwings = 0; damage = expectedBasicHit (= 50); post-action schedule = Infinity.
+      //     7) After a skill resolves, sim.nextBasicReadyAtSec is `+Infinity` (no leftover schedule that could spuriously re-arm).
+      //     8) Config flag off → carry-over suppressed even when underway is set (= 0 extra swings).
+      //     9) Sim state contains NO `basicAttackLikelyUnderway` field (schedule is the only source of truth).
       try {
         if (typeof plannerSeqSimulateAction === "function" && Config.planner && Config.planner.sequencePlanner) {
           const prevFlag = Config.planner.sequencePlanner.simBasicSwingsBetweenActions;
@@ -2816,7 +2820,9 @@
             isCharge: true, chargeMaxSec: 4, chargeGearPct: 200, isAoe: false, isControl: false,
             controlDurationSec: 0, tacticalRoles: ["channeled"], semantic: null
           };
-          function mkSimV12(underway) {
+          // AI CHANGED: Planner rewrite v1.3 — schedule is the SINGLE source of truth; sim state no longer carries `basicAttackLikelyUnderway`.
+          // `nextBasicReadyAtSec = 0` represents an in-flight game auto-basic; `+Infinity` represents cold-start (no carry-over possible).
+          function mkSimV13(underway) {
             return {
               elapsedSec: 0,
               playerHpCur: 1000, playerHpMax: 1000,
@@ -2826,39 +2832,37 @@
               incomingHpLossPerSec: 0,
               basicSwingIntervalSec: 1,
               expectedBasicHit: 50,
-              basicAttackLikelyUnderway: !!underway,
               skillCooldownReadyAtSec: {},
               targetFlags: {
                 hasMagicResistShred: false, hasSlow: false, hasDistract: false,
                 magicResistShredRemainingSec: 0, slowRemainingSec: 0, distractRemainingSec: 0
               },
               lastActionTimeSec: 0, mpWasted: 0, hpLost: 0, mobFactor: 1,
-              // v1.2 schedule-based fields
-              nextBasicReadyAtSec: underway ? 0 : 1,
+              nextBasicReadyAtSec: underway ? 0 : Number.POSITIVE_INFINITY,
               extraBasicSwingsTotal: 0, extraBasicDamageTotal: 0
             };
           }
           Config.planner.sequencePlanner.simBasicSwingsBetweenActions = true;
-          const longCold = plannerSeqSimulateAction(mkSimV12(false), {
+          const longCold = plannerSeqSimulateAction(mkSimV13(false), {
             kind: "skill", name: "Long Cast", slot: 0, skill: longSkill
           });
-          const longUnderway = plannerSeqSimulateAction(mkSimV12(true), {
+          const longUnderway = plannerSeqSimulateAction(mkSimV13(true), {
             kind: "skill", name: "Long Cast", slot: 0, skill: longSkill
           });
-          const instantCold = plannerSeqSimulateAction(mkSimV12(false), {
+          const instantCold = plannerSeqSimulateAction(mkSimV13(false), {
             kind: "skill", name: "Instant", slot: 1, skill: instantSkill
           });
-          const instantUnderway = plannerSeqSimulateAction(mkSimV12(true), {
+          const instantUnderway = plannerSeqSimulateAction(mkSimV13(true), {
             kind: "skill", name: "Instant", slot: 1, skill: instantSkill
           });
-          const chargeUnderway = plannerSeqSimulateAction(mkSimV12(true), {
+          const chargeUnderway = plannerSeqSimulateAction(mkSimV13(true), {
             kind: "skill_charge", name: "Big Hold", slot: 2, chargeMode: "full", chargeReleaseFraction: 1, skill: chargeSkill
           });
-          const basicCold = plannerSeqSimulateAction(mkSimV12(false), {
+          const basicCold = plannerSeqSimulateAction(mkSimV13(false), {
             kind: "basic", name: "Basic Attack", slot: null
           });
           Config.planner.sequencePlanner.simBasicSwingsBetweenActions = false;
-          const longUnderwayFlagOff = plannerSeqSimulateAction(mkSimV12(true), {
+          const longUnderwayFlagOff = plannerSeqSimulateAction(mkSimV13(true), {
             kind: "skill", name: "Long Cast", slot: 0, skill: longSkill
           });
           Config.planner.sequencePlanner.simBasicSwingsBetweenActions = prevFlag;
@@ -2867,12 +2871,15 @@
           const longUnderwayOk = longUnderway.action.extraBasicSwings === 1 && Math.abs(longUnderway.damageDealt - 150) < 0.01;
           const instantColdOk = instantCold.action.extraBasicSwings === 0 && instantCold.damageDealt === 100;
           const instantUnderwayOk = instantUnderway.action.extraBasicSwings === 1 && Math.abs(instantUnderway.damageDealt - 150) < 0.01;
-          const chargeUnderwayOk = chargeUnderway.action.extraBasicSwings === 1; // damage includes scaled gear hit; we just verify the carry-over fired.
+          const chargeUnderwayOk = chargeUnderway.action.extraBasicSwings === 1;
           const basicColdOk = basicCold.action.extraBasicSwings === 0 && basicCold.damageDealt === 50;
-          // After a skill resolves, next auto-basic is scheduled at end + swingInterval.
-          const longColdSchedOk = Math.abs(longCold.next.nextBasicReadyAtSec - (longCold.actionTimeSec + 1)) < 0.001;
+          // After a skill resolves, schedule is `+Infinity` (consumed). Use isFinite to detect this clearly.
+          const longColdSchedOk = !Number.isFinite(longCold.next.nextBasicReadyAtSec) && longCold.next.nextBasicReadyAtSec > 0;
+          const basicColdSchedOk = !Number.isFinite(basicCold.next.nextBasicReadyAtSec) && basicCold.next.nextBasicReadyAtSec > 0;
           const flagOffOk = longUnderwayFlagOff.action.extraBasicSwings === 0 && longUnderwayFlagOff.damageDealt === 100;
-          const passed = longColdOk && longUnderwayOk && instantColdOk && instantUnderwayOk && chargeUnderwayOk && basicColdOk && longColdSchedOk && flagOffOk;
+          // Sim state must NOT carry `basicAttackLikelyUnderway` — schedule is the single source of truth in v1.3.
+          const noStaleFlagOk = !Object.prototype.hasOwnProperty.call(longUnderway.next, "basicAttackLikelyUnderway");
+          const passed = longColdOk && longUnderwayOk && instantColdOk && instantUnderwayOk && chargeUnderwayOk && basicColdOk && longColdSchedOk && basicColdSchedOk && flagOffOk && noStaleFlagOk;
           addCheck(
             "planner_basic_timing_conservative",
             passed,
@@ -2883,13 +2890,16 @@
               instantUnderway: { swings: instantUnderway.action.extraBasicSwings, damage: instantUnderway.damageDealt },
               chargeUnderway: { swings: chargeUnderway.action.extraBasicSwings, damage: chargeUnderway.damageDealt },
               basicCold: { swings: basicCold.action.extraBasicSwings, damage: basicCold.damageDealt },
-              longColdNextBasicReadyAtSec: longCold.next.nextBasicReadyAtSec,
+              longColdNextBasicReadyAtSec: longCold.next.nextBasicReadyAtSec === Number.POSITIVE_INFINITY ? "+Infinity" : longCold.next.nextBasicReadyAtSec,
+              basicColdNextBasicReadyAtSec: basicCold.next.nextBasicReadyAtSec === Number.POSITIVE_INFINITY ? "+Infinity" : basicCold.next.nextBasicReadyAtSec,
               flagOffUnderway: { swings: longUnderwayFlagOff.action.extraBasicSwings, damage: longUnderwayFlagOff.damageDealt },
+              noStaleFlag: noStaleFlagOk,
               passing: {
                 longColdOk: longColdOk, longUnderwayOk: longUnderwayOk,
                 instantColdOk: instantColdOk, instantUnderwayOk: instantUnderwayOk,
                 chargeUnderwayOk: chargeUnderwayOk, basicColdOk: basicColdOk,
-                longColdSchedOk: longColdSchedOk, flagOffOk: flagOffOk
+                longColdSchedOk: longColdSchedOk, basicColdSchedOk: basicColdSchedOk,
+                flagOffOk: flagOffOk, noStaleFlagOk: noStaleFlagOk
               }
             },
             false
@@ -2902,12 +2912,71 @@
         addCheck("planner_basic_timing_conservative", false, { error: String(err && err.message ? err.message : err) }, false);
       }
 
-      // AI CHANGED: Planner rewrite v1.2 — typed shred handling.
+      // AI CHANGED: Planner rewrite v1.3 — carry-over fires at most ONCE per sequence. Chain the simulator twice from an underway depth-0
+      // state: the first skill credits 1 carry-over (schedule was 0); after the simulator finishes that step, schedule is `+Infinity`, so the
+      // second skill MUST NOT credit any extra basic. This is the structural guarantee that "no free basics during cast" cannot be violated.
+      try {
+        if (typeof plannerSeqSimulateAction === "function" && Config.planner && Config.planner.sequencePlanner) {
+          const skillA = {
+            slot: 0, name: "Skill A", normalizedKey: "skilla",
+            isAttack: true, hasDirectDamage: true, manaCost: 0, castTimeSec: 0.5, cooldownSec: 0,
+            immediateDamage: 80, immediateDamageByType: { physical: 80, magic: 0, unknown: 0 },
+            dotPerSec: 0, dotPerSecByType: { physical: 0, magic: 0, unknown: 0 },
+            dotDurationSec: 0, damageType: "physical",
+            isCharge: false, chargeMaxSec: 0, chargeGearPct: 0, isAoe: false, isControl: false,
+            controlDurationSec: 0, tacticalRoles: ["offensive"], semantic: null
+          };
+          const skillB = Object.assign({}, skillA, { slot: 1, name: "Skill B", normalizedKey: "skillb", castTimeSec: 0.4, immediateDamage: 60,
+            immediateDamageByType: { physical: 60, magic: 0, unknown: 0 } });
+          const sim0 = {
+            elapsedSec: 0,
+            playerHpCur: 1000, playerHpMax: 1000, playerMpCur: 100, playerMpMax: 100,
+            targetHpCur: 5000, targetHpMax: 5000, enemyCount: 1, activeAttackers: 1, pressure: 0,
+            incomingHpLossPerSec: 0, basicSwingIntervalSec: 1, expectedBasicHit: 50,
+            skillCooldownReadyAtSec: {},
+            targetFlags: { hasMagicResistShred: false, hasSlow: false, hasDistract: false,
+              magicResistShredRemainingSec: 0, slowRemainingSec: 0, distractRemainingSec: 0 },
+            lastActionTimeSec: 0, mpWasted: 0, hpLost: 0, mobFactor: 1,
+            nextBasicReadyAtSec: 0,
+            extraBasicSwingsTotal: 0, extraBasicDamageTotal: 0
+          };
+          const prevFlag = Config.planner.sequencePlanner.simBasicSwingsBetweenActions;
+          Config.planner.sequencePlanner.simBasicSwingsBetweenActions = true;
+          const step1 = plannerSeqSimulateAction(sim0, { kind: "skill", name: "Skill A", slot: 0, skill: skillA });
+          const step2 = plannerSeqSimulateAction(step1.next, { kind: "skill", name: "Skill B", slot: 1, skill: skillB });
+          Config.planner.sequencePlanner.simBasicSwingsBetweenActions = prevFlag;
+          const firstFired = step1.action.extraBasicSwings === 1 && Math.abs(step1.damageDealt - (80 + 50)) < 0.01;
+          const secondSilent = step2.action.extraBasicSwings === 0 && Math.abs(step2.damageDealt - 60) < 0.01;
+          const scheduleConsumed = !Number.isFinite(step1.next.nextBasicReadyAtSec) && step1.next.nextBasicReadyAtSec > 0;
+          const passed = firstFired && secondSilent && scheduleConsumed;
+          addCheck(
+            "planner_basic_carry_over_fires_once",
+            passed,
+            {
+              step1: { extraBasicSwings: step1.action.extraBasicSwings, damage: step1.damageDealt,
+                scheduleAfter: step1.next.nextBasicReadyAtSec === Number.POSITIVE_INFINITY ? "+Infinity" : step1.next.nextBasicReadyAtSec },
+              step2: { extraBasicSwings: step2.action.extraBasicSwings, damage: step2.damageDealt },
+              passing: { firstFired: firstFired, secondSilent: secondSilent, scheduleConsumed: scheduleConsumed }
+            },
+            false
+          );
+        } else {
+          addCheck("planner_basic_carry_over_fires_once", false, { reason: "fn_or_config_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_basic_carry_over_fires_once threw", err);
+        addCheck("planner_basic_carry_over_fires_once", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Planner rewrite v1.3 — typed shred handling (active in BOTH skill and skill_charge paths via `plannerSeqMagicShredBonus`).
       //   Logic (bullet-list):
-      //     • A magic skill (immediateDamageByType.magic = 100) cast WITHOUT active shred → damage = 100.
-      //     • Same skill cast WITH shred → damage = 100 + 100*boost (default 0.2) = 120; physical skill (immediateDamageByType.physical = 100)
-      //       cast WITH shred → damage = 100 (no boost; shred only applies to magic portion).
-      //     • Mixed skill (physical + magic) WITH shred → only the magic portion is boosted, physical untouched.
+      //     • A magic skill (immediateDamageByType.magic = 100) WITHOUT active shred → damage = 100.
+      //     • Same skill WITH shred → damage = 100 + 100*boost (default 0.2) = 120.
+      //     • Physical-only skill WITH shred → damage = 100 (no boost; shred only touches magic portion).
+      //     • Mixed skill (physical 60 + magic 40) WITH shred → 60 + 40 + 40*boost = 108 (only magic 40 is boosted).
+      //     • Magic CHARGE skill WITH shred → base (= magic * gearMultiplier) PLUS magic * gearMultiplier * boost. With base 50, gearPct 200,
+      //       release fraction 1.0 → gearMultiplier 3 → base damage 150, bonus 150*0.2 = 30, total 180. Confirms the helper is wired into
+      //       skill_charge path identically to skill path — no blanket multiplier anywhere.
       try {
         if (typeof plannerSeqSimulateAction === "function" && Config.planner && Config.planner.sequencePlanner) {
           const magicSkill = {
@@ -2929,6 +2998,16 @@
             immediateDamage: 100,
             immediateDamageByType: { physical: 60, magic: 40, unknown: 0 }, damageType: "magic"
           });
+          const magicCharge = {
+            slot: 1, name: "Magic Hold", normalizedKey: "magichold",
+            isAttack: true, hasDirectDamage: true, manaCost: 0, castTimeSec: 0, cooldownSec: 0,
+            immediateDamage: 50,
+            immediateDamageByType: { physical: 0, magic: 50, unknown: 0 },
+            dotPerSec: 0, dotPerSecByType: { physical: 0, magic: 0, unknown: 0 },
+            dotDurationSec: 0, damageType: "magic",
+            isCharge: true, chargeMaxSec: 2, chargeGearPct: 200, isAoe: false, isControl: false,
+            controlDurationSec: 0, tacticalRoles: ["channeled"], semantic: null
+          };
           function mkShredSim(shredOn) {
             return {
               elapsedSec: 0,
@@ -2938,14 +3017,14 @@
               enemyCount: 1, activeAttackers: 1, pressure: 0,
               incomingHpLossPerSec: 0,
               basicSwingIntervalSec: 1, expectedBasicHit: 50,
-              basicAttackLikelyUnderway: false,
               skillCooldownReadyAtSec: {},
               targetFlags: {
                 hasMagicResistShred: !!shredOn, hasSlow: false, hasDistract: false,
                 magicResistShredRemainingSec: shredOn ? 15 : 0, slowRemainingSec: 0, distractRemainingSec: 0
               },
               lastActionTimeSec: 0, mpWasted: 0, hpLost: 0, mobFactor: 1,
-              nextBasicReadyAtSec: 1, extraBasicSwingsTotal: 0, extraBasicDamageTotal: 0
+              nextBasicReadyAtSec: Number.POSITIVE_INFINITY,
+              extraBasicSwingsTotal: 0, extraBasicDamageTotal: 0
             };
           }
           const boost = 0.2;
@@ -2953,11 +3032,17 @@
           const magicWithShred = plannerSeqSimulateAction(mkShredSim(true), { kind: "skill", name: "Magic Bolt", slot: 0, skill: magicSkill });
           const physicalWithShred = plannerSeqSimulateAction(mkShredSim(true), { kind: "skill", name: "Physical Strike", slot: 0, skill: physicalSkill });
           const mixedWithShred = plannerSeqSimulateAction(mkShredSim(true), { kind: "skill", name: "Mixed Hit", slot: 0, skill: mixedSkill });
+          const magicChargeWithShred = plannerSeqSimulateAction(mkShredSim(true), {
+            kind: "skill_charge", chargeMode: "full", chargeReleaseFraction: 1, name: "Magic Hold", slot: 1, skill: magicCharge
+          });
           const magicNoShredOk = Math.abs(magicNoShred.damageDealt - 100) < 0.01;
           const magicWithShredOk = Math.abs(magicWithShred.damageDealt - (100 + 100 * boost)) < 0.01; // 120
           const physicalWithShredOk = Math.abs(physicalWithShred.damageDealt - 100) < 0.01; // no boost
-          const mixedWithShredOk = Math.abs(mixedWithShred.damageDealt - (100 + 40 * boost)) < 0.01; // physical 60 + magic 40 + magic 40*0.2 = 108
-          const passed = magicNoShredOk && magicWithShredOk && physicalWithShredOk && mixedWithShredOk;
+          const mixedWithShredOk = Math.abs(mixedWithShred.damageDealt - (100 + 40 * boost)) < 0.01; // 108
+          // Charge: base 50 * gearMultiplier 3 = 150 base damage; magic bonus = 50 * 3 * 0.2 = 30; total = 180.
+          const magicChargeExpected = 50 * 3 + 50 * 3 * boost;
+          const magicChargeWithShredOk = Math.abs(magicChargeWithShred.damageDealt - magicChargeExpected) < 0.01;
+          const passed = magicNoShredOk && magicWithShredOk && physicalWithShredOk && mixedWithShredOk && magicChargeWithShredOk;
           addCheck(
             "planner_typed_shred_only_boosts_magic",
             passed,
@@ -2966,7 +3051,10 @@
               magicWithShred: magicWithShred.damageDealt,
               physicalWithShred: physicalWithShred.damageDealt,
               mixedWithShred: mixedWithShred.damageDealt,
-              passing: { magicNoShredOk: magicNoShredOk, magicWithShredOk: magicWithShredOk, physicalWithShredOk: physicalWithShredOk, mixedWithShredOk: mixedWithShredOk }
+              magicChargeWithShred: magicChargeWithShred.damageDealt,
+              magicChargeExpected: magicChargeExpected,
+              passing: { magicNoShredOk: magicNoShredOk, magicWithShredOk: magicWithShredOk, physicalWithShredOk: physicalWithShredOk,
+                mixedWithShredOk: mixedWithShredOk, magicChargeWithShredOk: magicChargeWithShredOk }
             },
             false
           );
@@ -3056,6 +3144,7 @@
               chargeFullPressurePenaltySec: 1.6, finisherTargetHpPctMax: 0.45, finisherBonusSec: 0.8 }
           };
           // Fresh target → mid-sequence Sniper Shot finisher window EARNED:
+          // AI CHANGED: Planner rewrite v1.3 — sim state no longer carries `basicAttackLikelyUnderway`; schedule = `+Infinity` means "no carry-over pending".
           const initial = {
             elapsedSec: 0,
             playerHpCur: 1000, playerHpMax: 1000,
@@ -3064,20 +3153,22 @@
             enemyCount: 1, activeAttackers: 1, pressure: 0,
             incomingHpLossPerSec: 0,
             basicSwingIntervalSec: 1, expectedBasicHit: 50,
-            basicAttackLikelyUnderway: false,
             skillCooldownReadyAtSec: {},
             targetFlags: { hasMagicResistShred: false, hasSlow: false, hasDistract: false,
               magicResistShredRemainingSec: 0, slowRemainingSec: 0, distractRemainingSec: 0 },
             lastActionTimeSec: 0, mpWasted: 0, hpLost: 0, mobFactor: 1,
-            nextBasicReadyAtSec: 1, extraBasicSwingsTotal: 0, extraBasicDamageTotal: 0
+            nextBasicReadyAtSec: Number.POSITIVE_INFINITY, extraBasicSwingsTotal: 0, extraBasicDamageTotal: 0
           };
           // Build a node with PRE snapshots manually.
+          // AI CHANGED: Planner rewrite v1.3 — `basicCarryOverPending` is derived from the canonical schedule (mirrored on legacy alias `basicAttackLikelyUnderway`).
           function preFor(simSnap) {
             const reliefCount = Config.planner.sequencePlanner.archerSemantics && Config.planner.sequencePlanner.archerSemantics.distractingShot && Number.isFinite(Config.planner.sequencePlanner.archerSemantics.distractingShot.activeAttackerReliefCount)
               ? Config.planner.sequencePlanner.archerSemantics.distractingShot.activeAttackerReliefCount : 1;
             const effAtt = Number.isFinite(simSnap.activeAttackers)
               ? Math.max(0, simSnap.activeAttackers - (simSnap.targetFlags && simSnap.targetFlags.hasDistract ? reliefCount : 0))
               : null;
+            const carryOverPending = typeof simSnap.nextBasicReadyAtSec === "number"
+              && simSnap.nextBasicReadyAtSec <= simSnap.elapsedSec + 1e-9;
             return {
               elapsedSec: +simSnap.elapsedSec.toFixed(3),
               targetHpPct: Number.isFinite(simSnap.targetHpCur) && simSnap.targetHpMax > 0 ? +(simSnap.targetHpCur / simSnap.targetHpMax).toFixed(4) : null,
@@ -3088,7 +3179,8 @@
               hasMagicResistShred: !!(simSnap.targetFlags && simSnap.targetFlags.hasMagicResistShred),
               hasSlow: !!(simSnap.targetFlags && simSnap.targetFlags.hasSlow),
               hasDistract: !!(simSnap.targetFlags && simSnap.targetFlags.hasDistract),
-              basicAttackLikelyUnderway: simSnap.basicAttackLikelyUnderway === true
+              basicCarryOverPending: carryOverPending,
+              basicAttackLikelyUnderway: carryOverPending
             };
           }
           // Path A: Sniper Shot fired at initial state (target at 50% — already inside finisher window of 0.45 default? no, finisherTargetHpPctMax=0.45, 0.5>0.45, so no bonus).
