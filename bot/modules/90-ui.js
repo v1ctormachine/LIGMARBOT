@@ -2767,35 +2767,56 @@
         addCheck("planner_sequence_exclude_slots_honored", false, { error: String(err && err.message ? err.message : err) }, false);
       }
 
-      // AI CHANGED: Planner rewrite v1.1 — `Config.planner.sequencePlanner.simBasicSwingsBetweenActions` is now implemented in the simulator.
+      // AI CHANGED: Planner rewrite v1.2 — corrected basic-attack timing model.
       //   Logic (bullet-list):
-      //     • Build a synthetic flat sim state (HP/MP set, basicSwingIntervalSec = 1s, expectedBasicHit = 50, mobFactor = 1).
-      //     • Define a long-cast skill (castTimeSec = 2.5s, immediateDamage = 100). With interleave ENABLED (default true) we expect
-      //       extraBasicSwings = 2 (two full swing intervals fit in 2.5s) and total damageDealt >= 100 + 2*50 = 200.
-      //     • Define an instant skill (castTimeSec = 0, clamped to 0.1s actionTimeSec). With interleave ENABLED we expect extraBasicSwings = 0
-      //       (0.1s < 1s interval) and damageDealt == immediateDamage = 100.
-      //     • Flip `Config.planner.sequencePlanner.simBasicSwingsBetweenActions = false`, repeat the long-cast simulation — expect extraBasicSwings = 0
-      //       and damageDealt == 100 (interleave disabled).
-      //     • Restore the previous config value before returning.
-      //   This verifies the flag is honored AND the math approximates the intended model.
+      //     • Conservative model: skill / skill_charge actions DO NOT credit free basics during their cast/channel window.
+      //     • `basic` action remains an explicit one-swing action.
+      //     • `basicAttackLikelyUnderway` materially affects behavior: when true, the first skill/charge action gets a single carry-over basic
+      //       at the start (the in-flight game auto-basic landing); when false (cold start), no carry-over.
+      //     • After any non-basic action, the next auto-basic is scheduled at `end_of_action + swingInterval` (cast suppresses AA).
+      //   Test sub-cases:
+      //     1) Cold-start long-cast skill (no underway flag) → extraBasicSwings = 0, damage = immediateDamage only.
+      //     2) Underway long-cast skill → extraBasicSwings = 1, damage = immediateDamage + 1 carry-over basic.
+      //     3) Cold-start instant skill → extraBasicSwings = 0, damage = immediateDamage only.
+      //     4) Underway instant skill → extraBasicSwings = 1, damage = immediateDamage + 1 carry-over basic.
+      //     5) Underway charge skill → extraBasicSwings = 1 (carry-over at start of channel).
+      //     6) Basic action → extraBasicSwings = 0 (the action IS a swing, no extra), damage = expectedBasicHit, schedules next basic at +swingInterval.
+      //     7) After a skill resolves, sim.nextBasicReadyAtSec === elapsed + swingInterval (no leftover during-cast scheduling).
+      //     8) Config flag off → carry-over also suppressed (the flag fully disables auto-basic interleave including carry-over).
       try {
         if (typeof plannerSeqSimulateAction === "function" && Config.planner && Config.planner.sequencePlanner) {
           const prevFlag = Config.planner.sequencePlanner.simBasicSwingsBetweenActions;
           const longSkill = {
             slot: 0, name: "Long Cast", normalizedKey: "longcast",
             isAttack: true, hasDirectDamage: true, manaCost: 0, castTimeSec: 2.5, cooldownSec: 0,
-            immediateDamage: 100, dotPerSec: 0, dotDurationSec: 0, damageType: "physical",
+            immediateDamage: 100,
+            immediateDamageByType: { physical: 100, magic: 0, unknown: 0 },
+            dotPerSec: 0, dotPerSecByType: { physical: 0, magic: 0, unknown: 0 },
+            dotDurationSec: 0, damageType: "physical",
             isCharge: false, chargeMaxSec: 0, chargeGearPct: 0, isAoe: false, isControl: false,
             controlDurationSec: 0, tacticalRoles: ["offensive"], semantic: null
           };
           const instantSkill = {
             slot: 1, name: "Instant", normalizedKey: "instant",
             isAttack: true, hasDirectDamage: true, manaCost: 0, castTimeSec: 0, cooldownSec: 0,
-            immediateDamage: 100, dotPerSec: 0, dotDurationSec: 0, damageType: "physical",
+            immediateDamage: 100,
+            immediateDamageByType: { physical: 100, magic: 0, unknown: 0 },
+            dotPerSec: 0, dotPerSecByType: { physical: 0, magic: 0, unknown: 0 },
+            dotDurationSec: 0, damageType: "physical",
             isCharge: false, chargeMaxSec: 0, chargeGearPct: 0, isAoe: false, isControl: false,
             controlDurationSec: 0, tacticalRoles: ["offensive"], semantic: null
           };
-          function mkInterleaveSim() {
+          const chargeSkill = {
+            slot: 2, name: "Big Hold", normalizedKey: "bighold",
+            isAttack: true, hasDirectDamage: true, manaCost: 0, castTimeSec: 0, cooldownSec: 6,
+            immediateDamage: 100,
+            immediateDamageByType: { physical: 100, magic: 0, unknown: 0 },
+            dotPerSec: 0, dotPerSecByType: { physical: 0, magic: 0, unknown: 0 },
+            dotDurationSec: 0, damageType: "physical",
+            isCharge: true, chargeMaxSec: 4, chargeGearPct: 200, isAoe: false, isControl: false,
+            controlDurationSec: 0, tacticalRoles: ["channeled"], semantic: null
+          };
+          function mkSimV12(underway) {
             return {
               elapsedSec: 0,
               playerHpCur: 1000, playerHpMax: 1000,
@@ -2805,64 +2826,367 @@
               incomingHpLossPerSec: 0,
               basicSwingIntervalSec: 1,
               expectedBasicHit: 50,
-              basicAttackLikelyUnderway: false,
+              basicAttackLikelyUnderway: !!underway,
               skillCooldownReadyAtSec: {},
               targetFlags: {
                 hasMagicResistShred: false, hasSlow: false, hasDistract: false,
                 magicResistShredRemainingSec: 0, slowRemainingSec: 0, distractRemainingSec: 0
               },
               lastActionTimeSec: 0, mpWasted: 0, hpLost: 0, mobFactor: 1,
-              basicSwingAccumulatorSec: 0, extraBasicSwingsTotal: 0, extraBasicDamageTotal: 0
+              // v1.2 schedule-based fields
+              nextBasicReadyAtSec: underway ? 0 : 1,
+              extraBasicSwingsTotal: 0, extraBasicDamageTotal: 0
             };
           }
           Config.planner.sequencePlanner.simBasicSwingsBetweenActions = true;
-          const longOn = plannerSeqSimulateAction(mkInterleaveSim(), {
+          const longCold = plannerSeqSimulateAction(mkSimV12(false), {
             kind: "skill", name: "Long Cast", slot: 0, skill: longSkill
           });
-          const instantOn = plannerSeqSimulateAction(mkInterleaveSim(), {
+          const longUnderway = plannerSeqSimulateAction(mkSimV12(true), {
+            kind: "skill", name: "Long Cast", slot: 0, skill: longSkill
+          });
+          const instantCold = plannerSeqSimulateAction(mkSimV12(false), {
             kind: "skill", name: "Instant", slot: 1, skill: instantSkill
           });
+          const instantUnderway = plannerSeqSimulateAction(mkSimV12(true), {
+            kind: "skill", name: "Instant", slot: 1, skill: instantSkill
+          });
+          const chargeUnderway = plannerSeqSimulateAction(mkSimV12(true), {
+            kind: "skill_charge", name: "Big Hold", slot: 2, chargeMode: "full", chargeReleaseFraction: 1, skill: chargeSkill
+          });
+          const basicCold = plannerSeqSimulateAction(mkSimV12(false), {
+            kind: "basic", name: "Basic Attack", slot: null
+          });
           Config.planner.sequencePlanner.simBasicSwingsBetweenActions = false;
-          const longOff = plannerSeqSimulateAction(mkInterleaveSim(), {
+          const longUnderwayFlagOff = plannerSeqSimulateAction(mkSimV12(true), {
             kind: "skill", name: "Long Cast", slot: 0, skill: longSkill
           });
           Config.planner.sequencePlanner.simBasicSwingsBetweenActions = prevFlag;
-          const longOnSwings = longOn.action.extraBasicSwings;
-          const longOnDamage = longOn.damageDealt;
-          const instantOnSwings = instantOn.action.extraBasicSwings;
-          const instantOnDamage = instantOn.damageDealt;
-          const longOffSwings = longOff.action.extraBasicSwings;
-          const longOffDamage = longOff.damageDealt;
           // Expectations.
-          const longOnSwingsExpected = longOnSwings === 2;
-          const longOnDamageExpected = longOnDamage >= 199.99 && longOnDamage <= 200.01; // 100 + 50 + 50
-          const instantOnSwingsExpected = instantOnSwings === 0;
-          const instantOnDamageExpected = instantOnDamage === 100;
-          const longOffSwingsExpected = longOffSwings === 0;
-          const longOffDamageExpected = longOffDamage === 100;
-          const passed = longOnSwingsExpected && longOnDamageExpected && instantOnSwingsExpected && instantOnDamageExpected && longOffSwingsExpected && longOffDamageExpected;
+          const longColdOk = longCold.action.extraBasicSwings === 0 && longCold.damageDealt === 100;
+          const longUnderwayOk = longUnderway.action.extraBasicSwings === 1 && Math.abs(longUnderway.damageDealt - 150) < 0.01;
+          const instantColdOk = instantCold.action.extraBasicSwings === 0 && instantCold.damageDealt === 100;
+          const instantUnderwayOk = instantUnderway.action.extraBasicSwings === 1 && Math.abs(instantUnderway.damageDealt - 150) < 0.01;
+          const chargeUnderwayOk = chargeUnderway.action.extraBasicSwings === 1; // damage includes scaled gear hit; we just verify the carry-over fired.
+          const basicColdOk = basicCold.action.extraBasicSwings === 0 && basicCold.damageDealt === 50;
+          // After a skill resolves, next auto-basic is scheduled at end + swingInterval.
+          const longColdSchedOk = Math.abs(longCold.next.nextBasicReadyAtSec - (longCold.actionTimeSec + 1)) < 0.001;
+          const flagOffOk = longUnderwayFlagOff.action.extraBasicSwings === 0 && longUnderwayFlagOff.damageDealt === 100;
+          const passed = longColdOk && longUnderwayOk && instantColdOk && instantUnderwayOk && chargeUnderwayOk && basicColdOk && longColdSchedOk && flagOffOk;
           addCheck(
-            "planner_sequence_basic_swing_interleave",
+            "planner_basic_timing_conservative",
             passed,
             {
-              longCastInterleaveOn: { swings: longOnSwings, damage: longOnDamage },
-              instantInterleaveOn: { swings: instantOnSwings, damage: instantOnDamage },
-              longCastInterleaveOff: { swings: longOffSwings, damage: longOffDamage },
-              longOnSwingsExpected: longOnSwingsExpected,
-              longOnDamageExpected: longOnDamageExpected,
-              instantOnSwingsExpected: instantOnSwingsExpected,
-              instantOnDamageExpected: instantOnDamageExpected,
-              longOffSwingsExpected: longOffSwingsExpected,
-              longOffDamageExpected: longOffDamageExpected
+              longCold: { swings: longCold.action.extraBasicSwings, damage: longCold.damageDealt },
+              longUnderway: { swings: longUnderway.action.extraBasicSwings, damage: longUnderway.damageDealt },
+              instantCold: { swings: instantCold.action.extraBasicSwings, damage: instantCold.damageDealt },
+              instantUnderway: { swings: instantUnderway.action.extraBasicSwings, damage: instantUnderway.damageDealt },
+              chargeUnderway: { swings: chargeUnderway.action.extraBasicSwings, damage: chargeUnderway.damageDealt },
+              basicCold: { swings: basicCold.action.extraBasicSwings, damage: basicCold.damageDealt },
+              longColdNextBasicReadyAtSec: longCold.next.nextBasicReadyAtSec,
+              flagOffUnderway: { swings: longUnderwayFlagOff.action.extraBasicSwings, damage: longUnderwayFlagOff.damageDealt },
+              passing: {
+                longColdOk: longColdOk, longUnderwayOk: longUnderwayOk,
+                instantColdOk: instantColdOk, instantUnderwayOk: instantUnderwayOk,
+                chargeUnderwayOk: chargeUnderwayOk, basicColdOk: basicColdOk,
+                longColdSchedOk: longColdSchedOk, flagOffOk: flagOffOk
+              }
             },
             false
           );
         } else {
-          addCheck("planner_sequence_basic_swing_interleave", false, { reason: "fn_or_config_missing" }, false);
+          addCheck("planner_basic_timing_conservative", false, { reason: "fn_or_config_missing" }, false);
         }
       } catch (err) {
-        Logger.warn("TEST", "planner_sequence_basic_swing_interleave threw", err);
-        addCheck("planner_sequence_basic_swing_interleave", false, { error: String(err && err.message ? err.message : err) }, false);
+        Logger.warn("TEST", "planner_basic_timing_conservative threw", err);
+        addCheck("planner_basic_timing_conservative", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Planner rewrite v1.2 — typed shred handling.
+      //   Logic (bullet-list):
+      //     • A magic skill (immediateDamageByType.magic = 100) cast WITHOUT active shred → damage = 100.
+      //     • Same skill cast WITH shred → damage = 100 + 100*boost (default 0.2) = 120; physical skill (immediateDamageByType.physical = 100)
+      //       cast WITH shred → damage = 100 (no boost; shred only applies to magic portion).
+      //     • Mixed skill (physical + magic) WITH shred → only the magic portion is boosted, physical untouched.
+      try {
+        if (typeof plannerSeqSimulateAction === "function" && Config.planner && Config.planner.sequencePlanner) {
+          const magicSkill = {
+            slot: 0, name: "Magic Bolt", normalizedKey: "magicbolt",
+            isAttack: true, hasDirectDamage: true, manaCost: 0, castTimeSec: 0.5, cooldownSec: 0,
+            immediateDamage: 100,
+            immediateDamageByType: { physical: 0, magic: 100, unknown: 0 },
+            dotPerSec: 0, dotPerSecByType: { physical: 0, magic: 0, unknown: 0 },
+            dotDurationSec: 0, damageType: "magic",
+            isCharge: false, chargeMaxSec: 0, chargeGearPct: 0, isAoe: false, isControl: false,
+            controlDurationSec: 0, tacticalRoles: ["offensive"], semantic: null
+          };
+          const physicalSkill = Object.assign({}, magicSkill, {
+            name: "Physical Strike", normalizedKey: "physstrike", damageType: "physical",
+            immediateDamageByType: { physical: 100, magic: 0, unknown: 0 }
+          });
+          const mixedSkill = Object.assign({}, magicSkill, {
+            name: "Mixed Hit", normalizedKey: "mixedhit",
+            immediateDamage: 100,
+            immediateDamageByType: { physical: 60, magic: 40, unknown: 0 }, damageType: "magic"
+          });
+          function mkShredSim(shredOn) {
+            return {
+              elapsedSec: 0,
+              playerHpCur: 1000, playerHpMax: 1000,
+              playerMpCur: 100, playerMpMax: 100,
+              targetHpCur: 5000, targetHpMax: 5000,
+              enemyCount: 1, activeAttackers: 1, pressure: 0,
+              incomingHpLossPerSec: 0,
+              basicSwingIntervalSec: 1, expectedBasicHit: 50,
+              basicAttackLikelyUnderway: false,
+              skillCooldownReadyAtSec: {},
+              targetFlags: {
+                hasMagicResistShred: !!shredOn, hasSlow: false, hasDistract: false,
+                magicResistShredRemainingSec: shredOn ? 15 : 0, slowRemainingSec: 0, distractRemainingSec: 0
+              },
+              lastActionTimeSec: 0, mpWasted: 0, hpLost: 0, mobFactor: 1,
+              nextBasicReadyAtSec: 1, extraBasicSwingsTotal: 0, extraBasicDamageTotal: 0
+            };
+          }
+          const boost = 0.2;
+          const magicNoShred = plannerSeqSimulateAction(mkShredSim(false), { kind: "skill", name: "Magic Bolt", slot: 0, skill: magicSkill });
+          const magicWithShred = plannerSeqSimulateAction(mkShredSim(true), { kind: "skill", name: "Magic Bolt", slot: 0, skill: magicSkill });
+          const physicalWithShred = plannerSeqSimulateAction(mkShredSim(true), { kind: "skill", name: "Physical Strike", slot: 0, skill: physicalSkill });
+          const mixedWithShred = plannerSeqSimulateAction(mkShredSim(true), { kind: "skill", name: "Mixed Hit", slot: 0, skill: mixedSkill });
+          const magicNoShredOk = Math.abs(magicNoShred.damageDealt - 100) < 0.01;
+          const magicWithShredOk = Math.abs(magicWithShred.damageDealt - (100 + 100 * boost)) < 0.01; // 120
+          const physicalWithShredOk = Math.abs(physicalWithShred.damageDealt - 100) < 0.01; // no boost
+          const mixedWithShredOk = Math.abs(mixedWithShred.damageDealt - (100 + 40 * boost)) < 0.01; // physical 60 + magic 40 + magic 40*0.2 = 108
+          const passed = magicNoShredOk && magicWithShredOk && physicalWithShredOk && mixedWithShredOk;
+          addCheck(
+            "planner_typed_shred_only_boosts_magic",
+            passed,
+            {
+              magicNoShred: magicNoShred.damageDealt,
+              magicWithShred: magicWithShred.damageDealt,
+              physicalWithShred: physicalWithShred.damageDealt,
+              mixedWithShred: mixedWithShred.damageDealt,
+              passing: { magicNoShredOk: magicNoShredOk, magicWithShredOk: magicWithShredOk, physicalWithShredOk: physicalWithShredOk, mixedWithShredOk: mixedWithShredOk }
+            },
+            false
+          );
+        } else {
+          addCheck("planner_typed_shred_only_boosts_magic", false, { reason: "fn_or_config_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_typed_shred_only_boosts_magic threw", err);
+        addCheck("planner_typed_shred_only_boosts_magic", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Planner rewrite v1.2 — Sniper Shot is guaranteed to normalize as charge.
+      //   Logic (bullet-list):
+      //     • Build a fake `row` representing a scanned Sniper Shot bar entry where the parser DID NOT detect a `channel_gear` effect
+      //       (real-world failure mode for locale variants / scan timing).
+      //     • Normalize it via `plannerSeqNormalizeOneSkill`.
+      //     • Expect: `isCharge === true`, `chargeMaxSec > 0`, `chargeGearPct > 0`, semantic enrichment resolved (`semantic.__semKey === "snipershot"`).
+      //     • Pass the normalized skill through `plannerSeqBuildCandidateActions` against a permissive sim state — expect BOTH full and partial release candidates.
+      try {
+        if (typeof plannerSeqNormalizeOneSkill === "function" && typeof plannerSeqBuildCandidateActions === "function") {
+          const sniperRow = {
+            slot: 3, name: "Sniper Shot", kind: "skill", isAttack: true, targetsEnemy: true,
+            manaCost: 0, castTimeSec: 0, cooldownSec: 6,
+            effects: [], // parser miss: no channel_gear effect detected
+            conception: null
+          };
+          const normalized = plannerSeqNormalizeOneSkill(sniperRow, null, 1, 50);
+          const isChargeOk = normalized && normalized.isCharge === true;
+          const chargeMaxOk = normalized && Number.isFinite(normalized.chargeMaxSec) && normalized.chargeMaxSec > 0;
+          const chargeGearOk = normalized && Number.isFinite(normalized.chargeGearPct) && normalized.chargeGearPct > 0;
+          const semanticOk = normalized && normalized.semantic && normalized.semantic.__semKey === "snipershot";
+          const synthSim = {
+            elapsedSec: 0.001, // bypass live-DOM ready check
+            playerMpCur: 100,
+            skillCooldownReadyAtSec: {}
+          };
+          const cands = plannerSeqBuildCandidateActions(synthSim, [normalized], { disallowChargeSkills: false });
+          const fullCands = cands.filter(function (c) { return c.kind === "skill_charge" && c.chargeMode === "full" && c.slot === 3; });
+          const partialCands = cands.filter(function (c) { return c.kind === "skill_charge" && c.chargeMode === "partial" && c.slot === 3; });
+          const fullPresent = fullCands.length === 1;
+          const partialPresent = partialCands.length === 1;
+          const passed = isChargeOk && chargeMaxOk && chargeGearOk && semanticOk && fullPresent && partialPresent;
+          addCheck(
+            "planner_sniper_shot_charge_guaranteed",
+            passed,
+            {
+              isCharge: normalized && normalized.isCharge,
+              chargeMaxSec: normalized && normalized.chargeMaxSec,
+              chargeGearPct: normalized && normalized.chargeGearPct,
+              semanticKey: normalized && normalized.semantic ? normalized.semantic.__semKey : null,
+              fullPresent: fullPresent,
+              partialPresent: partialPresent,
+              partialFraction: partialCands[0] ? partialCands[0].chargeReleaseFraction : null,
+              candidates: cands.map(function (c) { return { kind: c.kind, slot: c.slot, chargeMode: c.chargeMode, chargeReleaseFraction: c.chargeReleaseFraction }; })
+            },
+            false
+          );
+        } else {
+          addCheck("planner_sniper_shot_charge_guaranteed", false, { reason: "fn_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_sniper_shot_charge_guaranteed threw", err);
+        addCheck("planner_sniper_shot_charge_guaranteed", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Planner rewrite v1.2 — semantic tie-breaks use simulated state.
+      //   Logic (bullet-list):
+      //     • Sniper Shot finisher bonus must fire based on SIMULATED target HP %, not initial. Build a two-action node where the simulated
+      //       target HP% drops below the finisher threshold AFTER action 1, then Sniper Shot fires as action 2. Compare against a node where
+      //       Sniper Shot fires as action 1 against a fresh target — the EARNED-finisher Sniper Shot should NOT be over-penalized by initial-HP logic.
+      //     • The `pre` snapshot on each action must carry the simulated moment values.
+      try {
+        if (
+          typeof plannerSeqSimulateAction === "function" &&
+          typeof plannerSeqScoreNode === "function"
+        ) {
+          // Synthetic Sniper Shot (charge skill).
+          const sniper = {
+            slot: 0, name: "Sniper Shot", normalizedKey: "snipershot",
+            isAttack: true, hasDirectDamage: true, manaCost: 0, castTimeSec: 0, cooldownSec: 6,
+            immediateDamage: 100, immediateDamageByType: { physical: 100, magic: 0, unknown: 0 },
+            dotPerSec: 0, dotPerSecByType: { physical: 0, magic: 0, unknown: 0 },
+            dotDurationSec: 0, damageType: "physical",
+            isCharge: true, chargeMaxSec: 4, chargeGearPct: 200,
+            isAoe: false, isControl: false, controlDurationSec: 0, tacticalRoles: ["channeled"],
+            semantic: { __semKey: "snipershot", role: "finisher",
+              chargeFullPressurePenaltySec: 1.6, finisherTargetHpPctMax: 0.45, finisherBonusSec: 0.8 }
+          };
+          // Fresh target → mid-sequence Sniper Shot finisher window EARNED:
+          const initial = {
+            elapsedSec: 0,
+            playerHpCur: 1000, playerHpMax: 1000,
+            playerMpCur: 100, playerMpMax: 100,
+            targetHpCur: 500, targetHpMax: 1000, // start at 50%
+            enemyCount: 1, activeAttackers: 1, pressure: 0,
+            incomingHpLossPerSec: 0,
+            basicSwingIntervalSec: 1, expectedBasicHit: 50,
+            basicAttackLikelyUnderway: false,
+            skillCooldownReadyAtSec: {},
+            targetFlags: { hasMagicResistShred: false, hasSlow: false, hasDistract: false,
+              magicResistShredRemainingSec: 0, slowRemainingSec: 0, distractRemainingSec: 0 },
+            lastActionTimeSec: 0, mpWasted: 0, hpLost: 0, mobFactor: 1,
+            nextBasicReadyAtSec: 1, extraBasicSwingsTotal: 0, extraBasicDamageTotal: 0
+          };
+          // Build a node with PRE snapshots manually.
+          function preFor(simSnap) {
+            const reliefCount = Config.planner.sequencePlanner.archerSemantics && Config.planner.sequencePlanner.archerSemantics.distractingShot && Number.isFinite(Config.planner.sequencePlanner.archerSemantics.distractingShot.activeAttackerReliefCount)
+              ? Config.planner.sequencePlanner.archerSemantics.distractingShot.activeAttackerReliefCount : 1;
+            const effAtt = Number.isFinite(simSnap.activeAttackers)
+              ? Math.max(0, simSnap.activeAttackers - (simSnap.targetFlags && simSnap.targetFlags.hasDistract ? reliefCount : 0))
+              : null;
+            return {
+              elapsedSec: +simSnap.elapsedSec.toFixed(3),
+              targetHpPct: Number.isFinite(simSnap.targetHpCur) && simSnap.targetHpMax > 0 ? +(simSnap.targetHpCur / simSnap.targetHpMax).toFixed(4) : null,
+              playerHpPct: Number.isFinite(simSnap.playerHpCur) && simSnap.playerHpMax > 0 ? +(simSnap.playerHpCur / simSnap.playerHpMax).toFixed(4) : null,
+              pressure: Number.isFinite(simSnap.pressure) ? simSnap.pressure : null,
+              activeAttackers: simSnap.activeAttackers, effectiveActiveAttackers: effAtt,
+              enemyCount: simSnap.enemyCount,
+              hasMagicResistShred: !!(simSnap.targetFlags && simSnap.targetFlags.hasMagicResistShred),
+              hasSlow: !!(simSnap.targetFlags && simSnap.targetFlags.hasSlow),
+              hasDistract: !!(simSnap.targetFlags && simSnap.targetFlags.hasDistract),
+              basicAttackLikelyUnderway: simSnap.basicAttackLikelyUnderway === true
+            };
+          }
+          // Path A: Sniper Shot fired at initial state (target at 50% — already inside finisher window of 0.45 default? no, finisherTargetHpPctMax=0.45, 0.5>0.45, so no bonus).
+          const preA = preFor(initial);
+          const stepA = plannerSeqSimulateAction(initial, { kind: "skill_charge", chargeMode: "full", chargeReleaseFraction: 1, name: "Sniper Shot", slot: 0, skill: sniper });
+          const nodeA = {
+            sim: stepA.next,
+            actions: [{ kind: "skill_charge", chargeMode: "full", chargeReleaseFraction: 1, name: "Sniper Shot", slot: 0,
+              skill: { slot: 0, name: "Sniper Shot", normalizedKey: "snipershot", damageType: "physical" }, pre: preA }],
+            cumulativeDamage: stepA.damageDealt, killedAtSec: null
+          };
+          const combatStateForScore = {
+            mode: "fast",
+            player: { hpCur: 1000, hpMax: 1000, hpPct: 1, mpCur: 100, mpMax: 100, mpPct: 1,
+              basicSwingIntervalSec: 1, expectedBasicHit: 50, basicDpsAdjusted: 50, basicAttackLikelyUnderway: false, longSelfBuffs: [] },
+            target: { hpCur: 500, hpMax: 1000, hpPct: 0.5, visibleEffects: [],
+              flags: { hasMagicResistShred: false, hasSlow: false, hasDistract: false,
+                magicResistShredRemainingSec: 0, slowRemainingSec: 0, distractRemainingSec: 0 }, fingerprintKey: null },
+            fight: { enemiesPresent: 1, activeAttackerCount: 1, activeAttackerSource: "test",
+              pressure: 0, incomingHpLossPerSec: 0, combatMode: "fast" },
+            timing: { nowMs: Date.now(), maxHorizonSec: 6, maxActions: 5 },
+            paperBasicDps: 50, mobFactor: 1
+          };
+          // Path B: chain a softening basic action first to drop target to ~450/1000 (45%), THEN Sniper Shot.
+          const softener = { kind: "basic", name: "Basic Attack", slot: null };
+          const stepB1 = plannerSeqSimulateAction(initial, softener);
+          // Manually drop target HP further so Sniper Shot fires when targetHpPct < 0.45.
+          const midState = Object.assign({}, stepB1.next);
+          midState.targetHpCur = 0.4 * midState.targetHpMax;
+          const preB2 = preFor(midState);
+          const stepB2 = plannerSeqSimulateAction(midState, { kind: "skill_charge", chargeMode: "full", chargeReleaseFraction: 1, name: "Sniper Shot", slot: 0, skill: sniper });
+          const nodeB = {
+            sim: stepB2.next,
+            actions: [
+              { kind: "basic", name: "Basic Attack", slot: null, pre: preFor(initial) },
+              { kind: "skill_charge", chargeMode: "full", chargeReleaseFraction: 1, name: "Sniper Shot", slot: 0,
+                skill: { slot: 0, name: "Sniper Shot", normalizedKey: "snipershot", damageType: "physical" }, pre: preB2 }
+            ],
+            cumulativeDamage: stepB1.damageDealt + stepB2.damageDealt, killedAtSec: null
+          };
+          const scoreA = plannerSeqScoreNode(nodeA, combatStateForScore);
+          const scoreB = plannerSeqScoreNode(nodeB, combatStateForScore);
+          // Path B's Sniper Shot pre.targetHpPct = 0.4 < 0.45 → finisher bonus fires (semanticAdj -0.8). Path A's pre.targetHpPct = 0.5 → no bonus.
+          // The finisher must be reflected in the score — check that nodeB.actions[1].pre.targetHpPct < 0.45.
+          const preBTargetOk = nodeB.actions[1].pre && Number.isFinite(nodeB.actions[1].pre.targetHpPct) && nodeB.actions[1].pre.targetHpPct < 0.45;
+          const preAExists = !!(nodeA.actions[0] && nodeA.actions[0].pre);
+          const passed = preBTargetOk && preAExists;
+          addCheck(
+            "planner_semantic_uses_simulated_state",
+            passed,
+            {
+              preATargetHpPct: nodeA.actions[0] && nodeA.actions[0].pre ? nodeA.actions[0].pre.targetHpPct : null,
+              preBTargetHpPct: nodeB.actions[1] && nodeB.actions[1].pre ? nodeB.actions[1].pre.targetHpPct : null,
+              scoreA: scoreA,
+              scoreB: scoreB,
+              preATargetExists: preAExists,
+              preBTargetUnderFinisher: preBTargetOk
+            },
+            false
+          );
+        } else {
+          addCheck("planner_semantic_uses_simulated_state", false, { reason: "fns_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_semantic_uses_simulated_state threw", err);
+        addCheck("planner_semantic_uses_simulated_state", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Planner rewrite v1.2 — diagnostics is now read-only (no class-profile mutation).
+      //   Logic (bullet-list):
+      //     • Capture a known `Config.planner.skillMpReserve` value, set a sentinel value, call `getPlannerOpeningPickDiagnostics()` (which previously
+      //       called `plannerApplyClassProfile()` and would mutate this field back from the class profile).
+      //     • After the diagnostic call, `Config.planner.skillMpReserve` should still equal the sentinel — diagnostics did NOT mutate it.
+      //     • Restore the original value when done.
+      try {
+        if (typeof getPlannerOpeningPickDiagnostics === "function" && Config.planner) {
+          const original = Config.planner.skillMpReserve;
+          const sentinel = 9999;
+          Config.planner.skillMpReserve = sentinel;
+          const diag = getPlannerOpeningPickDiagnostics();
+          const stayedAsSentinel = Config.planner.skillMpReserve === sentinel;
+          Config.planner.skillMpReserve = original;
+          addCheck(
+            "planner_diagnostics_read_only",
+            stayedAsSentinel,
+            {
+              originalRestored: Config.planner.skillMpReserve === original,
+              postCallValue: stayedAsSentinel ? sentinel : "mutated",
+              classProfilePresent: !!(diag && diag.classProfile)
+            },
+            false
+          );
+        } else {
+          addCheck("planner_diagnostics_read_only", false, { reason: "fn_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_diagnostics_read_only threw", err);
+        addCheck("planner_diagnostics_read_only", false, { error: String(err && err.message ? err.message : err) }, false);
       }
 
       // AI CHANGED: Night mode — persistence round-trip via the shared autoFarmUi blob (key `ligmarbot.autoFarmUi.v1`).

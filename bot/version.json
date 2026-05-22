@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "1.0.7-alpha",
-    "description":  "Planner rewrite v1.1: excludeSlots honored inside sequence search + simBasicSwingsBetweenActions implemented + latent flat-state bug fixed",
-    "builtAt":  "2026-05-22T18:17:10.7668769+03:00",
+    "version":  "1.0.8-alpha",
+    "description":  "planner correction pass v1.2: conservative basic timing, typed shred (physical vs magic), Sniper Shot charge guarantee, simulated semantic tie-breaks, read-only diagnostics",
+    "builtAt":  "2026-05-22T18:52:10.0244183+03:00",
     "history":  [
+                    {
+                        "version":  "1.0.8-alpha",
+                        "description":  "planner correction pass v1.2: conservative basic timing, typed shred (physical vs magic), Sniper Shot charge guarantee, simulated semantic tie-breaks, read-only diagnostics",
+                        "date":  "2026-05-22T18:52:10.0244183+03:00"
+                    },
                     {
                         "version":  "1.0.7-alpha",
                         "description":  "Planner rewrite v1.1: excludeSlots honored inside sequence search + simBasicSwingsBetweenActions implemented + latent flat-state bug fixed",
@@ -247,11 +252,6 @@
                         "version":  "0.3.184",
                         "description":  "horizon: unify charge hold risk in opener context; reuse cooldown in scored rows",
                         "date":  "2026-05-13T16:43:50.5405355+03:00"
-                    },
-                    {
-                        "version":  "0.3.183",
-                        "description":  "combat episode v1: snapshot opener+queue per burst, TEST + getCombatEpisode",
-                        "date":  "2026-05-13T16:31:58.2726428+03:00"
                     }
                 ]
 }

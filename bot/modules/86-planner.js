@@ -275,37 +275,61 @@
   }
 
   // AI CHANGED: Apply per-class planner profile to live Config knobs (runtime-only, no storage writes).
-  function plannerApplyClassProfile() {
+  // AI CHANGED: Planner rewrite v1.2 — split into pure compute (read-only) + mutating apply.
+  //   Logic (bullet-list):
+  //     • `plannerComputeClassProfile()` returns what WOULD be applied (classKey, profileKey, planned set) WITHOUT mutating `Config.planner` or `Runtime.planner.activeClassProfile`.
+  //     • `plannerApplyClassProfile()` calls compute then mutates `Config.planner` for the values that pass min-gate; updates `Runtime.planner.activeClassProfile`.
+  //     • Diagnostic / read-only callers (`getPlannerOpeningPickDiagnostics`) use compute; only the actual pick path (`plannerPickSkillOpeningPick`) calls apply.
+  //   Why: previously diagnostics called Apply, mutating live Config every time you inspected planner state from the console. Now read-only paths are truly read-only.
+  function plannerComputeClassProfile() {
     const map = Config.planner && Config.planner.classProfiles ? Config.planner.classProfiles : null;
     if (!map || typeof map !== "object") {
-      Runtime.planner.activeClassProfile = null;
-      return { ok: false, reason: "no_profiles" };
+      return { ok: false, reason: "no_profiles", planned: {} };
     }
     const classKey = plannerDetectProfileClassKey() || "default";
     const profile = map[classKey] || map.default || null;
     if (!profile || typeof profile !== "object") {
-      Runtime.planner.activeClassProfile = null;
-      return { ok: false, reason: "profile_missing", classKey: classKey };
+      return { ok: false, reason: "profile_missing", classKey: classKey, planned: {} };
     }
-    const applied = {};
-    function applyNum(key, min) {
+    const planned = {};
+    function gatherNum(key, min) {
       const v = profile[key];
       if (Number.isFinite(v) && (min === undefined || v >= min)) {
-        Config.planner[key] = v;
-        applied[key] = v;
+        planned[key] = v;
       }
     }
-    applyNum("skillMpReserve", 0);
-    applyNum("openerHorizonMinImprovementFraction", 0);
-    applyNum("openerExtraRankedSkills", 0);
-    applyNum("conceptionOpenerGateDelta", 0);
-    // AI CHANGED: Class profiles may tune multi-mob channel deprioritization.
-    applyNum("conceptionMultiMobEnemyCountThreshold", 0);
-    applyNum("conceptionChannelMultiMobPenalty", 0);
-    const out = {
+    gatherNum("skillMpReserve", 0);
+    gatherNum("openerHorizonMinImprovementFraction", 0);
+    gatherNum("openerExtraRankedSkills", 0);
+    gatherNum("conceptionOpenerGateDelta", 0);
+    gatherNum("conceptionMultiMobEnemyCountThreshold", 0);
+    gatherNum("conceptionChannelMultiMobPenalty", 0);
+    return {
       ok: true,
       classKey: classKey,
       profileKey: map[classKey] ? classKey : "default",
+      planned: planned
+    };
+  }
+
+  function plannerApplyClassProfile() {
+    const computed = plannerComputeClassProfile();
+    if (!computed.ok) {
+      Runtime.planner.activeClassProfile = null;
+      return { ok: false, reason: computed.reason, classKey: computed.classKey || null };
+    }
+    const applied = {};
+    const planned = computed.planned;
+    const keys = Object.keys(planned);
+    for (let i = 0; i < keys.length; i += 1) {
+      const k = keys[i];
+      Config.planner[k] = planned[k];
+      applied[k] = planned[k];
+    }
+    const out = {
+      ok: true,
+      classKey: computed.classKey,
+      profileKey: computed.profileKey,
       applied: applied
     };
     Runtime.planner.activeClassProfile = out;
@@ -2502,8 +2526,10 @@
   }
 
   // AI CHANGED: Pack A — read-only snapshot for console after a fight / when debugging openers.
+  // AI CHANGED: Planner rewrite v1.2 — diagnostics no longer mutates Config via class-profile apply; uses pure compute instead so console inspection
+  // never side-effects live planner config. The actual mutation still happens in `plannerPickSkillOpeningPick` where it belongs.
   function getPlannerOpeningPickDiagnostics() {
-    const classProfile = plannerApplyClassProfile();
+    const classProfile = plannerComputeClassProfile();
     const pr = Runtime.planner;
     const slots = Runtime.skills.slots || [];
     const rankSnap = rankAttackSkillsByHeuristic({});
@@ -2959,54 +2985,83 @@
 
   // AI CHANGED: Build the planner-facing normalized representation of a single skill slot. Pulls together raw scan + master conception + parsed
   // effects + planner-side semantic enrichment so the simulator has one coherent view of what the skill DOES.
+  // AI CHANGED: Planner rewrite v1.2 — typed damage normalization + Sniper Shot charge guarantee.
+  //   Logic (bullet-list):
+  //     • Per-effect typed mob-factor: `plannerHorizonPaperEffectiveMobFactor(mf, anchoring, damageType)` reproduces legacy horizon paper logic
+  //       (full mf for basic-anchored basic_proc/channel_gear; blended `1 + (mf-1)*w` for instant/dot using physical vs magic weights).
+  //     • `immediateDamageByType` and `dotPerSecByType` split damage so the simulator can boost ONLY the magic portion under magic-resist-shred
+  //       instead of multiplying the entire damage tank.
+  //     • Sniper Shot charge guarantee: if the normalized skill name resolves to `snipershot` and the parsed effects didn't expose `channel_gear`
+  //       (parser miss / locale variant), force `isCharge = true` with a fallback `chargeMaxSec` (4s) and `chargeGearPct` (200) so the planner
+  //       always generates full + partial release candidates. This is NOT combo hardcoding — it is guaranteeing the skill's OWN intrinsic charge
+  //       semantics when the live parse cannot.
   function plannerSeqNormalizeOneSkill(row, paperBasic, mobFactor, expectedBasicHit) {
     if (!row || row.kind !== "skill") {
       return null;
     }
     const conception = (typeof plannerResolveSlotConception === "function" ? plannerResolveSlotConception(row) : (row.conception || null)) || null;
     const effects = Array.isArray(row.effects) ? row.effects : [];
-    let immediateDamage = 0;
+    const mf = Number.isFinite(mobFactor) && mobFactor > 0 ? mobFactor : 1;
+    const immediateDamageByType = { physical: 0, magic: 0, unknown: 0 };
+    const dotPerSecByType = { physical: 0, magic: 0, unknown: 0 };
     let dotTotal = 0;
     let dotDurationSec = 0;
-    let damageType = "unknown";
+    let dominantDamageType = "unknown";
     let isAoe = false;
     let isControl = false;
     let controlDurationSec = 0;
     let isCharge = false;
     let chargeMaxSec = 0;
     let chargeGearPct = 0;
+    function bucketKey(dt) {
+      const d = typeof dt === "string" ? dt.toLowerCase() : "";
+      if (d === "physical") return "physical";
+      if (d === "magic") return "magic";
+      return "unknown";
+    }
+    function typedMf(anchoring, dt) {
+      if (typeof plannerHorizonPaperEffectiveMobFactor === "function") {
+        return plannerHorizonPaperEffectiveMobFactor(mf, anchoring, dt);
+      }
+      return mf;
+    }
     for (let i = 0; i < effects.length; i += 1) {
       const e = effects[i];
       if (!e || !e.type) {
         continue;
       }
       if (e.type === "instant" && Number.isFinite(e.value)) {
-        immediateDamage += e.value;
+        const k = bucketKey(e.damageType);
+        immediateDamageByType[k] += e.value * typedMf("non_basic", e.damageType);
         if (e.damageType) {
-          damageType = e.damageType;
+          dominantDamageType = e.damageType;
         }
-      } else if (e.type === "dot" && Number.isFinite(e.total) && Number.isFinite(e.durationSec)) {
+      } else if (e.type === "dot" && Number.isFinite(e.total) && Number.isFinite(e.durationSec) && e.durationSec > 0) {
         dotTotal += e.total;
         dotDurationSec = Math.max(dotDurationSec, e.durationSec);
+        const k = bucketKey(e.damageType);
+        dotPerSecByType[k] += (e.total / e.durationSec) * typedMf("non_basic", e.damageType);
         if (e.damageType) {
-          damageType = e.damageType;
+          dominantDamageType = e.damageType;
         }
       } else if (e.type === "basic_proc") {
         if (Number.isFinite(expectedBasicHit) && expectedBasicHit > 0) {
-          immediateDamage += expectedBasicHit;
+          // basic_proc is basic-anchored — full mob factor regardless of typing (parser typically marks physical for archers).
+          immediateDamageByType[bucketKey(e.damageType || "physical")] += expectedBasicHit * typedMf("basic", e.damageType || "physical");
         }
         if (e.damageType) {
-          damageType = e.damageType;
+          dominantDamageType = e.damageType;
         }
       } else if (e.type === "channel_gear") {
         isCharge = true;
-        chargeMaxSec = Number.isFinite(e.channelMaxSec) ? e.channelMaxSec : 0;
-        chargeGearPct = Number.isFinite(e.gearDamagePercent) ? e.gearDamagePercent : 0;
+        chargeMaxSec = Number.isFinite(e.channelMaxSec) ? e.channelMaxSec : chargeMaxSec;
+        chargeGearPct = Number.isFinite(e.gearDamagePercent) ? e.gearDamagePercent : chargeGearPct;
         if (Number.isFinite(expectedBasicHit) && expectedBasicHit > 0) {
-          immediateDamage += expectedBasicHit;
+          // The base hit of a charge is basic-anchored.
+          immediateDamageByType[bucketKey(e.damageType || "physical")] += expectedBasicHit * typedMf("basic", e.damageType || "physical");
         }
         if (e.damageType) {
-          damageType = e.damageType;
+          dominantDamageType = e.damageType;
         }
       } else if (e.type === "slow") {
         isControl = true;
@@ -3030,23 +3085,52 @@
         isAoe = true;
       }
     }
-    const mf = Number.isFinite(mobFactor) && mobFactor > 0 ? mobFactor : 1;
-    const immediateDamageAdj = +(immediateDamage * mf).toFixed(2);
-    const dotPerSec = dotDurationSec > 0 ? +(dotTotal / dotDurationSec * mf).toFixed(3) : 0;
+    // AI CHANGED: Planner rewrite v1.2 — Sniper Shot charge guarantee. If the parser missed `channel_gear` (locale variant, name format,
+    // or scan-snapshot timing), force charge-capable normalization using the semantic enrichment config so the planner always sees full +
+    // partial release candidates. We only do this for skills whose normalized identity is explicitly known charge skills.
+    const normalizedKey = plannerSeqNormalizeSkillKey(row.name || "");
+    if (normalizedKey === "snipershot") {
+      isCharge = true;
+      if (!(chargeMaxSec > 0)) {
+        chargeMaxSec = 4;
+      }
+      if (!(chargeGearPct > 0)) {
+        // Fallback gear multiplier — Sniper Shot scales with gear; without parse data we assume +200% at full release.
+        chargeGearPct = 200;
+      }
+      // Ensure a sane minimum immediate-damage payload exists when the parser produced none (so partial vs full release scoring still compares).
+      const totalImmediate = immediateDamageByType.physical + immediateDamageByType.magic + immediateDamageByType.unknown;
+      if (totalImmediate <= 0 && Number.isFinite(expectedBasicHit) && expectedBasicHit > 0) {
+        immediateDamageByType.physical += expectedBasicHit * typedMf("basic", "physical");
+      }
+    }
+    const immediateDamage = +(immediateDamageByType.physical + immediateDamageByType.magic + immediateDamageByType.unknown).toFixed(2);
+    const dotPerSec = +(dotPerSecByType.physical + dotPerSecByType.magic + dotPerSecByType.unknown).toFixed(3);
     return {
       slot: typeof row.slot === "number" ? row.slot : null,
       name: row.name || "",
-      normalizedKey: plannerSeqNormalizeSkillKey(row.name || ""),
+      normalizedKey: normalizedKey,
       kind: row.kind,
       manaCost: Number.isFinite(row.manaCost) ? row.manaCost : 0,
       castTimeSec: Number.isFinite(row.castTimeSec) ? row.castTimeSec : 0,
       cooldownSec: Number.isFinite(row.cooldownSec) ? row.cooldownSec : 0,
-      // damage shape (already mob-factor adjusted):
-      immediateDamage: immediateDamageAdj,
+      // damage shape (typed mob-factor already applied per effect):
+      immediateDamage: immediateDamage,
+      // AI CHANGED: Planner rewrite v1.2 — typed split so simulator can target only the magic portion for shred boost.
+      immediateDamageByType: {
+        physical: +immediateDamageByType.physical.toFixed(2),
+        magic: +immediateDamageByType.magic.toFixed(2),
+        unknown: +immediateDamageByType.unknown.toFixed(2)
+      },
       dotTotal: +(dotTotal * mf).toFixed(2),
       dotDurationSec: +dotDurationSec.toFixed(2),
       dotPerSec: dotPerSec,
-      damageType: damageType,
+      dotPerSecByType: {
+        physical: +dotPerSecByType.physical.toFixed(3),
+        magic: +dotPerSecByType.magic.toFixed(3),
+        unknown: +dotPerSecByType.unknown.toFixed(3)
+      },
+      damageType: dominantDamageType,
       // delivery / tactics:
       isAttack: !!(row.isAttack && row.targetsEnemy),
       isCharge: isCharge,
@@ -3352,8 +3436,22 @@
 
   // AI CHANGED: Simulate one action against simState; returns a fresh simState (immutable shape). All timing/HP/damage math lives here so
   // the search code can stay declarative.
-  // AI CHANGED: Planner rewrite v1.1 — additionally carries `basicSwingAccumulatorSec` plus totals (`extraBasicSwingsTotal`, `extraBasicDamageTotal`)
-  // so the simulator can correctly account for interleaved basic auto-attacks between skill casts when `simBasicSwingsBetweenActions` is enabled.
+  // AI CHANGED: Planner rewrite v1.2 — basic-attack timing model is now CONSERVATIVE and schedule-based, not "free basics during cast":
+  //   • `nextBasicReadyAtSec` is a scheduled-arrival timestamp for the next auto-basic.
+  //   • `basicAttackLikelyUnderway` (carried from combat state) materially affects the model: when true at depth 0, the game's auto-basic is
+  //     mid-flight and lands at the start of the first action. When false (cold start), no auto-basic is credited until the planner explicitly
+  //     issues a `basic` action.
+  //   • During a `skill` or `skill_charge` action's cast/channel window, auto-basics are SUPPRESSED in-game; the simulator credits no basics
+  //     during cast and reschedules `nextBasicReadyAtSec = end_of_action + swingInterval` (so a basic that "would have" landed during cast is
+  //     consumed by the cast, matching observed behavior). This is the conservative model the user explicitly requested.
+  //   • Carry-over: when `simState.basicAttackLikelyUnderway === true` AND the action is a skill/charge AND `nextBasicReadyAtSec` has already
+  //     elapsed (or is exactly at start), credit ONE auto-basic at the START of the action. This is the only "free" basic the simulator credits.
+  //   • A `basic` action remains an explicit one-swing action; it consumes `swingInterval`, deals `expectedBasicHit * mobFactor`, and the next
+  //     auto-basic is scheduled `swingInterval` after it.
+  // AI CHANGED: Planner rewrite v1.2 — typed shred handling is now SURGICAL:
+  //   • Skills carry `immediateDamageByType` (and `dotPerSecByType`) from normalization so the simulator can boost ONLY the magic portion of
+  //     a skill's damage when magic-resist-shred is active. Previously the boost multiplied the WHOLE damage even when only part of it was
+  //     magic-typed, which over-credited multi-type skills and made shred follow-up feel handwavy.
   function plannerSeqSimulateAction(simState, action) {
     const next = {
       elapsedSec: simState.elapsedSec,
@@ -3383,8 +3481,10 @@
       mpWasted: simState.mpWasted,
       hpLost: simState.hpLost,
       mobFactor: simState.mobFactor,
-      // AI CHANGED: Planner rewrite v1.1 — interleaved basic-swing accounting state. Defaults to 0 when missing so callers using older sim shapes still work.
-      basicSwingAccumulatorSec: Number.isFinite(simState.basicSwingAccumulatorSec) ? simState.basicSwingAccumulatorSec : 0,
+      // AI CHANGED: Planner rewrite v1.2 — schedule-based basic-swing model. Carries scheduled arrival time of the next auto-basic plus telemetry totals.
+      nextBasicReadyAtSec: Number.isFinite(simState.nextBasicReadyAtSec)
+        ? simState.nextBasicReadyAtSec
+        : (Number.isFinite(simState.basicSwingIntervalSec) && simState.basicSwingIntervalSec > 0 ? simState.basicSwingIntervalSec : 1),
       extraBasicSwingsTotal: Number.isFinite(simState.extraBasicSwingsTotal) ? simState.extraBasicSwingsTotal : 0,
       extraBasicDamageTotal: Number.isFinite(simState.extraBasicDamageTotal) ? simState.extraBasicDamageTotal : 0
     };
@@ -3392,6 +3492,30 @@
     let actionTimeSec = 0;
     let damageDealt = 0;
     let action2 = Object.assign({}, action);
+    // AI CHANGED: Planner rewrite v1.2 — carry-over auto-basic credit (the ONE case where the simulator credits an "interleaved" basic): when the
+    // hero entered the sim with `basicAttackLikelyUnderway === true` AND the planner's first action is a skill/charge, credit one auto-basic at
+    // the start of that action. After this single credit the underway flag is cleared so the rest of the sequence is fully under the planner's control.
+    let extraBasicSwings = 0;
+    let extraBasicDamage = 0;
+    const interleaveEnabled = !(
+      Config.planner &&
+      Config.planner.sequencePlanner &&
+      Config.planner.sequencePlanner.simBasicSwingsBetweenActions === false
+    );
+    if (
+      interleaveEnabled &&
+      simState.basicAttackLikelyUnderway === true &&
+      (action.kind === "skill" || action.kind === "skill_charge") &&
+      Number.isFinite(next.expectedBasicHit) &&
+      next.expectedBasicHit > 0 &&
+      // The carry-over basic only counts when it would have landed at-or-before the action's start (which is `simState.elapsedSec`).
+      next.nextBasicReadyAtSec <= simState.elapsedSec + 1e-9
+    ) {
+      const hit = next.expectedBasicHit * (Number.isFinite(next.mobFactor) ? next.mobFactor : 1);
+      damageDealt += hit;
+      extraBasicSwings += 1;
+      extraBasicDamage += hit;
+    }
     if (action.kind === "basic") {
       actionTimeSec = swingInterval;
       if (Number.isFinite(next.expectedBasicHit)) {
@@ -3407,12 +3531,32 @@
         const dotWindow = Math.max(0, Math.min(s.dotDurationSec, remHorizon));
         damageDealt += s.dotPerSec * dotWindow;
       }
-      // Magic-resist shred boosts magic skills already active.
-      if (next.targetFlags.hasMagicResistShred && s.damageType === "magic") {
-        const boost = Number.isFinite(Config.planner.sequencePlanner.archerSemantics.piercingStrike && Config.planner.sequencePlanner.archerSemantics.piercingStrike.followUpMagicDamageBoost)
+      // AI CHANGED: Planner rewrite v1.2 — typed shred boost. Apply ONLY to the magic-typed portion of this skill's damage instead of
+      // multiplying the whole damageDealt. `immediateDamageByType.magic` is populated at normalization time when an effect's `damageType === "magic"`.
+      if (next.targetFlags.hasMagicResistShred) {
+        const boost = Number.isFinite(Config.planner.sequencePlanner.archerSemantics && Config.planner.sequencePlanner.archerSemantics.piercingStrike && Config.planner.sequencePlanner.archerSemantics.piercingStrike.followUpMagicDamageBoost)
           ? Config.planner.sequencePlanner.archerSemantics.piercingStrike.followUpMagicDamageBoost
           : 0.2;
-        damageDealt *= (1 + boost);
+        const byType = s.immediateDamageByType || null;
+        const magicImmediate = byType && Number.isFinite(byType.magic) ? byType.magic : 0;
+        if (magicImmediate > 0) {
+          damageDealt += magicImmediate * boost;
+        } else if (!byType && s.damageType === "magic" && Number.isFinite(s.immediateDamage) && s.immediateDamage > 0) {
+          // Back-compat path for hand-built skills in tests/synthetic state without `immediateDamageByType`.
+          damageDealt += s.immediateDamage * boost;
+        }
+        // DoT magic portion within the lingering shred window.
+        const dotByType = s.dotPerSecByType || null;
+        const magicDotPerSec = dotByType && Number.isFinite(dotByType.magic) ? dotByType.magic : 0;
+        if (magicDotPerSec > 0 && s.dotDurationSec > 0) {
+          const remHorizon2 = (Config.planner.sequencePlanner.maxHorizonSec || 6) - (next.elapsedSec + actionTimeSec);
+          const dotWindow2 = Math.max(0, Math.min(s.dotDurationSec, remHorizon2));
+          // Shred boost only counts for the part of the DoT inside the shred remaining window — clamp by `magicResistShredRemainingSec`.
+          const shredOverlapSec = Math.max(0, Math.min(dotWindow2, next.targetFlags.magicResistShredRemainingSec));
+          if (shredOverlapSec > 0) {
+            damageDealt += magicDotPerSec * shredOverlapSec * boost;
+          }
+        }
       }
       // AoE: planner's target is a single fingerprint, but AoE still kills faster against multi-mob; we add a fraction of "extra hit damage" against extras.
       if (s.isAoe && Number.isFinite(next.enemyCount) && next.enemyCount > 1) {
@@ -3473,45 +3617,6 @@
       }
       action2.simChargeSec = +chargeSec.toFixed(3);
     }
-    // AI CHANGED: Planner rewrite v1.1 — interleaved basic-swing accounting.
-    //   Logic (bullet-list):
-    //     • Config gate `Config.planner.sequencePlanner.simBasicSwingsBetweenActions` (default true) controls whether basics fire alongside skill casts.
-    //     • `basic` action: it IS one swing; reset accumulator to 0 (the next swing is `swingInterval` away from now).
-    //     • `skill` action (instant or short cast): the game's auto-attack continues during the brief skill animation; we accumulate `actionTimeSec`
-    //       and emit one basic-hit per `swingInterval`. This is the case the user explicitly called out ("game often auto-starts basic attack").
-    //     • `skill_charge` action: holding a charge suppresses auto-attack in-game (you're holding the bow / channel), so we DO NOT add basics during
-    //       the charge window; we also clear the accumulator so the swing timer effectively restarts when the charge ends.
-    //     • Interleaved swings benefit only from `expectedBasicHit * mobFactor` (no debuff scaling) — basics are not magic-shred amplified.
-    //     • Telemetry: per-action `extraBasicSwings` + `extraBasicDamage`; cumulative `extraBasicSwingsTotal` + `extraBasicDamageTotal` on simState.
-    //   Why this matters: previously TTK estimates for any short-cast skill ignored the basic damage that fires alongside, making short-cast openers
-    //   look weaker than they really are vs basic-only sequences; and full-charge Sniper Shot looked artificially cheap vs partial-release.
-    let extraBasicSwings = 0;
-    let extraBasicDamage = 0;
-    const interleaveEnabled = !(
-      Config.planner &&
-      Config.planner.sequencePlanner &&
-      Config.planner.sequencePlanner.simBasicSwingsBetweenActions === false
-    );
-    if (interleaveEnabled) {
-      if (action.kind === "skill") {
-        next.basicSwingAccumulatorSec += actionTimeSec;
-        if (Number.isFinite(next.expectedBasicHit) && next.expectedBasicHit > 0 && swingInterval > 0) {
-          while (next.basicSwingAccumulatorSec >= swingInterval) {
-            const hit = next.expectedBasicHit * (Number.isFinite(next.mobFactor) ? next.mobFactor : 1);
-            damageDealt += hit;
-            extraBasicSwings += 1;
-            extraBasicDamage += hit;
-            next.basicSwingAccumulatorSec -= swingInterval;
-          }
-        }
-      } else if (action.kind === "basic") {
-        // The action itself IS the basic swing; reset accumulator so the next swing is `swingInterval` away.
-        next.basicSwingAccumulatorSec = 0;
-      } else if (action.kind === "skill_charge") {
-        // Charge hold preempts the auto-attack; the swing timer is reset by the channel.
-        next.basicSwingAccumulatorSec = 0;
-      }
-    }
     next.extraBasicSwingsTotal += extraBasicSwings;
     next.extraBasicDamageTotal += extraBasicDamage;
     action2.extraBasicSwings = extraBasicSwings;
@@ -3560,7 +3665,11 @@
     }
     next.elapsedSec += actionTimeSec;
     next.lastActionTimeSec = actionTimeSec;
-    // No longer "basic likely underway" once we take any explicit action.
+    // AI CHANGED: Planner rewrite v1.2 — schedule the next auto-basic after this action resolves.
+    //   • basic action: next swing one cycle after the swing landed.
+    //   • skill / skill_charge: the cast/channel preempts AA in-game; next auto-basic is one cycle after the cast ends.
+    next.nextBasicReadyAtSec = next.elapsedSec + swingInterval;
+    // Taking any explicit action consumes the "basic-likely-underway" hint exactly once (either credited as carry-over above or burned by the cast).
     next.basicAttackLikelyUnderway = false;
     // Track tempo / mana waste tiebreaks.
     if (action.kind !== "basic" && action.skill && action.skill.manaCost > 0) {
@@ -3600,9 +3709,16 @@
       mpWasted: 0,
       hpLost: 0,
       mobFactor: combatState.mobFactor,
-      // AI CHANGED: Planner rewrite v1.1 — initial interleaved basic-swing accounting state. Start at 0 to remain conservative on TTK
-      // (don't credit a pre-baked auto-basic that may not have actually landed). The simulator advances this per-action.
-      basicSwingAccumulatorSec: 0,
+      // AI CHANGED: Planner rewrite v1.2 — schedule-based basic-swing accounting.
+      //   • When `basicAttackLikelyUnderway` is true the in-flight game auto-basic is essentially "now" (next swing at 0s); the simulator
+      //     uses this to credit ONE carry-over basic if the planner's first action is a skill/charge (see plannerSeqSimulateAction).
+      //   • Otherwise (cold start), the next auto-basic would be one full swing-interval away — but it never lands unless the planner
+      //     explicitly issues a `basic` action. This matches the user-requested conservative model.
+      nextBasicReadyAtSec: combatState.player && combatState.player.basicAttackLikelyUnderway === true
+        ? 0
+        : (Number.isFinite(combatState.player && combatState.player.basicSwingIntervalSec) && combatState.player.basicSwingIntervalSec > 0
+            ? combatState.player.basicSwingIntervalSec
+            : 1),
       extraBasicSwingsTotal: 0,
       extraBasicDamageTotal: 0
     };
@@ -3632,6 +3748,33 @@
         });
         for (let c = 0; c < candidates.length; c += 1) {
           const cand = candidates[c];
+          // AI CHANGED: Planner rewrite v1.2 — capture a PRE-action snapshot from node.sim so semantic tie-breaks can read the simulated moment
+          // when this action would fire (target HP %, effective attackers, pressure, etc.) instead of always reading the initial combat state.
+          const preTargetHpPct = Number.isFinite(node.sim.targetHpCur) && Number.isFinite(node.sim.targetHpMax) && node.sim.targetHpMax > 0
+            ? +(node.sim.targetHpCur / node.sim.targetHpMax).toFixed(4)
+            : null;
+          const prePlayerHpPct = Number.isFinite(node.sim.playerHpCur) && Number.isFinite(node.sim.playerHpMax) && node.sim.playerHpMax > 0
+            ? +(node.sim.playerHpCur / node.sim.playerHpMax).toFixed(4)
+            : null;
+          const preDistractReliefCount = Config.planner.sequencePlanner.archerSemantics && Config.planner.sequencePlanner.archerSemantics.distractingShot && Number.isFinite(Config.planner.sequencePlanner.archerSemantics.distractingShot.activeAttackerReliefCount)
+            ? Config.planner.sequencePlanner.archerSemantics.distractingShot.activeAttackerReliefCount
+            : 1;
+          const preEffectiveActiveAttackers = Number.isFinite(node.sim.activeAttackers)
+            ? Math.max(0, node.sim.activeAttackers - (node.sim.targetFlags && node.sim.targetFlags.hasDistract ? preDistractReliefCount : 0))
+            : null;
+          const preSnapshot = {
+            elapsedSec: +node.sim.elapsedSec.toFixed(3),
+            targetHpPct: preTargetHpPct,
+            playerHpPct: prePlayerHpPct,
+            pressure: Number.isFinite(node.sim.pressure) ? +node.sim.pressure.toFixed(3) : null,
+            activeAttackers: Number.isFinite(node.sim.activeAttackers) ? node.sim.activeAttackers : null,
+            effectiveActiveAttackers: preEffectiveActiveAttackers,
+            enemyCount: Number.isFinite(node.sim.enemyCount) ? node.sim.enemyCount : null,
+            hasMagicResistShred: !!(node.sim.targetFlags && node.sim.targetFlags.hasMagicResistShred),
+            hasSlow: !!(node.sim.targetFlags && node.sim.targetFlags.hasSlow),
+            hasDistract: !!(node.sim.targetFlags && node.sim.targetFlags.hasDistract),
+            basicAttackLikelyUnderway: node.sim.basicAttackLikelyUnderway === true
+          };
           const stepped = plannerSeqSimulateAction(node.sim, cand);
           const nextNode = {
             sim: stepped.next,
@@ -3644,9 +3787,11 @@
               chargeReleaseFraction: Number.isFinite(cand.chargeReleaseFraction) ? cand.chargeReleaseFraction : null,
               actionTimeSec: +stepped.actionTimeSec.toFixed(3),
               damageDealt: +stepped.damageDealt.toFixed(2),
-              // AI CHANGED: Planner rewrite v1.1 — surface interleaved-basic telemetry per step (always populated; zeros when interleave disabled or N/A).
+              // AI CHANGED: Planner rewrite v1.2 — carry-over basic telemetry per step (1 only when basicAttackLikelyUnderway credited it at depth 0).
               extraBasicSwings: Number.isFinite(stepped.action.extraBasicSwings) ? stepped.action.extraBasicSwings : 0,
-              extraBasicDamage: Number.isFinite(stepped.action.extraBasicDamage) ? stepped.action.extraBasicDamage : 0
+              extraBasicDamage: Number.isFinite(stepped.action.extraBasicDamage) ? stepped.action.extraBasicDamage : 0,
+              // AI CHANGED: Planner rewrite v1.2 — pre-action simulated snapshot so scoring uses the current sequence moment, not just initial combat state.
+              pre: preSnapshot
             }]),
             cumulativeDamage: node.cumulativeDamage + stepped.damageDealt,
             killedAtSec: null
@@ -3730,7 +3875,20 @@
     // Tempo tiebreak — prefer shorter actual elapsed time when TTK is similar.
     const tieTempoSec = (Number.isFinite(sp.tieBreakTempoCoefSec) ? sp.tieBreakTempoCoefSec : 0.05) * sim.elapsedSec;
     // Skill-own semantic nudges. (NOT combos — just intrinsic skill traits.)
+    // AI CHANGED: Planner rewrite v1.2 — semantic tie-breaks now consult per-action `pre` simulated state (target HP %, effective attackers,
+    // pressure, enemy count) so e.g. Sniper Shot rewards a finisher window EARNED earlier in the sequence, and Distracting Shot value reflects
+    // the simulated attacker pressure at the moment of cast. When `pre` is missing (legacy callers / hand-built nodes), we fall back to the
+    // initial combatState values so behavior is back-compat.
     let semanticAdjSec = 0;
+    function preOrInitialNum(pre, preKey, initial, fallback) {
+      if (pre && Number.isFinite(pre[preKey])) {
+        return pre[preKey];
+      }
+      if (Number.isFinite(initial)) {
+        return initial;
+      }
+      return fallback;
+    }
     for (let i = 0; i < node.actions.length; i += 1) {
       const a = node.actions[i];
       if (!a || !a.skill || !a.skill.normalizedKey) {
@@ -3740,32 +3898,50 @@
       if (!sem) {
         continue;
       }
+      const pre = a.pre || null;
       if (sem.__semKey === "snipershot") {
-        // Penalize full-charge under pressure.
+        // Penalize full-charge under pressure — use simulated pressure at moment-of-cast (pre-snapshot) when available, else initial.
         const isFullCharge = a.chargeMode === "full" || (a.chargeReleaseFraction != null && a.chargeReleaseFraction >= 0.95);
-        if (isFullCharge && combatState.fight.pressure >= 1) {
+        const effPressure = preOrInitialNum(pre, "pressure", combatState.fight.pressure, 0);
+        if (isFullCharge && effPressure >= 1) {
           semanticAdjSec += Number.isFinite(sem.chargeFullPressurePenaltySec) ? sem.chargeFullPressurePenaltySec : 1.6;
         }
-        // Reward as finisher when target HP low.
-        const targetHpPct = Number.isFinite(combatState.target.hpPct) ? combatState.target.hpPct : null;
-        if (Number.isFinite(targetHpPct) && targetHpPct <= (Number.isFinite(sem.finisherTargetHpPctMax) ? sem.finisherTargetHpPctMax : 0.45)) {
+        // Reward as finisher when target HP is low AT THE TIME this action fires — this is the most simulation-sensitive case (the planner
+        // can EARN a finisher window over the previous actions in the sequence and the bonus then unlocks the Sniper Shot).
+        const effTargetHpPct = pre && Number.isFinite(pre.targetHpPct)
+          ? pre.targetHpPct
+          : (Number.isFinite(combatState.target.hpPct) ? combatState.target.hpPct : null);
+        if (Number.isFinite(effTargetHpPct) && effTargetHpPct <= (Number.isFinite(sem.finisherTargetHpPctMax) ? sem.finisherTargetHpPctMax : 0.45)) {
           semanticAdjSec -= Number.isFinite(sem.finisherBonusSec) ? sem.finisherBonusSec : 0.8;
         }
       } else if (sem.__semKey === "distractingshot") {
-        // Bad calm opener (low pressure, fresh target, single attacker).
-        if (i === 0 && combatState.fight.pressure < 0.5 && (combatState.fight.activeAttackerCount || 0) <= 1) {
+        // Use simulated effective attacker count + pressure at the moment of cast.
+        const effAttackers = pre && Number.isFinite(pre.effectiveActiveAttackers)
+          ? pre.effectiveActiveAttackers
+          : (Number.isFinite(combatState.fight.activeAttackerCount) ? combatState.fight.activeAttackerCount : 0);
+        const effPressure = preOrInitialNum(pre, "pressure", combatState.fight.pressure, 0);
+        // Bad calm opener (low pressure, fresh target, single attacker). Use elapsedSec === 0 instead of index so a Distracting Shot inserted
+        // later in the sequence is judged on the simulated moment, not its array index.
+        const isOpenerMoment = pre ? pre.elapsedSec === 0 : (i === 0);
+        if (isOpenerMoment && effPressure < 0.5 && effAttackers <= 1) {
           semanticAdjSec += Number.isFinite(sem.calmOpenerPenaltySec) ? sem.calmOpenerPenaltySec : 1.4;
         }
-        // Good under active-attacker pressure (>=2).
-        if ((combatState.fight.activeAttackerCount || 0) >= 2 || combatState.fight.pressure >= 1.2) {
+        // Good under active-attacker pressure (>=2). Use simulated values so distract repeats / mid-sequence casts can still be valued.
+        if (effAttackers >= 2 || effPressure >= 1.2) {
           semanticAdjSec -= Number.isFinite(sem.pressureReliefBonusSec) ? sem.pressureReliefBonusSec : 1.2;
         }
       } else if (sem.__semKey === "fanvolley") {
-        // Penalize when only one enemy / one attacker (true AoE wasted) AND mana heavy.
-        if ((combatState.fight.enemiesPresent || 0) <= 1) {
+        // Penalize when only one enemy / one attacker (true AoE wasted) AND mana heavy — use simulated enemy/attacker counts from pre state.
+        const effEnemyCount = pre && Number.isFinite(pre.enemyCount)
+          ? pre.enemyCount
+          : (Number.isFinite(combatState.fight.enemiesPresent) ? combatState.fight.enemiesPresent : 0);
+        const effActiveAttackers = pre && Number.isFinite(pre.effectiveActiveAttackers)
+          ? pre.effectiveActiveAttackers
+          : (Number.isFinite(combatState.fight.activeAttackerCount) ? combatState.fight.activeAttackerCount : 0);
+        if (effEnemyCount <= 1) {
           semanticAdjSec += Number.isFinite(sem.singleTargetMisusePenaltySec) ? sem.singleTargetMisusePenaltySec : 1.8;
         }
-        if ((combatState.fight.activeAttackerCount || 0) <= 1 && (combatState.fight.enemiesPresent || 0) <= 2) {
+        if (effActiveAttackers <= 1 && effEnemyCount <= 2) {
           semanticAdjSec += Number.isFinite(sem.mpHeavyPenaltySec) ? sem.mpHeavyPenaltySec : 0.4;
         }
       }
