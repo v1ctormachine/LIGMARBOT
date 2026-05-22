@@ -1966,12 +1966,12 @@
         };
         const gated = [
           {
-            name: "maybeApplySupportPrebuffsOnNewTile",
-            ok: fnSrc(typeof maybeApplySupportPrebuffsOnNewTile === "function" ? maybeApplySupportPrebuffsOnNewTile : null).indexOf("isAutoFarmEasyMode") >= 0
+            name: "maybeApplyPrebuffsForNewMobTile",
+            ok: fnSrc(typeof maybeApplyPrebuffsForNewMobTile === "function" ? maybeApplyPrebuffsForNewMobTile : null).indexOf("isAutoFarmEasyMode") >= 0
           },
           {
-            name: "runPermanentSelfLongBuffRefreshPass",
-            ok: fnSrc(typeof runPermanentSelfLongBuffRefreshPass === "function" ? runPermanentSelfLongBuffRefreshPass : null).indexOf("isAutoFarmEasyMode") >= 0
+            name: "maintainLongbuffsOutOfCombat",
+            ok: fnSrc(typeof maintainLongbuffsOutOfCombat === "function" ? maintainLongbuffsOutOfCombat : null).indexOf("isAutoFarmEasyMode") >= 0
           },
           {
             name: "maybeCombatSafetyBuffInterrupt",
@@ -1980,6 +1980,10 @@
           {
             name: "processCombatSafetyHpSpikeIfNeeded",
             ok: fnSrc(typeof processCombatSafetyHpSpikeIfNeeded === "function" ? processCombatSafetyHpSpikeIfNeeded : null).indexOf("isAutoFarmEasyMode") >= 0
+          },
+          {
+            name: "waitForSafeModeExploreResourcesAndShortPrebuffs",
+            ok: fnSrc(typeof waitForSafeModeExploreResourcesAndShortPrebuffs === "function" ? waitForSafeModeExploreResourcesAndShortPrebuffs : null).indexOf("isAutoFarmEasyMode") >= 0
           }
         ];
         const missing = gated.filter(function (g) {
@@ -1998,6 +2002,301 @@
       } catch (err) {
         Logger.warn("TEST", "easy_mode_disables_buffs threw", err);
         addCheck("easy_mode_disables_buffs", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Buff system v1.0.5-alpha — duration-based policy split. <60s ⇒ prebuff, >=60s ⇒ longbuff, safety reserved (Windy Dome) excluded.
+      try {
+        if (typeof classifySupportBuffPolicyForRow !== "function") {
+          addCheck("support_buff_policy_split", false, { reason: "classifier_missing" }, false);
+        } else {
+          const longMin = Number.isFinite(Config.supportBuffs && Config.supportBuffs.longDurationMinSec)
+            ? Config.supportBuffs.longDurationMinSec
+            : 60;
+          // Use a synthetic stub row with the duration injected via the "force long unknown" path so we don't depend on real DB rows.
+          // We bypass the DB resolver by leveraging the named forceLongDuration substring (always present).
+          const fakeShortRow = {
+            kind: "skill",
+            slot: 0,
+            name: "TestShortPrebuff",
+            isAttack: false,
+            isSupport: true,
+            targetsSelf: true,
+            tags: ["support", "self"],
+            paramsRaw: { duration: { value: 30, raw: "30 seconds" } },
+            description: "Restores stamina for 30 seconds.",
+            castTimeSec: 0.5
+          };
+          const fakeLongRow = {
+            kind: "skill",
+            slot: 1,
+            name: "TestLongBuff",
+            isAttack: false,
+            isSupport: true,
+            targetsSelf: true,
+            tags: ["support", "self"],
+            paramsRaw: { duration: { value: 600, raw: "600 seconds" } },
+            description: "Bless self for 600 seconds.",
+            castTimeSec: 1
+          };
+          const fakeSafetyRow = {
+            kind: "skill",
+            slot: 2,
+            name: "Windy Dome",
+            isAttack: false,
+            isSupport: true,
+            targetsSelf: true,
+            tags: ["support", "self"],
+            paramsRaw: { duration: { value: 8, raw: "8 seconds" } },
+            description: "Creates a wind shield around the caster.",
+            castTimeSec: 0
+          };
+          const cShort = classifySupportBuffPolicyForRow(fakeShortRow, "");
+          const cLong = classifySupportBuffPolicyForRow(fakeLongRow, "");
+          const cSafety = classifySupportBuffPolicyForRow(fakeSafetyRow, "");
+          const splitOk =
+            cShort.policy === "prebuff" &&
+            cShort.durationSec < longMin &&
+            cLong.policy === "longbuff" &&
+            cLong.durationSec >= longMin &&
+            cSafety.policy === "excluded_safety";
+          addCheck(
+            "support_buff_policy_split",
+            splitOk,
+            {
+              longDurationMinSec: longMin,
+              shortClass: cShort,
+              longClass: cLong,
+              safetyClass: cSafety
+            },
+            false
+          );
+        }
+      } catch (err) {
+        Logger.warn("TEST", "support_buff_policy_split threw", err);
+        addCheck("support_buff_policy_split", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Buff system v1.0.5-alpha — prebuff list contains ONLY policy=prebuff (no longbuffs leaked in).
+      try {
+        const root = Config.supportBuffs;
+        const longMin = Number.isFinite(root && root.longDurationMinSec) ? root.longDurationMinSec : 60;
+        const listFn = typeof buildOrderedNewTilePrebuffTargets === "function" ? buildOrderedNewTilePrebuffTargets : null;
+        if (!listFn) {
+          addCheck("prebuff_list_excludes_longbuffs", false, { reason: "fn_missing" }, false);
+        } else {
+          const list = listFn();
+          let bad = 0;
+          for (let i = 0; i < list.length; i++) {
+            if (Number.isFinite(list[i].dur) && list[i].dur >= longMin) bad += 1;
+          }
+          addCheck(
+            "prebuff_list_excludes_longbuffs",
+            bad === 0,
+            { listLength: list.length, longMin: longMin, longbuffsLeaked: bad },
+            false
+          );
+        }
+      } catch (err) {
+        Logger.warn("TEST", "prebuff_list_excludes_longbuffs threw", err);
+        addCheck("prebuff_list_excludes_longbuffs", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Buff system v1.0.5-alpha — prebuff pipeline is TILE-BASED (does NOT call duration-tracking skip helper).
+      try {
+        const fnSrc = function (fn) {
+          try {
+            return typeof fn === "function" ? String(fn) : "";
+          } catch (e) {
+            return "";
+          }
+        };
+        const src = fnSrc(typeof maybeApplyPrebuffsForNewMobTile === "function" ? maybeApplyPrebuffsForNewMobTile : null);
+        const referencesTileKey = src.indexOf("getSupportBuffCurrentTileKey") >= 0 && src.indexOf("rt.prebuff.tileKey") >= 0;
+        const doesNotUseDurationSkip = src.indexOf("supportBuffShouldSkipRecastFromTracking") < 0;
+        addCheck(
+          "prebuff_policy_tile_based",
+          referencesTileKey && doesNotUseDurationSkip,
+          {
+            referencesTileKey: referencesTileKey,
+            doesNotCallDurationSkipHelper: doesNotUseDurationSkip
+          },
+          false
+        );
+      } catch (err) {
+        Logger.warn("TEST", "prebuff_policy_tile_based threw", err);
+        addCheck("prebuff_policy_tile_based", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Buff system v1.0.5-alpha — safe-mode prebuff wait lives on the MOB-TILE prebuff path (wait-all-ready), and is NOT invoked from the empty-tile explore gate anymore.
+      try {
+        const fnSrc = function (fn) {
+          try {
+            return typeof fn === "function" ? String(fn) : "";
+          } catch (e) {
+            return "";
+          }
+        };
+        const mobTileSrc = fnSrc(typeof maybeApplyPrebuffsForNewMobTile === "function" ? maybeApplyPrebuffsForNewMobTile : null);
+        const exploreSrc = fnSrc(typeof waitForSafeModeExploreResourcesAndShortPrebuffs === "function" ? waitForSafeModeExploreResourcesAndShortPrebuffs : null);
+        const mobTileHasWaitAll = mobTileSrc.indexOf("safe") >= 0 && mobTileSrc.indexOf("safeModeWaitAllReadyMs") >= 0 && mobTileSrc.indexOf("isActionBarSlotShowingCooldown") >= 0;
+        const exploreDoesNotCastShortPrebuffs =
+          exploreSrc.indexOf("waitForSafeModeShortPrebuffCooldownsThenCast") < 0 &&
+          exploreSrc.indexOf("clickActionBarSlot(") < 0 &&
+          exploreSrc.indexOf("shortPrebuffMovedToMobTile") >= 0;
+        addCheck(
+          "safe_mode_prebuff_wait_on_mob_tile",
+          mobTileHasWaitAll && exploreDoesNotCastShortPrebuffs,
+          {
+            mobTileWaitAllPresent: mobTileHasWaitAll,
+            exploreGateNoShortPrebuffCast: exploreDoesNotCastShortPrebuffs
+          },
+          false
+        );
+      } catch (err) {
+        Logger.warn("TEST", "safe_mode_prebuff_wait_on_mob_tile threw", err);
+        addCheck("safe_mode_prebuff_wait_on_mob_tile", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Buff system v1.0.5-alpha — support cast wait uses cast-bar + castTimeSec, not just slot cooldown.
+      try {
+        const fnSrc = function (fn) {
+          try {
+            return typeof fn === "function" ? String(fn) : "";
+          } catch (e) {
+            return "";
+          }
+        };
+        const resolvedSrc = fnSrc(typeof waitForSupportCastResolved === "function" ? waitForSupportCastResolved : null);
+        const usesCastBar = resolvedSrc.indexOf("readVisibleCombatCastBarTexts") >= 0;
+        const usesCastTime = resolvedSrc.indexOf("castTimeSec") >= 0;
+        const hasFinishPhase = resolvedSrc.indexOf("cast_bar_cleared") >= 0;
+        const hasPostSettle = resolvedSrc.indexOf("postSettleMs") >= 0;
+        addCheck(
+          "support_cast_resolution_wait_uses_cast_bar",
+          usesCastBar && usesCastTime && hasFinishPhase && hasPostSettle,
+          {
+            readsCastBar: usesCastBar,
+            usesCastTimeSec: usesCastTime,
+            finishesOnBarClear: hasFinishPhase,
+            hasPostCastSettle: hasPostSettle
+          },
+          false
+        );
+      } catch (err) {
+        Logger.warn("TEST", "support_cast_resolution_wait_uses_cast_bar threw", err);
+        addCheck("support_cast_resolution_wait_uses_cast_bar", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Buff system v1.0.5-alpha — longbuff maintenance is OOC-only and uses the longbuff policy bucket.
+      try {
+        const fnSrc = function (fn) {
+          try {
+            return typeof fn === "function" ? String(fn) : "";
+          } catch (e) {
+            return "";
+          }
+        };
+        const src = fnSrc(typeof maintainLongbuffsOutOfCombat === "function" ? maintainLongbuffsOutOfCombat : null);
+        const oocOnly = src.indexOf("not_clear_tile") >= 0 && src.indexOf('liveState.combat.enemyCount !== 0') >= 0;
+        const usesPolicyBucket = src.indexOf('buildSupportBuffMetaListForPolicy("longbuff")') >= 0;
+        addCheck(
+          "longbuff_maintenance_ooc_only",
+          oocOnly && usesPolicyBucket,
+          { oocOnlyGuard: oocOnly, usesPolicyBucket: usesPolicyBucket },
+          false
+        );
+      } catch (err) {
+        Logger.warn("TEST", "longbuff_maintenance_ooc_only threw", err);
+        addCheck("longbuff_maintenance_ooc_only", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Buff system v1.0.5-alpha — Easy mode runtime-call check: both pipelines return easy_mode skip.
+      try {
+        if (
+          Runtime.autoFarm &&
+          typeof maybeApplyPrebuffsForNewMobTile === "function" &&
+          typeof maintainLongbuffsOutOfCombat === "function"
+        ) {
+          const prevMode = Runtime.autoFarm.combatMode;
+          Runtime.autoFarm.combatMode = "easy";
+          const mobState = {
+            combat: { enemyCount: 3 },
+            player: { hp: { valid: true, pct: 1 }, mp: { valid: true, pct: 1 } },
+            session: {}
+          };
+          const oocState = {
+            combat: { enemyCount: 0 },
+            player: { hp: { valid: true, pct: 1 }, mp: { valid: true, pct: 1 } },
+            session: {}
+          };
+          const prebuffRes = await maybeApplyPrebuffsForNewMobTile(mobState);
+          const longbuffRes = await maintainLongbuffsOutOfCombat(oocState);
+          Runtime.autoFarm.combatMode = prevMode;
+          const easyOk =
+            prebuffRes && prebuffRes.skipped === true && prebuffRes.reason === "easy_mode" &&
+            longbuffRes && longbuffRes.skipped === true && longbuffRes.reason === "easy_mode";
+          addCheck(
+            "easy_mode_no_buff_systems",
+            easyOk,
+            { prebuffResult: prebuffRes, longbuffResult: longbuffRes },
+            false
+          );
+        } else {
+          addCheck("easy_mode_no_buff_systems", false, { reason: "fns_or_runtime_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "easy_mode_no_buff_systems threw", err);
+        addCheck("easy_mode_no_buff_systems", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Buff system v1.0.5-alpha — tile gate prevents re-prebuffing the SAME tile twice in a row.
+      try {
+        if (
+          Runtime.autoFarm &&
+          typeof maybeApplyPrebuffsForNewMobTile === "function" &&
+          typeof getSupportBuffLineRuntime === "function"
+        ) {
+          const prevMode = Runtime.autoFarm.combatMode;
+          Runtime.autoFarm.combatMode = "fast";
+          const rt = getSupportBuffLineRuntime();
+          const prevKey = rt.prebuff.tileKey;
+          const prevAt = rt.prebuff.tileAt;
+          const prevResult = rt.prebuff.lastResult;
+          // Force the current tile to match by spoofing numeric coords (the tile key uses Number.isFinite check).
+          const prevCoords = Runtime.exploration ? Runtime.exploration.lastKnownCoords : null;
+          if (Runtime.exploration) {
+            Runtime.exploration.lastKnownCoords = { x: -987654, y: -123456 };
+          }
+          rt.prebuff.tileKey = "-987654;-123456";
+          rt.prebuff.tileAt = Date.now();
+          const mobState = {
+            combat: { enemyCount: 3 },
+            player: { hp: { valid: true, pct: 1 }, mp: { valid: true, pct: 1 } },
+            session: {}
+          };
+          const res = await maybeApplyPrebuffsForNewMobTile(mobState);
+          // Restore.
+          if (Runtime.exploration) {
+            Runtime.exploration.lastKnownCoords = prevCoords;
+          }
+          rt.prebuff.tileKey = prevKey;
+          rt.prebuff.tileAt = prevAt;
+          rt.prebuff.lastResult = prevResult;
+          Runtime.autoFarm.combatMode = prevMode;
+          const sameTileSkipped =
+            res && res.skipped === true && res.reason === "tile_already_prebuffed";
+          addCheck(
+            "prebuff_tile_gate_skips_same_tile",
+            sameTileSkipped,
+            { result: res },
+            false
+          );
+        } else {
+          addCheck("prebuff_tile_gate_skips_same_tile", false, { reason: "fns_or_runtime_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "prebuff_tile_gate_skips_same_tile threw", err);
+        addCheck("prebuff_tile_gate_skips_same_tile", false, { error: String(err && err.message ? err.message : err) }, false);
       }
 
       // AI CHANGED: Night mode — persistence round-trip via the shared autoFarmUi blob (key `ligmarbot.autoFarmUi.v1`).

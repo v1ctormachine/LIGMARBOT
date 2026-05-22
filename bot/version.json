@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "1.0.4-alpha",
-    "description":  "audit fixes: sleep yield, target-swap progress, charge race, HP-spike, potion CD, map open, ring scan, health throttle, log dedup",
-    "builtAt":  "2026-05-22T10:12:40.3777735+03:00",
+    "version":  "1.0.5-alpha",
+    "description":  "buff policy split: OOC longbuffs, tile prebuffs, safer support cast wait",
+    "builtAt":  "2026-05-22T14:14:20.0770225+03:00",
     "history":  [
+                    {
+                        "version":  "1.0.5-alpha",
+                        "description":  "buff policy split: OOC longbuffs, tile prebuffs, safer support cast wait",
+                        "date":  "2026-05-22T14:14:20.0770225+03:00"
+                    },
                     {
                         "version":  "1.0.4-alpha",
                         "description":  "audit fixes: sleep yield, target-swap progress, charge race, HP-spike, potion CD, map open, ring scan, health throttle, log dedup",
@@ -247,11 +252,6 @@
                         "version":  "0.3.181",
                         "description":  "Combat: post-retarget cancel after find-enemy retarget too",
                         "date":  "2026-05-13T15:55:19.9721273+03:00"
-                    },
-                    {
-                        "version":  "0.3.180",
-                        "description":  "TEST: Natural Sniper pass when fresh window picks other opener",
-                        "date":  "2026-05-13T15:45:44.2481895+03:00"
                     }
                 ]
 }

@@ -77,12 +77,25 @@
         failures: 0,
         lastResult: null
       },
-      // AI CHANGED: Support-buff line — `longSelfTracked` = assumed buff expiry by normalized skill name (permanent self renew + prebuff casts when `buffDurationTracking` is on); safety cast spacing; prebuff telemetry.
+      // AI CHANGED: Support-buff line — buff system rewrite (v1.0.5-alpha):
+      //   `longSelfTracked` = assumed-expiry map (long buffs >=60s, timer-driven, recast when remaining low)
+      //   `prebuff` = per-tile gate so a newly entered mob tile is prebuffed exactly once (tile-keyed, NOT duration-tracked)
+      //   `longbuff` = per-session flag for first OOC pass + bookkeeping
+      //   `safetyHpSpike*` = HP spike → safety skill (set by sustain observations)
       supportBuffLine: {
         longSelfTracked: {},
         lastSafetyBuffCastAt: 0,
         prebuffCastCount: 0,
-        // AI CHANGED: HP spike → safety skill — set by sustain observations, cleared when safety fires or fails.
+        prebuff: {
+          tileKey: null,
+          tileAt: null,
+          lastResult: null
+        },
+        longbuff: {
+          initialPassDone: false,
+          lastPassAt: null,
+          lastResult: null
+        },
         safetyHpSpikePending: false,
         safetyHpSpikeLost: null,
         safetyHpSpikeAt: null

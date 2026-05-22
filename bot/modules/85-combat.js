@@ -1929,6 +1929,7 @@
   }
 
   // AI CHANGED: Runtime slice for support-buff renew / safety / prebuff counters (see `Config.supportBuffs`).
+  // Buff system v1.0.5-alpha: `prebuff` is tile-keyed (`tileKey`/`tileAt`), `longbuff` is per-session state for the OOC long-buff maintenance pass, `longSelfTracked` still stores the timer map shared by long-buff renew.
   function getSupportBuffLineRuntime() {
     if (!Runtime.autoFarm.supportBuffLine || typeof Runtime.autoFarm.supportBuffLine !== "object") {
       Runtime.autoFarm.supportBuffLine = {
@@ -1956,7 +1957,64 @@
     if (!Object.prototype.hasOwnProperty.call(rt, "safetyHpSpikeAt")) {
       rt.safetyHpSpikeAt = null;
     }
+    // AI CHANGED: Buff system v1.0.5-alpha — tile-based prebuff gate (NOT duration-tracking-based).
+    if (!rt.prebuff || typeof rt.prebuff !== "object") {
+      rt.prebuff = { tileKey: null, tileAt: null, lastResult: null };
+    } else {
+      if (!Object.prototype.hasOwnProperty.call(rt.prebuff, "tileKey")) {
+        rt.prebuff.tileKey = null;
+      }
+      if (!Object.prototype.hasOwnProperty.call(rt.prebuff, "tileAt")) {
+        rt.prebuff.tileAt = null;
+      }
+      if (!Object.prototype.hasOwnProperty.call(rt.prebuff, "lastResult")) {
+        rt.prebuff.lastResult = null;
+      }
+    }
+    // AI CHANGED: Buff system v1.0.5-alpha — first OOC long-buff maintenance pass per AUTO session.
+    if (!rt.longbuff || typeof rt.longbuff !== "object") {
+      rt.longbuff = { initialPassDone: false, lastPassAt: null, lastResult: null };
+    } else {
+      if (!Object.prototype.hasOwnProperty.call(rt.longbuff, "initialPassDone")) {
+        rt.longbuff.initialPassDone = false;
+      }
+      if (!Object.prototype.hasOwnProperty.call(rt.longbuff, "lastPassAt")) {
+        rt.longbuff.lastPassAt = null;
+      }
+      if (!Object.prototype.hasOwnProperty.call(rt.longbuff, "lastResult")) {
+        rt.longbuff.lastResult = null;
+      }
+    }
     return rt;
+  }
+
+  // AI CHANGED: Buff system v1.0.5-alpha — derive a tile identity string for the per-tile prebuff gate. Prefers `Runtime.exploration.lastKnownCoords`; falls back to `"unknown_tile"` so retries do NOT re-trigger prebuff on the same tile.
+  function getSupportBuffCurrentTileKey() {
+    const c = Runtime.exploration && Runtime.exploration.lastKnownCoords;
+    if (c && Number.isFinite(c.x) && Number.isFinite(c.y)) {
+      return c.x + ";" + c.y;
+    }
+    return "unknown_tile";
+  }
+
+  function resetSupportBuffPrebuffTileGate(reason) {
+    const rt = getSupportBuffLineRuntime();
+    rt.prebuff.tileKey = null;
+    rt.prebuff.tileAt = null;
+    rt.prebuff.lastResult = null;
+    if (reason) {
+      Logger.log("COMBAT", "Prebuff tile gate reset", { reason: reason });
+    }
+  }
+
+  function resetSupportBuffLongbuffSessionState(reason) {
+    const rt = getSupportBuffLineRuntime();
+    rt.longbuff.initialPassDone = false;
+    rt.longbuff.lastPassAt = null;
+    rt.longbuff.lastResult = null;
+    if (reason) {
+      Logger.log("COMBAT", "Longbuff session state reset", { reason: reason });
+    }
   }
 
   function getSupportBuffDescriptionForRow(row, classKey) {
@@ -2223,6 +2281,7 @@
   }
 
   // AI CHANGED: Long self support (≥ longDurationMinSec, default 60s) — OOC renew + pre-combat refresh; never new-tile prebuff.
+  // NOTE (v1.0.5-alpha buff rewrite): this helper is retained for backward compatibility only. The active policy is now `classifySupportBuffPolicyForRow` which classifies purely by duration (>=60 = longbuff, <60 = prebuff). New call sites must use the policy helper.
   function skillRowIsPermanentOocSelfLongBuff(row, classKey) {
     if (!row || row.kind !== "skill" || row.isAttack) {
       return false;
@@ -2255,6 +2314,169 @@
       return lu.permanentSelfOoc === true;
     }
     return true;
+  }
+
+  // AI CHANGED: Buff system v1.0.5-alpha — single source of truth for buff policy.
+  //   Policy is determined by duration ONLY (after the safety/attack/no-name filters):
+  //     - duration <  longDurationMinSec (default 60s)  → policy = "prebuff"
+  //     - duration >= longDurationMinSec                → policy = "longbuff"
+  //     - safety/emergency buffs (Windy Dome + matched heuristics) → policy = "excluded_safety"
+  //     - non-buff slots / parseFailed / no duration                 → policy = "not_buff"
+  //   The classification is reused everywhere: prebuff target list, longbuff maintenance, console snapshot, TEST.
+  function classifySupportBuffPolicyForRow(row, classKeyOpt) {
+    const classKey =
+      typeof classKeyOpt === "string" && classKeyOpt.trim()
+        ? classKeyOpt.trim()
+        : typeof Config.skills.masterClassKey === "string"
+          ? Config.skills.masterClassKey.trim()
+          : "";
+    const out = {
+      policy: "not_buff",
+      durationSec: null,
+      durationSource: null,
+      slot: null,
+      name: row && typeof row.name === "string" ? row.name : "",
+      classKey: classKey || null,
+      reason: null
+    };
+    if (!row || row.kind !== "skill") {
+      out.reason = "not_a_skill";
+      return out;
+    }
+    if (row.parseFailed) {
+      out.reason = "parse_failed";
+      return out;
+    }
+    const slotIdx = typeof row.slot === "number" ? row.slot : null;
+    out.slot = slotIdx;
+    const root = Config.supportBuffs;
+    const pb = root && root.prebuff;
+    const treatAttackSubs = Array.isArray(pb && pb.treatAsBuffDespiteAttackNameSubstrings)
+      ? pb.treatAsBuffDespiteAttackNameSubstrings
+      : ["enchanted arrow", "hunters tread", "hunter's tread"];
+    const forceLongSubs = Array.isArray(pb && pb.forceLongDurationIfUnknownNameSubstrings)
+      ? pb.forceLongDurationIfUnknownNameSubstrings
+      : ["enchanted arrow", "hunters tread", "hunter's tread"];
+    const unknownLongSec = Number.isFinite(pb && pb.unknownLongDefaultDurationSec)
+      ? pb.unknownLongDefaultDurationSec
+      : 900;
+    // Safety/emergency barriers are never normal buffs.
+    if (isSupportSkillExcludedFromPrebuffSafetyPolicy(row, classKey)) {
+      out.policy = "excluded_safety";
+      out.reason = "safety_reserved";
+      return out;
+    }
+    // Eligibility: support tag, or DB/scan party-support-without-attack, or explicit attack-named buff override.
+    const masterEnt =
+      typeof getSkillMasterEntry === "function" && classKey ? getSkillMasterEntry(classKey, row.name) : null;
+    const fromDbParty = skillMasterEntryIsPartySupportNonAttackFromDb(masterEnt);
+    const fromScanParty = skillRowScanTagsPartySupportNonAttack(row);
+    const namedAttackBuff = skillNameMatchesAnySubstring(row.name, treatAttackSubs);
+    const eligibleBuff = !!row.isSupport || namedAttackBuff || fromDbParty || fromScanParty;
+    if (!eligibleBuff) {
+      out.reason = "not_eligible_buff";
+      return out;
+    }
+    if (row.isAttack && !namedAttackBuff) {
+      out.reason = "attack_skill_not_named_buff";
+      return out;
+    }
+    // Resolve duration via existing DB/parser path; named overrides use the "unknown long" default.
+    let dur = resolveSupportBuffDurationSecPreferDb(row, classKey);
+    let durSource = "db_or_parsed";
+    if (!Number.isFinite(dur) && skillNameMatchesAnySubstring(row.name, forceLongSubs)) {
+      dur = unknownLongSec;
+      durSource = "force_long_unknown_default";
+    }
+    if (!Number.isFinite(dur) || dur <= 0) {
+      out.reason = "no_known_duration";
+      return out;
+    }
+    out.durationSec = dur;
+    out.durationSource = durSource;
+    const longMin = Number.isFinite(root && root.longDurationMinSec) ? root.longDurationMinSec : 60;
+    out.policy = dur >= longMin ? "longbuff" : "prebuff";
+    return out;
+  }
+
+  // AI CHANGED: Buff system v1.0.5-alpha — read-only snapshot of policy classification across scanned bar slots (console + TEST).
+  function getSupportBuffPolicySnapshot() {
+    const classKey =
+      typeof Config.skills.masterClassKey === "string" ? Config.skills.masterClassKey.trim() : "";
+    const slots = Runtime.skills && Array.isArray(Runtime.skills.slots) ? Runtime.skills.slots : [];
+    const rows = [];
+    let prebuffCount = 0;
+    let longbuffCount = 0;
+    let excludedSafetyCount = 0;
+    for (let i = 0; i < slots.length; i++) {
+      const row = slots[i];
+      const slotIdx = typeof row && row.slot === "number" ? row.slot : i;
+      const c = classifySupportBuffPolicyForRow(row, classKey);
+      if (c.policy === "prebuff") prebuffCount++;
+      if (c.policy === "longbuff") longbuffCount++;
+      if (c.policy === "excluded_safety") excludedSafetyCount++;
+      if (c.policy === "not_buff") continue;
+      rows.push({
+        slot: slotIdx,
+        name: c.name,
+        policy: c.policy,
+        durationSec: c.durationSec,
+        durationSource: c.durationSource,
+        reason: c.reason
+      });
+    }
+    const rt = getSupportBuffLineRuntime();
+    return {
+      classKey: classKey || null,
+      longDurationMinSec: Number.isFinite(Config.supportBuffs && Config.supportBuffs.longDurationMinSec)
+        ? Config.supportBuffs.longDurationMinSec
+        : 60,
+      counts: {
+        prebuff: prebuffCount,
+        longbuff: longbuffCount,
+        excludedSafety: excludedSafetyCount
+      },
+      rows: rows,
+      prebuffTile: {
+        currentTileKey: getSupportBuffCurrentTileKey(),
+        lastPrebuffTileKey: rt.prebuff.tileKey,
+        lastPrebuffTileAt: rt.prebuff.tileAt
+      },
+      longbuff: {
+        initialPassDone: !!rt.longbuff.initialPassDone,
+        lastPassAt: rt.longbuff.lastPassAt
+      },
+      easyMode: isAutoFarmEasyMode()
+    };
+  }
+
+  // AI CHANGED: Buff system v1.0.5-alpha — collect target meta lists from policy classification.
+  function buildSupportBuffMetaListForPolicy(policyWanted) {
+    const classKey =
+      typeof Config.skills.masterClassKey === "string" ? Config.skills.masterClassKey.trim() : "";
+    const slots = Runtime.skills && Array.isArray(Runtime.skills.slots) ? Runtime.skills.slots : [];
+    const out = [];
+    for (let i = 0; i < slots.length; i++) {
+      const row = slots[i];
+      if (!row || row.kind !== "skill") {
+        continue;
+      }
+      const c = classifySupportBuffPolicyForRow(row, classKey);
+      if (c.policy !== policyWanted) {
+        continue;
+      }
+      const slotIdx = typeof row.slot === "number" ? row.slot : i;
+      out.push({
+        slot: slotIdx,
+        name: row.name,
+        dur: c.durationSec,
+        row: row
+      });
+    }
+    out.sort(function (a, b) {
+      return b.dur - a.dur;
+    });
+    return out;
   }
 
   // AI CHANGED: Idle empty tile — drink MP pots when mana below idleMpPotionUseBelowPct (toward idleMpPotionTopOffTargetPct).
@@ -2491,58 +2713,177 @@
     return out;
   }
 
+  // AI CHANGED: Buff system v1.0.5-alpha — legacy target builder retained as deprecated stub. The active prebuff pipeline (`maybeApplyPrebuffsForNewMobTile`) uses `buildSupportBuffMetaListForPolicy("prebuff")` directly. This wrapper exists ONLY to keep external diagnostics that hard-code the old name working without dragging mixed-policy logic back in. It returns the same shape (`prebuff` policy only — i.e. duration < longDurationMinSec). Longbuffs are NEVER included here anymore.
   function buildOrderedNewTilePrebuffTargets() {
-    const root = Config.supportBuffs;
-    const pb = root && root.prebuff;
-    const longs = buildPrebuffRowMetaListForPolicy("long");
-    const shorts = buildPrebuffRowMetaListForPolicy("short");
+    const targets = buildSupportBuffMetaListForPolicy("prebuff");
+    const pb = Config.supportBuffs && Config.supportBuffs.prebuff;
     const maxTotal = Number.isFinite(pb && pb.maxSkillsTotal) ? Math.max(0, Math.floor(pb.maxSkillsTotal)) : 10;
-    const merged = longs.concat(shorts);
-    if (merged.length <= maxTotal) {
-      return merged;
+    if (targets.length <= maxTotal) {
+      return targets;
     }
-    return merged.slice(0, maxTotal);
+    return targets.slice(0, maxTotal);
   }
 
-  // AI CHANGED: Poll action-bar cooldown after support buff click so find-enemy / next skill does not clip the cast.
-  async function waitForSupportBuffSlotCooldownAfterClick(slotIdx, meta) {
+  // AI CHANGED: Buff system v1.0.5-alpha — STRONG cast-resolution wait.
+  // Background: previous helper `waitForSupportBuffSlotCooldownAfterClick` only watched the action bar slot cooldown overlay. Cooldown-visible does NOT reliably mean the cast actually finished — the game can show the CD overlay while the cast bar is still mid-animation, so the next movement / find-enemy click cancels the buff. This new helper waits for the cast bar to appear and clear (or, when no cast bar appears for an instant-cast buff, sleeps the parsed cast time + small safety buffer) before returning.
+  // Phases:
+  //   A) minSettleMs — let DOM react to the click
+  //   B) APPEAR phase — wait briefly for either cast bar (matched by name if possible, else any non-fraction bar text) OR slot cooldown overlay
+  //   C) FINISH phase — wait for cast bar to clear, or for the cast-time-based fallback when no bar appeared
+  //   D) postSettleMs — small settle so the next action does not clip the resolved cast
+  async function waitForSupportCastResolved(slotIdx, row, meta) {
     const root = Config.supportBuffs;
     const w = root && root.postBuffCastCooldownWait;
     if (!root || root.enabled === false || !w || w.enabled === false) {
       const settle = Number.isFinite(Config.combat && Config.combat.postRankedSkillClickSettleMs)
         ? Math.max(80, Config.combat.postRankedSkillClickSettleMs * 3)
         : 120;
-      await sleep(settle);
+      await sleep(settle, { bypassStop: true });
       return { ok: true, skipped: true, reason: "post_buff_wait_disabled" };
     }
     const minSettle = Number.isFinite(w.minSettleMs) ? Math.max(0, w.minSettleMs) : 100;
     const maxWait = Number.isFinite(w.maxWaitMs) ? Math.max(150, w.maxWaitMs) : 4500;
     const poll = Number.isFinite(w.pollMs) ? Math.max(40, w.pollMs) : 80;
+    const castAppearTimeoutMs = Number.isFinite(w.castAppearTimeoutMs)
+      ? Math.max(200, w.castAppearTimeoutMs)
+      : 900;
+    const postSettleMs = Number.isFinite(w.postSettleMs) ? Math.max(40, w.postSettleMs) : 140;
+    const safetyBufferMs = Number.isFinite(w.safetyBufferMs) ? Math.max(150, w.safetyBufferMs) : 350;
+    const instantFallbackMs = Number.isFinite(w.instantFallbackMs)
+      ? Math.max(120, w.instantFallbackMs)
+      : 350;
+    const rawName = row && typeof row.name === "string" ? row.name : "";
+    const expectedKey =
+      rawName && typeof normalizeChargeCancelSkillMatchKey === "function"
+        ? normalizeChargeCancelSkillMatchKey(rawName)
+        : "";
+    const castTimeSec = row && Number.isFinite(row.castTimeSec) ? Math.max(0, row.castTimeSec) : null;
+    const castTimeMs = Number.isFinite(castTimeSec) ? Math.round(castTimeSec * 1000) : null;
     if (minSettle > 0) {
       await sleep(minSettle, { bypassStop: true });
     }
-    const t0 = Date.now();
-    while (Date.now() - t0 < maxWait) {
+    const isMatchedLabel = function (label) {
+      if (!label) return false;
+      if (!expectedKey) return true;
+      const labelKey =
+        typeof normalizeChargeCancelSkillMatchKey === "function"
+          ? normalizeChargeCancelSkillMatchKey(label)
+          : String(label).toLowerCase();
+      if (!labelKey) return false;
+      if (labelKey === expectedKey) return true;
+      const shortKey = labelKey.length <= expectedKey.length ? labelKey : expectedKey;
+      const longKey = labelKey.length <= expectedKey.length ? expectedKey : labelKey;
+      if (shortKey.length >= 4 && longKey.indexOf(shortKey) !== -1) return true;
+      return false;
+    };
+    const labelMatchesNow = function () {
+      if (typeof readVisibleCombatCastBarTexts !== "function") return false;
+      const labels = readVisibleCombatCastBarTexts();
+      for (let i = 0; i < labels.length; i++) {
+        if (isMatchedLabel(labels[i])) return true;
+      }
+      return false;
+    };
+    const anyBarVisibleNow = function () {
+      if (typeof readVisibleCombatCastBarTexts !== "function") return false;
+      const labels = readVisibleCombatCastBarTexts();
+      return labels.length > 0;
+    };
+    const slotCdNow = function () {
+      return typeof isActionBarSlotShowingCooldown === "function" && isActionBarSlotShowingCooldown(slotIdx);
+    };
+    // ---- Phase B: APPEAR ---------------------------------------------------
+    const appearStart = Date.now();
+    let appearedAs = null; // "cast_bar_match" | "cast_bar_any" | "slot_cd" | null
+    while (Date.now() - appearStart < castAppearTimeoutMs) {
       if (Runtime.autoFarm && Runtime.autoFarm.stopRequested) {
-        return { ok: false, reason: "stop_requested" };
+        return { ok: false, reason: "stop_requested", phase: "appear" };
       }
-      if (typeof isActionBarSlotShowingCooldown === "function" && isActionBarSlotShowingCooldown(slotIdx)) {
-        Logger.log("COMBAT", "support buff slot cooldown visible", Object.assign({ slot: slotIdx, waitedMs: Date.now() - t0 }, meta || {}));
-        return { ok: true, waitedMs: Date.now() - t0 };
-      }
+      if (labelMatchesNow()) { appearedAs = "cast_bar_match"; break; }
+      if (anyBarVisibleNow()) { appearedAs = "cast_bar_any"; break; }
+      if (slotCdNow()) { appearedAs = "slot_cd"; break; }
       await sleep(poll, { bypassStop: true });
     }
-    Logger.warn("COMBAT", "support buff cooldown wait timed out (continuing)", Object.assign({ slot: slotIdx, maxWaitMs: maxWait }, meta || {}));
-    return { ok: false, reason: "cooldown_visible_timeout" };
+    // ---- Phase C: FINISH ---------------------------------------------------
+    const finishBudget = Math.max(
+      maxWait,
+      Number.isFinite(castTimeMs) ? castTimeMs + safetyBufferMs : 0
+    );
+    const finishStart = Date.now();
+    let finishedReason = null;
+    if (appearedAs === "cast_bar_match" || appearedAs === "cast_bar_any") {
+      // Wait for the matching label (or any bar) to clear, OR for the budget.
+      while (Date.now() - finishStart < finishBudget) {
+        if (Runtime.autoFarm && Runtime.autoFarm.stopRequested) {
+          return { ok: false, reason: "stop_requested", phase: "finish" };
+        }
+        const stillMatched = appearedAs === "cast_bar_match" ? labelMatchesNow() : anyBarVisibleNow();
+        if (!stillMatched) { finishedReason = "cast_bar_cleared"; break; }
+        await sleep(poll, { bypassStop: true });
+      }
+      if (!finishedReason) {
+        finishedReason = "cast_bar_timeout";
+      }
+    } else if (appearedAs === "slot_cd") {
+      // No cast bar observed but slot CD overlay appeared. Apply cast-time-based or instant fallback wait so the next action still does not clip a slow finish.
+      const fallback = Number.isFinite(castTimeMs)
+        ? Math.max(instantFallbackMs, castTimeMs + safetyBufferMs)
+        : instantFallbackMs;
+      await sleep(Math.min(fallback, finishBudget), { bypassStop: true });
+      finishedReason = "slot_cd_only_fallback_sleep";
+    } else {
+      // Nothing observed within castAppearTimeoutMs.
+      // For known castTimeSec, still sleep cast-time + safetyBuffer so we don't move/find-enemy too early.
+      const fallback = Number.isFinite(castTimeMs)
+        ? Math.max(instantFallbackMs, castTimeMs + safetyBufferMs)
+        : instantFallbackMs;
+      await sleep(Math.min(fallback, finishBudget), { bypassStop: true });
+      finishedReason = "no_signal_fallback_sleep";
+    }
+    // ---- Phase D: post-cast settle ----------------------------------------
+    if (postSettleMs > 0) {
+      await sleep(postSettleMs, { bypassStop: true });
+    }
+    const out = {
+      ok: true,
+      slot: slotIdx,
+      name: rawName,
+      castTimeSec: castTimeSec,
+      appearedAs: appearedAs,
+      finishedReason: finishedReason,
+      totalMs: Date.now() - appearStart
+    };
+    Logger.log("COMBAT", "Support cast resolution wait done", Object.assign(out, meta || {}));
+    return out;
   }
 
-  async function maybeApplySupportPrebuffsOnNewTile(liveState) {
+  // AI CHANGED: Buff system v1.0.5-alpha — backward compatible alias. Old callers used to await a slot-cooldown check; route them through the stronger cast-resolution helper. The wrapper accepts the previous `(slotIdx, meta)` signature; row is looked up from `Runtime.skills.slots` if available.
+  async function waitForSupportBuffSlotCooldownAfterClick(slotIdx, meta) {
+    let row = null;
+    if (Runtime.skills && Array.isArray(Runtime.skills.slots)) {
+      for (let i = 0; i < Runtime.skills.slots.length; i++) {
+        const r = Runtime.skills.slots[i];
+        if (r && (r.slot === slotIdx || i === slotIdx)) {
+          row = r;
+          break;
+        }
+      }
+    }
+    return waitForSupportCastResolved(slotIdx, row, meta);
+  }
+
+  // AI CHANGED: Buff system v1.0.5-alpha — TILE-BASED prebuff pipeline.
+  //   Trigger: newly entered tile with mobs (enemyCount > 0) AND the current tile key differs from the last prebuffed tile key.
+  //   Easy mode → never fires.
+  //   Fast mode → cast only prebuffs that are ready (slot not showing cooldown).
+  //   Safe mode → first wait until ALL prebuff targets are ready (no slot CD), then cast longest-first.
+  //   Prebuffs are NOT filtered by assumed-duration tracking — that policy is for longbuffs only.
+  async function maybeApplyPrebuffsForNewMobTile(liveState) {
     const root = Config.supportBuffs;
     const pb = root && root.prebuff;
     if (!root || root.enabled === false || !pb || pb.enabled === false) {
-      return { used: 0 };
+      return { used: 0, skipped: true, reason: "disabled" };
     }
-    // AI CHANGED: Easy mode disables all buff usage — new-tile prebuffs never fire.
     if (isAutoFarmEasyMode()) {
       return { used: 0, skipped: true, reason: "easy_mode" };
     }
@@ -2550,21 +2891,59 @@
       return { used: 0, skipped: true, reason: "no_enemies" };
     }
     const rt = getSupportBuffLineRuntime();
-    rt.prebuffCastCount = 0;
+    const tileKey = getSupportBuffCurrentTileKey();
+    if (tileKey && rt.prebuff.tileKey === tileKey) {
+      Logger.log("COMBAT", "Prebuff skipped — tile already prebuffed", {
+        tileKey: tileKey,
+        lastPrebuffAt: rt.prebuff.tileAt
+      });
+      return { used: 0, skipped: true, reason: "tile_already_prebuffed", tileKey: tileKey };
+    }
     const targets = buildOrderedNewTilePrebuffTargets();
+    if (targets.length === 0) {
+      // Mark tile as evaluated so we don't keep retrying empty target lists each cycle.
+      rt.prebuff.tileKey = tileKey;
+      rt.prebuff.tileAt = Date.now();
+      rt.prebuff.lastResult = { used: 0, planned: 0, reason: "no_prebuff_targets" };
+      return { used: 0, skipped: true, reason: "no_prebuff_targets", tileKey: tileKey };
+    }
+    const mode =
+      Runtime.autoFarm && Runtime.autoFarm.combatMode
+        ? String(Runtime.autoFarm.combatMode).toLowerCase()
+        : "fast";
+    rt.prebuffCastCount = 0;
+    // Safe mode: wait for all targets ready, longest-first cast order. Bounded by safeModeWaitAllReadyMs.
+    if (mode === "safe") {
+      const waitAllMs = Number.isFinite(pb.safeModeWaitAllReadyMs)
+        ? Math.max(2000, pb.safeModeWaitAllReadyMs)
+        : 60000;
+      const pollMs = Number.isFinite(pb.safeModeWaitPollMs) ? Math.max(120, pb.safeModeWaitPollMs) : 400;
+      const t0 = Date.now();
+      while (Date.now() - t0 < waitAllMs) {
+        if (Runtime.autoFarm.stopRequested) {
+          return { used: 0, skipped: true, reason: "stop_requested", tileKey: tileKey };
+        }
+        let waiting = 0;
+        for (let s = 0; s < targets.length; s++) {
+          if (typeof isActionBarSlotShowingCooldown === "function" && isActionBarSlotShowingCooldown(targets[s].slot)) {
+            waiting += 1;
+          }
+        }
+        if (waiting === 0) {
+          break;
+        }
+        setBotStatus("waiting", `safe mode prebuffs: ${waiting}/${targets.length} on CD`);
+        await sleep(pollMs, { bypassStop: true });
+      }
+    }
     let used = 0;
     for (let t = 0; t < targets.length; t++) {
+      if (Runtime.autoFarm.stopRequested) {
+        return { used: used, skipped: true, reason: "stop_requested", tileKey: tileKey };
+      }
       const one = targets[t];
       if (typeof isActionBarSlotShowingCooldown === "function" && isActionBarSlotShowingCooldown(one.slot)) {
-        continue;
-      }
-      if (supportBuffShouldSkipRecastFromTracking(rt, one.row, one.dur)) {
-        Logger.log("COMBAT", "prebuff skip — assumed buff still above recast window", {
-          name: one.name,
-          assumedDurationSec: one.dur,
-          nameKey: getSupportBuffNameKeyForRow(one.row),
-          recastMinRemainingSec: getSupportBuffRecastMinRemainingSecForTracking()
-        });
+        Logger.log("COMBAT", "Prebuff skip — slot still cooling", { name: one.name, slot: one.slot });
         continue;
       }
       if (!clickActionBarSlot(one.slot)) {
@@ -2574,53 +2953,103 @@
       recordSupportBuffAssumedDurationAfterCast(rt, one.row, one.dur, castAt);
       used += 1;
       rt.prebuffCastCount += 1;
-      Logger.log("COMBAT", "New-tile prebuff cast", { name: one.name, assumedDurationSec: one.dur, slot: one.slot });
-      await waitForSupportBuffSlotCooldownAfterClick(one.slot, { name: one.name, kind: "prebuff_new_tile" });
+      Logger.log("COMBAT", "New-tile prebuff cast", {
+        name: one.name,
+        assumedDurationSec: one.dur,
+        slot: one.slot,
+        mode: mode,
+        tileKey: tileKey
+      });
+      await waitForSupportCastResolved(one.slot, one.row, { name: one.name, kind: "prebuff_new_tile" });
     }
-    return { used: used, planned: targets.length };
+    rt.prebuff.tileKey = tileKey;
+    rt.prebuff.tileAt = Date.now();
+    rt.prebuff.lastResult = { used: used, planned: targets.length, mode: mode };
+    return { used: used, planned: targets.length, tileKey: tileKey, mode: mode };
   }
 
-  async function waitForSafeModeShortPrebuffCooldownsThenCast() {
+  // AI CHANGED: Buff system v1.0.5-alpha — LONGBUFF maintenance (OOC only, all buffs >= longDurationMinSec).
+  //   Generalized from the old "permanent self" subset to ALL longbuffs as classified by `classifySupportBuffPolicyForRow`.
+  //   Easy mode → never fires.
+  //   Combat tile (enemyCount > 0) → skipped.
+  //   Triggers initial pass at first safe OOC moment of an AUTO session, then timer-driven recasts when assumed remaining drops below renewWhenRemainingSec.
+  async function maintainLongbuffsOutOfCombat(liveState) {
     const root = Config.supportBuffs;
-    const pb = root && root.prebuff;
-    if (!root || root.enabled === false || !pb || pb.enabled === false) {
-      return { skipped: true };
+    const perm = root && root.permanentSelf;
+    if (!root || root.enabled === false || !perm || perm.enabled === false) {
+      return { cast: 0, skipped: true, reason: "disabled" };
     }
-    const pollMs = Number.isFinite(Config.combat && Config.combat.safeModeExplorePollMs)
-      ? Math.max(200, Config.combat.safeModeExplorePollMs)
-      : 500;
-    const shorts = buildPrebuffRowMetaListForPolicy("short");
-    if (shorts.length === 0) {
-      return { skipped: true, reason: "no_short_prebuffs" };
+    if (isAutoFarmEasyMode()) {
+      return { cast: 0, skipped: true, reason: "easy_mode" };
     }
-    let guard = 0;
-    while (!Runtime.autoFarm.stopRequested && guard < 600) {
-      guard += 1;
-      let waiting = 0;
-      for (let s = 0; s < shorts.length; s++) {
-        if (typeof isActionBarSlotShowingCooldown === "function" && isActionBarSlotShowingCooldown(shorts[s].slot)) {
-          waiting += 1;
-        }
-      }
-      if (waiting === 0) {
-        break;
-      }
-      setBotStatus("waiting", `safe mode: short prebuffs on CD (${waiting}/${shorts.length})`);
-      await sleep(pollMs, { bypassStop: true });
+    if (!liveState || typeof liveState.combat.enemyCount !== "number") {
+      return { cast: 0, skipped: true, reason: "no_enemy_count" };
     }
+    if (liveState.combat.enemyCount !== 0) {
+      return { cast: 0, skipped: true, reason: "not_clear_tile" };
+    }
+    if (liveState.session && (liveState.session.dead === true || liveState.session.poorConnection === true)) {
+      return { cast: 0, skipped: true, reason: "session_risk" };
+    }
+    const targets = buildSupportBuffMetaListForPolicy("longbuff");
+    if (targets.length === 0) {
+      const rt0 = getSupportBuffLineRuntime();
+      rt0.longbuff.initialPassDone = true;
+      rt0.longbuff.lastPassAt = Date.now();
+      rt0.longbuff.lastResult = { cast: 0, planned: 0, reason: "no_longbuff_targets" };
+      return { cast: 0, skipped: true, reason: "no_longbuff_targets" };
+    }
+    const renewRem = Number.isFinite(perm.renewWhenRemainingSec)
+      ? Math.max(0, perm.renewWhenRemainingSec)
+      : 20;
+    const trackRem = getSupportBuffRecastMinRemainingSecForTracking();
+    const effectiveRenewSec = trackRem !== null && trackRem !== undefined ? trackRem : renewRem;
     const rt = getSupportBuffLineRuntime();
-    let cast = 0;
-    for (let s = 0; s < shorts.length; s++) {
-      const one = shorts[s];
-      if (typeof isActionBarSlotShowingCooldown === "function" && isActionBarSlotShowingCooldown(one.slot)) {
+    const now = Date.now();
+    const initialPass = !rt.longbuff.initialPassDone;
+    const metaList = [];
+    for (let i = 0; i < targets.length; i++) {
+      const one = targets[i];
+      const nameKey =
+        typeof normalizeSkillName === "function"
+          ? normalizeSkillName(String(one.row.name || ""))
+          : String(one.row.name || "");
+      const tracked = rt.longSelfTracked[nameKey];
+      // On initial pass: refresh ALL longbuffs once so the session starts buffed.
+      // On later passes: only refresh those approaching expiry.
+      let need;
+      if (initialPass) {
+        need = true;
+      } else {
+        need =
+          !tracked ||
+          !Number.isFinite(tracked.expectedEndAt) ||
+          now >= tracked.expectedEndAt - effectiveRenewSec * 1000;
+      }
+      if (!need) {
         continue;
       }
-      if (supportBuffShouldSkipRecastFromTracking(rt, one.row, one.dur)) {
-        Logger.log("COMBAT", "Safe mode short prebuff skip — assumed buff still above recast window", {
-          name: one.name,
-          assumedDurationSec: one.dur,
-          nameKey: getSupportBuffNameKeyForRow(one.row)
-        });
+      const urgency = tracked && Number.isFinite(tracked.expectedEndAt) ? tracked.expectedEndAt : now;
+      metaList.push({
+        slot: one.slot,
+        row: one.row,
+        name: one.row.name,
+        dur: one.dur,
+        nameKey: nameKey,
+        urgency: urgency
+      });
+    }
+    metaList.sort(function (a, b) {
+      return a.urgency - b.urgency;
+    });
+    const maxCast = Number.isFinite(perm.maxCastPerPass) ? Math.max(1, Math.floor(perm.maxCastPerPass)) : 6;
+    let cast = 0;
+    for (let m = 0; m < metaList.length && cast < maxCast; m++) {
+      if (Runtime.autoFarm.stopRequested) {
+        break;
+      }
+      const one = metaList[m];
+      if (typeof isActionBarSlotShowingCooldown === "function" && isActionBarSlotShowingCooldown(one.slot)) {
         continue;
       }
       if (!clickActionBarSlot(one.slot)) {
@@ -2629,17 +3058,44 @@
       const castAt = Date.now();
       recordSupportBuffAssumedDurationAfterCast(rt, one.row, one.dur, castAt);
       cast += 1;
-      rt.prebuffCastCount += 1;
-      Logger.log("COMBAT", "Safe mode short prebuff before explore", { name: one.name, dur: one.dur, slot: one.slot });
-      await waitForSupportBuffSlotCooldownAfterClick(one.slot, { name: one.name, kind: "prebuff_safe_explore" });
+      Logger.log("COMBAT", initialPass ? "Longbuff initial pass cast" : "Longbuff renew (OOC)", {
+        name: one.row.name,
+        durSec: one.dur,
+        slot: one.slot
+      });
+      await waitForSupportCastResolved(one.slot, one.row, {
+        name: one.row.name,
+        kind: initialPass ? "longbuff_initial" : "longbuff_renew"
+      });
     }
-    return { cast: cast };
+    rt.longbuff.initialPassDone = true;
+    rt.longbuff.lastPassAt = Date.now();
+    rt.longbuff.lastResult = { cast: cast, planned: metaList.length, initialPass: initialPass };
+    return { cast: cast, planned: metaList.length, initialPass: initialPass };
   }
 
+  // AI CHANGED: Buff system v1.0.5-alpha — back-compat wrapper for the old name. Behavior is now identical to maintainLongbuffsOutOfCombat.
+  async function maybeMaintainLongSelfSupportBuffsOutOfCombat(liveState) {
+    const res = await maintainLongbuffsOutOfCombat(liveState);
+    return { renewed: res.cast || 0, skipped: res.skipped, reason: res.reason };
+  }
+
+  // AI CHANGED: Buff system v1.0.5-alpha — old "permanent self pre-find-enemy" helper REMOVED from active call sites.
+  // Longbuffs are now OOC-only. This stub remains as a no-op for any external code path or test that still references it; it must never cast on mob tiles.
+  async function maybeApplyPermanentSelfLongBuffsBeforeFindEnemy(_liveState) {
+    return { cast: 0, skipped: true, reason: "deprecated_longbuff_on_mob_tile_disallowed" };
+  }
+
+  // AI CHANGED: Buff system v1.0.5-alpha — Safe mode HP/MP idle gate on empty-tile path.
+  //   Short-prebuff casting was REMOVED from this gate (it was running in the wrong place before combat moved to the new tile). HP/MP top-off remains useful while idle.
+  //   Prebuff waiting (Safe mode = wait all ready, longest-first) now happens inside `maybeApplyPrebuffsForNewMobTile` on the new mob tile.
   async function waitForSafeModeExploreResourcesAndShortPrebuffs() {
     const mode = Runtime.autoFarm && Runtime.autoFarm.combatMode ? String(Runtime.autoFarm.combatMode).toLowerCase() : "fast";
     if (mode !== "safe") {
       return { skipped: true, reason: "not_safe_mode" };
+    }
+    if (isAutoFarmEasyMode()) {
+      return { skipped: true, reason: "easy_mode" };
     }
     const hpTh = Number.isFinite(Config.combat && Config.combat.safeModeExploreMinHpPct)
       ? Math.max(0.5, Math.min(1, Config.combat.safeModeExploreMinHpPct))
@@ -2690,106 +3146,12 @@
       }
       await sleep(pollMs, { bypassStop: true });
     }
-    const pbCast = await waitForSafeModeShortPrebuffCooldownsThenCast();
-    return { ok: true, hpTh: hpTh, mpTh: mpTh, shortPrebuff: pbCast };
+    return { ok: true, hpTh: hpTh, mpTh: mpTh, shortPrebuffMovedToMobTile: true };
   }
 
-  // AI CHANGED: Shared pass for permanent (≥longDurationMinSec) self support buffs — idle OOC or occupied tile before find-enemy.
-  async function runPermanentSelfLongBuffRefreshPass(liveState, opts) {
-    const o = opts || {};
-    const allowEnemiesOnTile = !!o.allowEnemiesOnTile;
-    const root = Config.supportBuffs;
-    const perm = root && root.permanentSelf;
-    if (!root || root.enabled === false || !perm || perm.enabled === false) {
-      return { cast: 0, skipped: true, reason: "disabled" };
-    }
-    // AI CHANGED: Easy mode disables all buff usage — permanent-self long-buff refresh skipped (both OOC maintenance and pre-find-enemy paths route through here).
-    if (isAutoFarmEasyMode()) {
-      return { cast: 0, skipped: true, reason: "easy_mode" };
-    }
-    if (!liveState || typeof liveState.combat.enemyCount !== "number") {
-      return { cast: 0, skipped: true, reason: "no_enemy_count" };
-    }
-    const ec = liveState.combat.enemyCount;
-    if (allowEnemiesOnTile) {
-      if (!(ec > 0)) {
-        return { cast: 0, skipped: true, reason: "need_enemies_on_tile" };
-      }
-    } else if (ec !== 0) {
-      return { cast: 0, skipped: true, reason: "not_clear_tile" };
-    }
-    const longMin = Number.isFinite(root.longDurationMinSec) ? root.longDurationMinSec : 60;
-    const trackRem = getSupportBuffRecastMinRemainingSecForTracking();
-    const renewRem =
-      trackRem !== null && trackRem !== undefined
-        ? trackRem
-        : Number.isFinite(perm.renewWhenRemainingSec)
-          ? perm.renewWhenRemainingSec
-          : 20;
-    const classKey = typeof Config.skills.masterClassKey === "string" ? Config.skills.masterClassKey.trim() : "";
-    const slots = Runtime.skills && Array.isArray(Runtime.skills.slots) ? Runtime.skills.slots : [];
-    const rt = getSupportBuffLineRuntime();
-    const now = Date.now();
-    const metaList = [];
-    for (let i = 0; i < slots.length; i++) {
-      const row = slots[i];
-      if (!skillRowIsPermanentOocSelfLongBuff(row, classKey)) {
-        continue;
-      }
-      const dur = resolveSupportBuffDurationSecPreferDb(row, classKey);
-      if (!Number.isFinite(dur) || dur < longMin) {
-        continue;
-      }
-      const nameKey =
-        typeof normalizeSkillName === "function" ? normalizeSkillName(String(row.name || "")) : String(row.name || "");
-      const tracked = rt.longSelfTracked[nameKey];
-      const need =
-        !tracked ||
-        !Number.isFinite(tracked.expectedEndAt) ||
-        now >= tracked.expectedEndAt - renewRem * 1000;
-      if (!need) {
-        continue;
-      }
-      const slotIdx = typeof row.slot === "number" ? row.slot : i;
-      const urgency = tracked && Number.isFinite(tracked.expectedEndAt) ? tracked.expectedEndAt : now + 1e12;
-      metaList.push({ slot: slotIdx, row: row, dur: dur, nameKey: nameKey, urgency: urgency });
-    }
-    metaList.sort(function (a, b) {
-      return a.urgency - b.urgency;
-    });
-    const maxCast = Number.isFinite(perm.maxCastPerPass) ? Math.max(1, Math.floor(perm.maxCastPerPass)) : 6;
-    let cast = 0;
-    for (let m = 0; m < metaList.length && cast < maxCast; m++) {
-      const one = metaList[m];
-      if (typeof isActionBarSlotShowingCooldown === "function" && isActionBarSlotShowingCooldown(one.slot)) {
-        continue;
-      }
-      if (!clickActionBarSlot(one.slot)) {
-        continue;
-      }
-      const castAt = Date.now();
-      recordSupportBuffAssumedDurationAfterCast(rt, one.row, one.dur, castAt);
-      cast += 1;
-      Logger.log("COMBAT", allowEnemiesOnTile ? "Permanent self-buff before combat" : "Long self-buff renew (OOC)", {
-        name: one.row.name,
-        durSec: one.dur,
-        slot: one.slot
-      });
-      await waitForSupportBuffSlotCooldownAfterClick(one.slot, {
-        name: one.row.name,
-        kind: allowEnemiesOnTile ? "permanent_self_pre_combat" : "permanent_self_ooc"
-      });
-    }
-    return { cast: cast, planned: metaList.length };
-  }
-
-  async function maybeMaintainLongSelfSupportBuffsOutOfCombat(liveState) {
-    const res = await runPermanentSelfLongBuffRefreshPass(liveState, { allowEnemiesOnTile: false });
-    return { renewed: res.cast || 0, skipped: res.skipped, reason: res.reason };
-  }
-
-  async function maybeApplyPermanentSelfLongBuffsBeforeFindEnemy(liveState) {
-    return runPermanentSelfLongBuffRefreshPass(liveState, { allowEnemiesOnTile: true });
+  // AI CHANGED: Buff system v1.0.5-alpha — deprecated alias for the old refresh pass; routes to longbuff OOC maintenance with safety checks. Never casts on mob tiles.
+  async function runPermanentSelfLongBuffRefreshPass(liveState, _opts) {
+    return maintainLongbuffsOutOfCombat(liveState);
   }
 
   function listScannedSupportBuffClassifications() {
@@ -4625,11 +4987,9 @@
 
     let current = startState;
     if (typeof startState.combat.enemyCount === "number" && startState.combat.enemyCount > 0) {
-      setBotStatus("preparing", "permanent self-buffs (before prebuff / find-enemy)");
-      await maybeApplyPermanentSelfLongBuffsBeforeFindEnemy(startState);
-      current = readBasicState();
+      // AI CHANGED: Buff system v1.0.5-alpha — longbuffs no longer fire on mob tiles before combat. Only prebuffs (<60s) run here, tile-keyed so retries on the same tile do not re-cast. Safe mode waits for all prebuffs ready inside the pipeline; Fast mode skips any on cooldown.
       setBotStatus("preparing", "new-tile prebuffs (before find-enemy)");
-      await maybeApplySupportPrebuffsOnNewTile(current);
+      await maybeApplyPrebuffsForNewMobTile(startState);
       current = readBasicState();
     }
     let findAttempts = 0;
@@ -5322,6 +5682,9 @@
     Runtime.autoFarm.autoLikeTestPrepDone = false;
     // AI CHANGED: Fresh AUTO session — clear the ensure-skills latch so the first OOC cycle revalidates cache/hero, then later cycles skip.
     Runtime.autoFarm.skillEnsureDone = false;
+    // AI CHANGED: Buff system v1.0.5-alpha — fresh session resets per-tile prebuff gate and the first-OOC-pass flag for longbuffs. `longSelfTracked` (assumed expiry map) is intentionally NOT cleared — buffs from before AUTO OFF are still likely active and we should not force redundant immediate recasts.
+    resetSupportBuffPrebuffTileGate("auto_session_start");
+    resetSupportBuffLongbuffSessionState("auto_session_start");
     Runtime.autoFarm.reliability.noProgressStreak = 0;
     // AI CHANGED: Apply Fast/Safe/Easy before snapshot — planner localStorage can leave useRankedAttackSkillsInCombat false while combat mode is Fast/Safe; old order restored that false after every AUTO OFF and looked like "ON skips ranked until TEST".
     applyAutoFarmCombatMode();

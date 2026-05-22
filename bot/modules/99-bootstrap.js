@@ -135,6 +135,23 @@
         typeof clearSupportBuffAssumedDurationTracking === "function" ? clearSupportBuffAssumedDurationTracking : null,
       getSupportBuffAssumedDurationTrackingSnapshot:
         typeof getSupportBuffAssumedDurationTrackingSnapshot === "function" ? getSupportBuffAssumedDurationTrackingSnapshot : null,
+      // AI CHANGED: Buff system v1.0.5-alpha — duration-based policy classifier + read-only snapshot of all slots.
+      //   <60s ⇒ prebuff (tile-keyed on new mob tile); >=60s ⇒ longbuff (OOC only, timer-driven); Windy Dome / safety reserved excluded.
+      classifySupportBuffPolicyForRow:
+        typeof classifySupportBuffPolicyForRow === "function" ? classifySupportBuffPolicyForRow : null,
+      getSupportBuffPolicySnapshot:
+        typeof getSupportBuffPolicySnapshot === "function" ? getSupportBuffPolicySnapshot : null,
+      // AI CHANGED: Buff system v1.0.5-alpha — runtime pipelines + cast-resolution wait (replaces slot-cooldown-only wait).
+      maybeApplyPrebuffsForNewMobTile:
+        typeof maybeApplyPrebuffsForNewMobTile === "function" ? maybeApplyPrebuffsForNewMobTile : null,
+      maintainLongbuffsOutOfCombat:
+        typeof maintainLongbuffsOutOfCombat === "function" ? maintainLongbuffsOutOfCombat : null,
+      waitForSupportCastResolved:
+        typeof waitForSupportCastResolved === "function" ? waitForSupportCastResolved : null,
+      resetSupportBuffPrebuffTileGate:
+        typeof resetSupportBuffPrebuffTileGate === "function" ? resetSupportBuffPrebuffTileGate : null,
+      resetSupportBuffLongbuffSessionState:
+        typeof resetSupportBuffLongbuffSessionState === "function" ? resetSupportBuffLongbuffSessionState : null,
       waitForCondition: waitForCondition,
       clickFindEnemyVerified: clickFindEnemyVerified,
       clickLootOrActivateVerified: clickLootOrActivateVerified,

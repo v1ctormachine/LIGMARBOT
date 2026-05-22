@@ -169,10 +169,11 @@
       },
       prebuff: {
         enabled: true,
-        // AI CHANGED: Long buffs (e.g. 900s) on new tile before find-enemy; then shorter buffs, longest-short first.
+        // AI CHANGED: Buff system v1.0.5-alpha — `prebuff` now means buffs with duration < `longDurationMinSec` (default <60s); cast tile-keyed on a newly entered mob tile.
         maxSkillsTotal: 10,
-        prebuffLongDurationMinSec: 120,
-        shortDurationMaxSec: 120,
+        // AI CHANGED: Safe mode — bounded wait for ALL prebuff slots to come off cooldown before casting longest-first on the new mob tile.
+        safeModeWaitAllReadyMs: 60000,
+        safeModeWaitPollMs: 400,
         // AI CHANGED: Substring blocklist; Windy Dome and other emergency barriers also excluded via safety.skillNames + DB/heuristic (see 85-combat).
         reserveSafetyNameSubstrings: ["windy dome"],
         treatAsBuffDespiteAttackNameSubstrings: ["enchanted arrow", "hunters tread", "hunter's tread"],
@@ -189,12 +190,22 @@
         spikeSampleMaxDtSec: 1.5,
         minSpacingMs: 45000
       },
-      // AI CHANGED: After prebuff/permanent-buff bar clicks, wait until cooldown UI appears (or timeout) so the next action does not cancel the cast.
+      // AI CHANGED: Buff system v1.0.5-alpha — strong support-cast resolution wait.
+      // Phases: minSettleMs → APPEAR (cast bar by name match / any non-fraction bar text / slot CD overlay; capped by castAppearTimeoutMs) → FINISH (wait for cast bar to clear up to max(maxWaitMs, castTimeMs+safetyBufferMs)) → postSettleMs.
+      // If no cast bar appears at all but castTimeSec is known, fall back to sleeping castTimeMs+safetyBufferMs (clamped). The previous "cooldown-visible only" check was unreliable and let next actions cancel casts.
       postBuffCastCooldownWait: {
         enabled: true,
         maxWaitMs: 4500,
         pollMs: 80,
-        minSettleMs: 100
+        minSettleMs: 100,
+        // AI CHANGED: Phase B — how long to wait for the cast bar or slot CD overlay to first appear after the click.
+        castAppearTimeoutMs: 900,
+        // AI CHANGED: Phase D — small post-cast settle before allowing movement/find-enemy/next click.
+        postSettleMs: 140,
+        // AI CHANGED: Extra wait time on top of parsed castTimeSec for cast-time-based fallback (network jitter + animation tail).
+        safetyBufferMs: 350,
+        // AI CHANGED: Floor wait when castTimeSec is missing / zero ("instant" buffs still need a small settle before the next click).
+        instantFallbackMs: 350
       },
       // AI CHANGED: After a support buff click, remember parsed/DB duration; skip re-casts until assumed remaining ≤ recastMinRemainingSec (e.g. 900s buff → renew only in last 30s). Applies to new-tile prebuff, Safe short prebuff, and permanent self when enabled. Set enabled:false to restore old prebuff behavior (bar CD only). Early dispel: `ligmarBot.clearSupportBuffAssumedDurationTracking()`.
       buffDurationTracking: {
