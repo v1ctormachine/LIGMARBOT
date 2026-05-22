@@ -253,6 +253,9 @@
       lastEnemyAdaptiveThreshold: null,
       // AI CHANGED: TEST/debug-only opener override — force a named skill when present/feasible, without changing normal combat policy.
       forcedOpenerSkillName: null,
-      forcedOpenerReason: null
+      forcedOpenerReason: null,
+      // AI CHANGED: Planner rewrite v1 — last sequence-planner decision snapshot (combat state + normalized skills + top sequences + chosen first/second actions).
+      //   Populated by plannerSelectSequencePick(); read by `getPlannerLastSequencePlan()` / `previewPlannerSequences()` / runUiTestBundle checks.
+      lastSequencePlan: null
     }
   };

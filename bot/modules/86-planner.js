@@ -2889,6 +2889,1029 @@
     };
   }
 
+  // ───────────────────────────────────────────────────────────────────────────
+  // AI CHANGED: Planner rewrite v1 (Part 1) — short-sequence combat planner foundation.
+  //   - Builds a structured combat state model (player / target / fight / timing).
+  //   - Normalizes attack skills with planner-side semantics (charge, debuff windows, AoE, tempo, control).
+  //   - Runs a bounded beam search comparing 2–5-action sequences (not opener-only) over up to ~maxHorizonSec seconds.
+  //   - Scores primarily by minimum expected time-to-kill (TTK); tie-breaks by lower HP loss / mana waste / better tempo.
+  //   - Compatibility adapter returns { slot, record, chargeReleasePlan, queuedAction } so the existing executor stays stable for Part 1.
+  // The legacy openerHorizonSim path remains as a fallback when the new planner cannot decide (no paper DPS, no candidates, etc.).
+  // ───────────────────────────────────────────────────────────────────────────
+
+  // AI CHANGED: Helper used to match planner semantic enrichment by normalized skill name (Sniper Shot / sniper_shot / sniper-shot all ⇒ "snipershot").
+  function plannerSeqNormalizeSkillKey(name) {
+    if (!name) {
+      return "";
+    }
+    if (typeof normalizeSkillName === "function") {
+      return normalizeSkillName(name).toLowerCase();
+    }
+    return String(name).toLowerCase().replace(/[^a-z0-9]+/g, "");
+  }
+
+  // AI CHANGED: Best-effort cooldown readiness signal for planner state. Uses live action-bar DOM hint when available; falls back to "ready"
+  // when scan cache says the slot is a skill (we never observed any "starting cooldown" for it). Planner search additionally simulates the skill's
+  // own cooldown when reasoning about whether the same skill can fire twice in the short window.
+  function plannerSeqSkillIsReadyNow(slotIdx, row) {
+    if (!row || row.kind !== "skill") {
+      return false;
+    }
+    if (Config.planner && Config.planner.skipOpenerWhenActionBarShowsCooldown !== false) {
+      if (typeof isActionBarSlotShowingCooldown === "function" && isActionBarSlotShowingCooldown(slotIdx)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  // AI CHANGED: Resolve archer-name-keyed semantic enrichment. Generic (class-agnostic) helper — encoding the skill's OWN effect semantics,
+  // not combo recipes. Keys are normalized in `plannerSeqNormalizeSkillKey`.
+  function plannerSeqResolveSemanticEnrichment(name) {
+    const root = Config.planner && Config.planner.sequencePlanner ? Config.planner.sequencePlanner.archerSemantics : null;
+    if (!root || typeof root !== "object") {
+      return null;
+    }
+    const key = plannerSeqNormalizeSkillKey(name);
+    if (!key) {
+      return null;
+    }
+    if (key === "snipershot" && root.sniperShot) {
+      return Object.assign({ __semKey: "snipershot" }, root.sniperShot);
+    }
+    if (key === "piercingstrike" && root.piercingStrike) {
+      return Object.assign({ __semKey: "piercingstrike" }, root.piercingStrike);
+    }
+    if (key === "iceshard" && root.iceShard) {
+      return Object.assign({ __semKey: "iceshard" }, root.iceShard);
+    }
+    if (key === "distractingshot" && root.distractingShot) {
+      return Object.assign({ __semKey: "distractingshot" }, root.distractingShot);
+    }
+    if (key === "fanvolley" && root.fanVolley) {
+      return Object.assign({ __semKey: "fanvolley" }, root.fanVolley);
+    }
+    if (key === "windydome" && root.windyDome) {
+      return Object.assign({ __semKey: "windydome" }, root.windyDome);
+    }
+    return null;
+  }
+
+  // AI CHANGED: Build the planner-facing normalized representation of a single skill slot. Pulls together raw scan + master conception + parsed
+  // effects + planner-side semantic enrichment so the simulator has one coherent view of what the skill DOES.
+  function plannerSeqNormalizeOneSkill(row, paperBasic, mobFactor, expectedBasicHit) {
+    if (!row || row.kind !== "skill") {
+      return null;
+    }
+    const conception = (typeof plannerResolveSlotConception === "function" ? plannerResolveSlotConception(row) : (row.conception || null)) || null;
+    const effects = Array.isArray(row.effects) ? row.effects : [];
+    let immediateDamage = 0;
+    let dotTotal = 0;
+    let dotDurationSec = 0;
+    let damageType = "unknown";
+    let isAoe = false;
+    let isControl = false;
+    let controlDurationSec = 0;
+    let isCharge = false;
+    let chargeMaxSec = 0;
+    let chargeGearPct = 0;
+    for (let i = 0; i < effects.length; i += 1) {
+      const e = effects[i];
+      if (!e || !e.type) {
+        continue;
+      }
+      if (e.type === "instant" && Number.isFinite(e.value)) {
+        immediateDamage += e.value;
+        if (e.damageType) {
+          damageType = e.damageType;
+        }
+      } else if (e.type === "dot" && Number.isFinite(e.total) && Number.isFinite(e.durationSec)) {
+        dotTotal += e.total;
+        dotDurationSec = Math.max(dotDurationSec, e.durationSec);
+        if (e.damageType) {
+          damageType = e.damageType;
+        }
+      } else if (e.type === "basic_proc") {
+        if (Number.isFinite(expectedBasicHit) && expectedBasicHit > 0) {
+          immediateDamage += expectedBasicHit;
+        }
+        if (e.damageType) {
+          damageType = e.damageType;
+        }
+      } else if (e.type === "channel_gear") {
+        isCharge = true;
+        chargeMaxSec = Number.isFinite(e.channelMaxSec) ? e.channelMaxSec : 0;
+        chargeGearPct = Number.isFinite(e.gearDamagePercent) ? e.gearDamagePercent : 0;
+        if (Number.isFinite(expectedBasicHit) && expectedBasicHit > 0) {
+          immediateDamage += expectedBasicHit;
+        }
+        if (e.damageType) {
+          damageType = e.damageType;
+        }
+      } else if (e.type === "slow") {
+        isControl = true;
+        controlDurationSec = Math.max(controlDurationSec, Number.isFinite(e.durationSec) ? e.durationSec : 0);
+      } else if (e.type === "stun") {
+        isControl = true;
+        controlDurationSec = Math.max(controlDurationSec, Number.isFinite(e.durationSec) ? e.durationSec : 0);
+      }
+    }
+    if (conception && conception.flags) {
+      if (conception.flags.slow || conception.flags.stun) {
+        isControl = true;
+      }
+      if (conception.flags.channel) {
+        isCharge = true;
+      }
+    }
+    const sem = plannerSeqResolveSemanticEnrichment(row.name || "");
+    if (sem) {
+      if (sem.role === "aoe") {
+        isAoe = true;
+      }
+    }
+    const mf = Number.isFinite(mobFactor) && mobFactor > 0 ? mobFactor : 1;
+    const immediateDamageAdj = +(immediateDamage * mf).toFixed(2);
+    const dotPerSec = dotDurationSec > 0 ? +(dotTotal / dotDurationSec * mf).toFixed(3) : 0;
+    return {
+      slot: typeof row.slot === "number" ? row.slot : null,
+      name: row.name || "",
+      normalizedKey: plannerSeqNormalizeSkillKey(row.name || ""),
+      kind: row.kind,
+      manaCost: Number.isFinite(row.manaCost) ? row.manaCost : 0,
+      castTimeSec: Number.isFinite(row.castTimeSec) ? row.castTimeSec : 0,
+      cooldownSec: Number.isFinite(row.cooldownSec) ? row.cooldownSec : 0,
+      // damage shape (already mob-factor adjusted):
+      immediateDamage: immediateDamageAdj,
+      dotTotal: +(dotTotal * mf).toFixed(2),
+      dotDurationSec: +dotDurationSec.toFixed(2),
+      dotPerSec: dotPerSec,
+      damageType: damageType,
+      // delivery / tactics:
+      isAttack: !!(row.isAttack && row.targetsEnemy),
+      isCharge: isCharge,
+      chargeMaxSec: +chargeMaxSec.toFixed(2),
+      chargeGearPct: chargeGearPct,
+      isAoe: isAoe,
+      isControl: isControl,
+      controlDurationSec: +controlDurationSec.toFixed(2),
+      // conception roles (level-invariant master/inferred):
+      tacticalRoles: conception && Array.isArray(conception.tacticalRoles) ? conception.tacticalRoles.slice(0) : [],
+      // semantic enrichment by skill OWN identity (NOT combo):
+      semantic: sem,
+      // sanity:
+      hasDirectDamage: typeof plannerSkillHasDirectDamageForOpener === "function"
+        ? plannerSkillHasDirectDamageForOpener(row)
+        : (immediateDamage > 0 || dotTotal > 0)
+    };
+  }
+
+  // AI CHANGED: Build normalized representations for all attack skills on the bar. Reused by combat-state model + sequence search.
+  function plannerSeqBuildNormalizedSkills(opts) {
+    const slots = (Runtime.skills && Array.isArray(Runtime.skills.slots)) ? Runtime.skills.slots : [];
+    const paper = (opts && opts.paper) ? opts.paper : estimatePaperBasicAttackDps();
+    const expectedBasicHit = Number.isFinite(opts && opts.expectedBasicHit)
+      ? opts.expectedBasicHit
+      : plannerExpectedBasicHitFromPaper(paper);
+    const enemyKey = (opts && opts.enemyKey) || (Runtime.enemy && Runtime.enemy.lastFoughtKey) || null;
+    const mobFactor = Number.isFinite(opts && opts.mobFactor)
+      ? opts.mobFactor
+      : plannerMobCalibrationFactorForKey(enemyKey);
+    const out = [];
+    for (let i = 0; i < slots.length; i += 1) {
+      const row = slots[i];
+      if (!row || row.kind !== "skill") {
+        continue;
+      }
+      if (!row.isAttack || !row.targetsEnemy) {
+        continue;
+      }
+      const norm = plannerSeqNormalizeOneSkill(row, paper, mobFactor, expectedBasicHit);
+      if (norm) {
+        out.push(norm);
+      }
+    }
+    return out;
+  }
+
+  // AI CHANGED: Build the planner combat-state model. Used by sequence search + diagnostics. Best-effort: missing fields are nulled, not faked.
+  function plannerSeqBuildCombatState(opts) {
+    const options = opts && typeof opts === "object" ? opts : {};
+    const liveState = options.liveState || readBasicState();
+    const paper = options.paper || estimatePaperBasicAttackDps();
+    const expectedBasicHit = Number.isFinite(options.expectedBasicHit)
+      ? options.expectedBasicHit
+      : plannerExpectedBasicHitFromPaper(paper);
+    const enemyKey = options.enemyKey || (Runtime.enemy && Runtime.enemy.lastFoughtKey) || null;
+    const mobFactor = Number.isFinite(options.mobFactor)
+      ? options.mobFactor
+      : plannerMobCalibrationFactorForKey(enemyKey);
+    const basicDps = paper && Number.isFinite(paper.dps) ? paper.dps : null;
+    const adjustedBasicDps = Number.isFinite(basicDps) ? plannerAdjustedBasicDps(basicDps, mobFactor) : null;
+    const swingIntervalMsFallback = Number.isFinite(Config.planner && Config.planner.sequencePlanner && Config.planner.sequencePlanner.basicSwingIntervalMsFallback)
+      ? Config.planner.sequencePlanner.basicSwingIntervalMsFallback
+      : 1000;
+    let swingIntervalSec = 1;
+    const aps = Runtime.hero && Runtime.hero.combatStats && Number.isFinite(Runtime.hero.combatStats.attackSpeed)
+      ? Runtime.hero.combatStats.attackSpeed
+      : null;
+    if (Number.isFinite(aps) && aps > 0) {
+      swingIntervalSec = +(1 / aps).toFixed(4);
+    } else {
+      swingIntervalSec = +(swingIntervalMsFallback / 1000).toFixed(4);
+    }
+    const playerHp = liveState && liveState.player && liveState.player.hp ? liveState.player.hp : { valid: false };
+    const playerMp = liveState && liveState.player && liveState.player.mp ? liveState.player.mp : { valid: false };
+    const combat = liveState && liveState.combat ? liveState.combat : {};
+    const targetHp = combat && combat.targetHp ? combat.targetHp : { valid: false };
+    const visibleEffects = typeof readTargetVisibleEffects === "function" ? readTargetVisibleEffects() : [];
+    const attackersInfo = typeof readActiveAttackerCount === "function" ? readActiveAttackerCount() : null;
+    const activeAttackerCount = attackersInfo && Number.isFinite(attackersInfo.count) ? attackersInfo.count : null;
+    const enemyCount = combat && Number.isFinite(combat.enemyCount) ? combat.enemyCount : null;
+    // recentHpLossPerSec from sustain telemetry — already incoming HP rate.
+    const sustain = Runtime.autoFarm && Runtime.autoFarm.combatSustain ? Runtime.autoFarm.combatSustain : null;
+    const incomingHpLossPerSec = sustain && Number.isFinite(sustain.recentHpLossPerSec) && sustain.recentHpLossPerSec > 0
+      ? sustain.recentHpLossPerSec
+      : 0;
+    // Pressure estimate — additive bundle in the spirit of openerContext but living inside the combat state model.
+    const effActiveAttackers = Number.isFinite(activeAttackerCount) ? activeAttackerCount : (Number.isFinite(enemyCount) ? enemyCount : 0);
+    const playerHpPct = playerHp.valid && Number.isFinite(playerHp.pct) ? playerHp.pct : null;
+    let pressure = Math.max(0, effActiveAttackers - 1);
+    if (Number.isFinite(playerHpPct) && playerHpPct < 0.65) {
+      pressure += (0.65 - playerHpPct) * 2;
+    }
+    if (incomingHpLossPerSec > 0 && playerHp.valid && Number.isFinite(playerHp.max) && playerHp.max > 0) {
+      pressure += Math.min(2.5, (incomingHpLossPerSec / playerHp.max) * 8);
+    }
+    pressure = +pressure.toFixed(3);
+    // Translate visible effects → semantic flags
+    const targetFlags = {
+      hasMagicResistShred: false,
+      hasSlow: false,
+      hasDistract: false,
+      magicResistShredRemainingSec: 0,
+      slowRemainingSec: 0,
+      distractRemainingSec: 0
+    };
+    for (let i = 0; i < visibleEffects.length; i += 1) {
+      const e = visibleEffects[i];
+      if (!e) {
+        continue;
+      }
+      const id = (e.id || "").toLowerCase();
+      const rem = Number.isFinite(e.remainingSec) ? e.remainingSec : 0;
+      // ID matching is best-effort; we only flag when ID hints at a known semantic.
+      if (id.indexOf("pierc") >= 0 || id.indexOf("magicresist") >= 0 || id.indexOf("shred") >= 0) {
+        targetFlags.hasMagicResistShred = true;
+        targetFlags.magicResistShredRemainingSec = Math.max(targetFlags.magicResistShredRemainingSec, rem);
+      }
+      if (id.indexOf("iceshard") >= 0 || id.indexOf("slow") >= 0 || id.indexOf("ice") >= 0) {
+        targetFlags.hasSlow = true;
+        targetFlags.slowRemainingSec = Math.max(targetFlags.slowRemainingSec, rem);
+      }
+      if (id.indexOf("distract") >= 0) {
+        targetFlags.hasDistract = true;
+        targetFlags.distractRemainingSec = Math.max(targetFlags.distractRemainingSec, rem);
+      }
+    }
+    // self buffs (longSelfTracked) for awareness — read-only snapshot.
+    const longSelf = Runtime.autoFarm && Runtime.autoFarm.supportBuffLine && Runtime.autoFarm.supportBuffLine.longSelfTracked
+      ? Runtime.autoFarm.supportBuffLine.longSelfTracked
+      : {};
+    const longSelfList = [];
+    const longSelfKeys = Object.keys(longSelf);
+    for (let k = 0; k < longSelfKeys.length; k += 1) {
+      const v = longSelf[longSelfKeys[k]];
+      if (v && typeof v === "object") {
+        longSelfList.push({
+          key: longSelfKeys[k],
+          assumedExpiresAt: v.assumedExpiresAt || null,
+          remainingSec: v.assumedExpiresAt && Number.isFinite(v.assumedExpiresAt)
+            ? Math.max(0, +((v.assumedExpiresAt - Date.now()) / 1000).toFixed(2))
+            : null
+        });
+      }
+    }
+    // basicAttackUnderway is best-effort: if there are active attackers AND find-enemy just retargeted, the game often auto-starts a basic.
+    const queue = Runtime.autoFarm && Runtime.autoFarm.combatQueue ? Runtime.autoFarm.combatQueue : null;
+    const basicAttackLikelyUnderway = !!(queue && queue.postRetargetGuarded === true) || (effActiveAttackers >= 1 && enemyCount && enemyCount >= 1);
+    const maxHorizonSec = Number.isFinite(Config.planner && Config.planner.sequencePlanner && Config.planner.sequencePlanner.maxHorizonSec)
+      ? Config.planner.sequencePlanner.maxHorizonSec
+      : 6;
+    const maxActions = Number.isFinite(Config.planner && Config.planner.sequencePlanner && Config.planner.sequencePlanner.maxActions)
+      ? Config.planner.sequencePlanner.maxActions
+      : 5;
+    const combatMode = Runtime.autoFarm && Runtime.autoFarm.combatMode ? Runtime.autoFarm.combatMode : "fast";
+    return {
+      builtAt: Date.now(),
+      mode: combatMode,
+      player: {
+        hpCur: playerHp.valid ? playerHp.cur : null,
+        hpMax: playerHp.valid ? playerHp.max : null,
+        hpPct: playerHpPct,
+        mpCur: playerMp.valid ? playerMp.cur : null,
+        mpMax: playerMp.valid ? playerMp.max : null,
+        mpPct: playerMp.valid && Number.isFinite(playerMp.pct) ? playerMp.pct : null,
+        basicSwingIntervalSec: swingIntervalSec,
+        expectedBasicHit: Number.isFinite(expectedBasicHit) ? +expectedBasicHit.toFixed(2) : null,
+        basicDpsAdjusted: Number.isFinite(adjustedBasicDps) ? +adjustedBasicDps.toFixed(2) : null,
+        basicAttackLikelyUnderway: basicAttackLikelyUnderway,
+        longSelfBuffs: longSelfList
+      },
+      target: {
+        hpCur: targetHp.valid && Number.isFinite(targetHp.cur) ? targetHp.cur : null,
+        hpMax: targetHp.valid && Number.isFinite(targetHp.max) ? targetHp.max : null,
+        hpPct: targetHp.valid && Number.isFinite(targetHp.pct) ? targetHp.pct : null,
+        visibleEffects: visibleEffects,
+        flags: targetFlags,
+        fingerprintKey: enemyKey
+      },
+      fight: {
+        enemiesPresent: Number.isFinite(enemyCount) ? enemyCount : null,
+        activeAttackerCount: Number.isFinite(activeAttackerCount) ? activeAttackerCount : null,
+        activeAttackerSource: attackersInfo ? attackersInfo.source : null,
+        pressure: pressure,
+        incomingHpLossPerSec: +incomingHpLossPerSec.toFixed(3),
+        combatMode: combatMode
+      },
+      timing: {
+        nowMs: Date.now(),
+        maxHorizonSec: maxHorizonSec,
+        maxActions: maxActions
+      },
+      paperBasicDps: Number.isFinite(basicDps) ? +basicDps.toFixed(2) : null,
+      mobFactor: Number.isFinite(mobFactor) ? +mobFactor.toFixed(4) : 1
+    };
+  }
+
+  // AI CHANGED: Snapshot for diagnostics (does NOT advance simulator); used by `getPlannerCombatState`.
+  function getPlannerCombatState(opts) {
+    return plannerSeqBuildCombatState(opts || null);
+  }
+
+  // AI CHANGED: Snapshot for diagnostics; used by `getPlannerNormalizedSkills`.
+  function getPlannerNormalizedSkills(opts) {
+    return plannerSeqBuildNormalizedSkills(opts || null);
+  }
+
+  // AI CHANGED: Build candidate actions from current sim state. For each skill ready + mana-affordable, generate at least one action.
+  // Charge skills additionally generate a partial-release variant so the planner can compare full vs partial release directly.
+  function plannerSeqBuildCandidateActions(simState, normalizedSkills, opts) {
+    const out = [];
+    out.push({
+      kind: "basic",
+      name: "Basic Attack",
+      slot: null
+    });
+    const allowCharge = !(opts && opts.disallowChargeSkills === true);
+    const mpCur = Number.isFinite(simState.player.mpCur) ? simState.player.mpCur : null;
+    for (let i = 0; i < normalizedSkills.length; i += 1) {
+      const s = normalizedSkills[i];
+      if (!s || !s.isAttack || !s.hasDirectDamage) {
+        continue;
+      }
+      // Cooldown gate from sim cooldowns (set after each cast simulation).
+      const cdReady = simState.skillCooldownReadyAtSec[s.slot] == null
+        ? true
+        : (simState.elapsedSec >= simState.skillCooldownReadyAtSec[s.slot]);
+      if (!cdReady) {
+        continue;
+      }
+      // Initial live-DOM cooldown hint (only honored at depth 0 where state.elapsedSec == 0).
+      if (simState.elapsedSec === 0 && !plannerSeqSkillIsReadyNow(s.slot, Runtime.skills.slots[s.slot])) {
+        continue;
+      }
+      // Mana gate.
+      if (s.manaCost > 0) {
+        if (!Number.isFinite(mpCur) || mpCur < s.manaCost) {
+          continue;
+        }
+      }
+      if (s.isCharge && !allowCharge) {
+        continue;
+      }
+      if (s.isCharge && s.chargeMaxSec > 0) {
+        // Full charge variant + partial-release variant.
+        out.push({
+          kind: "skill_charge",
+          chargeMode: "full",
+          chargeReleaseFraction: 1,
+          name: s.name,
+          slot: s.slot,
+          skill: s
+        });
+        const partialFrac = Number.isFinite(Config.planner && Config.planner.sequencePlanner && Config.planner.sequencePlanner.chargePartialReleaseFraction)
+          ? Math.max(0.1, Math.min(0.95, Config.planner.sequencePlanner.chargePartialReleaseFraction))
+          : 0.55;
+        out.push({
+          kind: "skill_charge",
+          chargeMode: "partial",
+          chargeReleaseFraction: partialFrac,
+          name: s.name,
+          slot: s.slot,
+          skill: s
+        });
+      } else {
+        out.push({
+          kind: "skill",
+          name: s.name,
+          slot: s.slot,
+          skill: s
+        });
+      }
+    }
+    return out;
+  }
+
+  // AI CHANGED: Simulate one action against simState; returns a fresh simState (immutable shape). All timing/HP/damage math lives here so
+  // the search code can stay declarative.
+  function plannerSeqSimulateAction(simState, action) {
+    const next = {
+      elapsedSec: simState.elapsedSec,
+      playerHpCur: simState.playerHpCur,
+      playerHpMax: simState.playerHpMax,
+      playerMpCur: simState.playerMpCur,
+      playerMpMax: simState.playerMpMax,
+      targetHpCur: simState.targetHpCur,
+      targetHpMax: simState.targetHpMax,
+      enemyCount: simState.enemyCount,
+      activeAttackers: simState.activeAttackers,
+      pressure: simState.pressure,
+      incomingHpLossPerSec: simState.incomingHpLossPerSec,
+      basicSwingIntervalSec: simState.basicSwingIntervalSec,
+      expectedBasicHit: simState.expectedBasicHit,
+      basicAttackLikelyUnderway: simState.basicAttackLikelyUnderway,
+      skillCooldownReadyAtSec: Object.assign({}, simState.skillCooldownReadyAtSec),
+      targetFlags: {
+        hasMagicResistShred: simState.targetFlags.hasMagicResistShred,
+        hasSlow: simState.targetFlags.hasSlow,
+        hasDistract: simState.targetFlags.hasDistract,
+        magicResistShredRemainingSec: simState.targetFlags.magicResistShredRemainingSec,
+        slowRemainingSec: simState.targetFlags.slowRemainingSec,
+        distractRemainingSec: simState.targetFlags.distractRemainingSec
+      },
+      lastActionTimeSec: simState.lastActionTimeSec,
+      mpWasted: simState.mpWasted,
+      hpLost: simState.hpLost,
+      mobFactor: simState.mobFactor
+    };
+    const swingInterval = next.basicSwingIntervalSec > 0 ? next.basicSwingIntervalSec : 1;
+    let actionTimeSec = 0;
+    let damageDealt = 0;
+    let action2 = Object.assign({}, action);
+    if (action.kind === "basic") {
+      actionTimeSec = swingInterval;
+      if (Number.isFinite(next.expectedBasicHit)) {
+        damageDealt += next.expectedBasicHit * (Number.isFinite(next.mobFactor) ? next.mobFactor : 1);
+      }
+    } else if (action.kind === "skill" && action.skill) {
+      const s = action.skill;
+      actionTimeSec = Math.max(0.1, s.castTimeSec || 0);
+      damageDealt += s.immediateDamage;
+      // DoT — count only the portion that lands inside the remaining sim horizon.
+      if (s.dotPerSec > 0 && s.dotDurationSec > 0) {
+        const remHorizon = (Config.planner.sequencePlanner.maxHorizonSec || 6) - (next.elapsedSec + actionTimeSec);
+        const dotWindow = Math.max(0, Math.min(s.dotDurationSec, remHorizon));
+        damageDealt += s.dotPerSec * dotWindow;
+      }
+      // Magic-resist shred boosts magic skills already active.
+      if (next.targetFlags.hasMagicResistShred && s.damageType === "magic") {
+        const boost = Number.isFinite(Config.planner.sequencePlanner.archerSemantics.piercingStrike && Config.planner.sequencePlanner.archerSemantics.piercingStrike.followUpMagicDamageBoost)
+          ? Config.planner.sequencePlanner.archerSemantics.piercingStrike.followUpMagicDamageBoost
+          : 0.2;
+        damageDealt *= (1 + boost);
+      }
+      // AoE: planner's target is a single fingerprint, but AoE still kills faster against multi-mob; we add a fraction of "extra hit damage" against extras.
+      if (s.isAoe && Number.isFinite(next.enemyCount) && next.enemyCount > 1) {
+        // We do not reduce our own target's HP for extras; the AoE benefit is encoded later in survival pressure relief.
+      }
+      // Mana spend.
+      if (s.manaCost > 0) {
+        if (Number.isFinite(next.playerMpCur)) {
+          next.playerMpCur = Math.max(0, next.playerMpCur - s.manaCost);
+        }
+      }
+      // Self cooldown.
+      if (s.cooldownSec > 0 && Number.isFinite(s.slot)) {
+        next.skillCooldownReadyAtSec[s.slot] = next.elapsedSec + actionTimeSec + s.cooldownSec;
+      }
+      // Semantic side-effects (debuffs/tempo).
+      const sem = s.semantic;
+      if (sem) {
+        if (sem.__semKey === "piercingstrike") {
+          next.targetFlags.hasMagicResistShred = true;
+          next.targetFlags.magicResistShredRemainingSec = Math.max(
+            next.targetFlags.magicResistShredRemainingSec,
+            Number.isFinite(sem.debuffDurationSec) ? sem.debuffDurationSec : 15
+          );
+        } else if (sem.__semKey === "iceshard") {
+          next.targetFlags.hasSlow = true;
+          next.targetFlags.slowRemainingSec = Math.max(
+            next.targetFlags.slowRemainingSec,
+            Number.isFinite(sem.slowDurationSec) ? sem.slowDurationSec : 5
+          );
+        } else if (sem.__semKey === "distractingshot") {
+          next.targetFlags.hasDistract = true;
+          next.targetFlags.distractRemainingSec = Math.max(
+            next.targetFlags.distractRemainingSec,
+            Number.isFinite(sem.distractDurationSec) ? sem.distractDurationSec : 6
+          );
+        }
+      }
+    } else if (action.kind === "skill_charge" && action.skill) {
+      const s = action.skill;
+      const releaseFraction = Math.max(0.1, Math.min(1, Number.isFinite(action.chargeReleaseFraction) ? action.chargeReleaseFraction : 1));
+      const chargeSec = Math.max(0.1, (s.chargeMaxSec || 1) * releaseFraction);
+      actionTimeSec = chargeSec;
+      // base + gear contribution scaled by release fraction.
+      const baseHit = s.immediateDamage || 0;
+      const gearMultiplier = 1 + ((s.chargeGearPct || 0) / 100) * releaseFraction;
+      damageDealt += baseHit * gearMultiplier;
+      if (s.dotPerSec > 0 && s.dotDurationSec > 0) {
+        const remHorizon = (Config.planner.sequencePlanner.maxHorizonSec || 6) - (next.elapsedSec + actionTimeSec);
+        const dotWindow = Math.max(0, Math.min(s.dotDurationSec, remHorizon));
+        damageDealt += s.dotPerSec * dotWindow;
+      }
+      if (s.manaCost > 0 && Number.isFinite(next.playerMpCur)) {
+        next.playerMpCur = Math.max(0, next.playerMpCur - s.manaCost);
+      }
+      if (s.cooldownSec > 0 && Number.isFinite(s.slot)) {
+        next.skillCooldownReadyAtSec[s.slot] = next.elapsedSec + actionTimeSec + s.cooldownSec;
+      }
+      action2.simChargeSec = +chargeSec.toFixed(3);
+    }
+    // Apply damage to target.
+    if (Number.isFinite(next.targetHpCur)) {
+      next.targetHpCur = Math.max(0, next.targetHpCur - damageDealt);
+    }
+    // Player HP loss model. Distract removes one active attacker for the distract window. Slow reduces incoming damage.
+    const incoming = next.incomingHpLossPerSec;
+    let effectiveIncoming = incoming;
+    if (next.targetFlags.hasSlow) {
+      const slowReduction = Config.planner.sequencePlanner.archerSemantics.iceShard && Number.isFinite(Config.planner.sequencePlanner.archerSemantics.iceShard.incomingDamageReductionFraction)
+        ? Config.planner.sequencePlanner.archerSemantics.iceShard.incomingDamageReductionFraction
+        : 0.3;
+      effectiveIncoming = effectiveIncoming * (1 - slowReduction);
+    }
+    let effectiveActiveAttackers = next.activeAttackers;
+    if (next.targetFlags.hasDistract && effectiveActiveAttackers > 0) {
+      const relief = Config.planner.sequencePlanner.archerSemantics.distractingShot && Number.isFinite(Config.planner.sequencePlanner.archerSemantics.distractingShot.activeAttackerReliefCount)
+        ? Config.planner.sequencePlanner.archerSemantics.distractingShot.activeAttackerReliefCount
+        : 1;
+      effectiveActiveAttackers = Math.max(0, effectiveActiveAttackers - relief);
+      // Scale incoming by the ratio of remaining attackers.
+      if (next.activeAttackers > 0) {
+        effectiveIncoming = effectiveIncoming * (effectiveActiveAttackers / next.activeAttackers);
+      }
+    }
+    if (Number.isFinite(next.playerHpCur) && effectiveIncoming > 0) {
+      const lost = effectiveIncoming * actionTimeSec;
+      next.playerHpCur = Math.max(0, next.playerHpCur - lost);
+      next.hpLost += lost;
+    }
+    // Decay debuff durations.
+    next.targetFlags.magicResistShredRemainingSec = Math.max(0, next.targetFlags.magicResistShredRemainingSec - actionTimeSec);
+    if (next.targetFlags.magicResistShredRemainingSec <= 0) {
+      next.targetFlags.hasMagicResistShred = false;
+    }
+    next.targetFlags.slowRemainingSec = Math.max(0, next.targetFlags.slowRemainingSec - actionTimeSec);
+    if (next.targetFlags.slowRemainingSec <= 0) {
+      next.targetFlags.hasSlow = false;
+    }
+    next.targetFlags.distractRemainingSec = Math.max(0, next.targetFlags.distractRemainingSec - actionTimeSec);
+    if (next.targetFlags.distractRemainingSec <= 0) {
+      next.targetFlags.hasDistract = false;
+    }
+    next.elapsedSec += actionTimeSec;
+    next.lastActionTimeSec = actionTimeSec;
+    // No longer "basic likely underway" once we take any explicit action.
+    next.basicAttackLikelyUnderway = false;
+    // Track tempo / mana waste tiebreaks.
+    if (action.kind !== "basic" && action.skill && action.skill.manaCost > 0) {
+      if (Number.isFinite(next.targetHpCur) && next.targetHpCur <= 0) {
+        // overkill mana waste — anything spent past kill counts as waste.
+        next.mpWasted += 0;
+      }
+    }
+    return { next: next, action: action2, damageDealt: damageDealt, actionTimeSec: actionTimeSec };
+  }
+
+  // AI CHANGED: Beam search over short action sequences. Returns top sequences sorted best-first.
+  function plannerSeqSearchSequences(combatState, normalizedSkills, opts) {
+    const sp = Config.planner && Config.planner.sequencePlanner ? Config.planner.sequencePlanner : {};
+    const beamWidth = Number.isFinite(sp.beamWidth) ? sp.beamWidth : 12;
+    const maxActions = Number.isFinite(sp.maxActions) ? sp.maxActions : 5;
+    const maxHorizonSec = Number.isFinite(sp.maxHorizonSec) ? sp.maxHorizonSec : 6;
+    const disallowCharge = opts && opts.disallowChargeSkills === true;
+    const initialSimState = {
+      elapsedSec: 0,
+      playerHpCur: combatState.player.hpCur,
+      playerHpMax: combatState.player.hpMax,
+      playerMpCur: combatState.player.mpCur,
+      playerMpMax: combatState.player.mpMax,
+      targetHpCur: combatState.target.hpCur,
+      targetHpMax: combatState.target.hpMax,
+      enemyCount: combatState.fight.enemiesPresent,
+      activeAttackers: Number.isFinite(combatState.fight.activeAttackerCount) ? combatState.fight.activeAttackerCount : (Number.isFinite(combatState.fight.enemiesPresent) ? combatState.fight.enemiesPresent : 0),
+      pressure: combatState.fight.pressure,
+      incomingHpLossPerSec: combatState.fight.incomingHpLossPerSec,
+      basicSwingIntervalSec: combatState.player.basicSwingIntervalSec,
+      expectedBasicHit: combatState.player.expectedBasicHit,
+      basicAttackLikelyUnderway: combatState.player.basicAttackLikelyUnderway,
+      skillCooldownReadyAtSec: {},
+      targetFlags: Object.assign({}, combatState.target.flags),
+      lastActionTimeSec: 0,
+      mpWasted: 0,
+      hpLost: 0,
+      mobFactor: combatState.mobFactor
+    };
+    let beam = [{
+      sim: initialSimState,
+      actions: [],
+      cumulativeDamage: 0,
+      killedAtSec: null
+    }];
+    const completed = [];
+    for (let depth = 0; depth < maxActions; depth += 1) {
+      const expanded = [];
+      for (let b = 0; b < beam.length; b += 1) {
+        const node = beam[b];
+        if (node.killedAtSec !== null) {
+          completed.push(node);
+          continue;
+        }
+        if (node.sim.elapsedSec >= maxHorizonSec) {
+          completed.push(node);
+          continue;
+        }
+        const candidates = plannerSeqBuildCandidateActions(node.sim, normalizedSkills, { disallowChargeSkills: disallowCharge });
+        for (let c = 0; c < candidates.length; c += 1) {
+          const cand = candidates[c];
+          const stepped = plannerSeqSimulateAction(node.sim, cand);
+          const nextNode = {
+            sim: stepped.next,
+            actions: node.actions.concat([{
+              kind: cand.kind,
+              name: cand.name,
+              slot: cand.slot,
+              skill: cand.skill ? { slot: cand.skill.slot, name: cand.skill.name, normalizedKey: cand.skill.normalizedKey, damageType: cand.skill.damageType } : null,
+              chargeMode: cand.chargeMode || null,
+              chargeReleaseFraction: Number.isFinite(cand.chargeReleaseFraction) ? cand.chargeReleaseFraction : null,
+              actionTimeSec: +stepped.actionTimeSec.toFixed(3),
+              damageDealt: +stepped.damageDealt.toFixed(2)
+            }]),
+            cumulativeDamage: node.cumulativeDamage + stepped.damageDealt,
+            killedAtSec: null
+          };
+          if (sp.pruneIfTargetDead !== false && Number.isFinite(nextNode.sim.targetHpCur) && nextNode.sim.targetHpCur <= 0 && node.killedAtSec === null) {
+            nextNode.killedAtSec = +nextNode.sim.elapsedSec.toFixed(3);
+            completed.push(nextNode);
+            continue;
+          }
+          expanded.push(nextNode);
+        }
+      }
+      // Score + prune to beamWidth.
+      const scored = expanded.map(function (n) {
+        return Object.assign({}, n, { _provisionalScore: plannerSeqScoreNode(n, combatState) });
+      });
+      scored.sort(function (a, b) {
+        return a._provisionalScore - b._provisionalScore;
+      });
+      beam = scored.slice(0, beamWidth);
+      if (beam.length === 0) {
+        break;
+      }
+    }
+    for (let b = 0; b < beam.length; b += 1) {
+      completed.push(beam[b]);
+    }
+    const finalScored = completed.map(function (n) {
+      return Object.assign({}, n, { _finalScore: plannerSeqScoreNode(n, combatState) });
+    });
+    finalScored.sort(function (a, b) {
+      return a._finalScore - b._finalScore;
+    });
+    return finalScored;
+  }
+
+  // AI CHANGED: Score a sequence node. Primary objective: minimize expected time-to-kill. Secondary tiebreaks: lower HP loss, lower MP waste,
+  // better tempo. Returns a single number — LOWER is BETTER.
+  function plannerSeqScoreNode(node, combatState) {
+    const sp = Config.planner && Config.planner.sequencePlanner ? Config.planner.sequencePlanner : {};
+    const sim = node.sim;
+    const targetHpMax = sim.targetHpMax || combatState.target.hpMax || 1;
+    let ttkSec;
+    if (node.killedAtSec !== null && Number.isFinite(node.killedAtSec)) {
+      ttkSec = node.killedAtSec;
+    } else {
+      // Project remaining HP / basic DPS for tail.
+      const baseDps = combatState.player.basicDpsAdjusted;
+      const remHp = Number.isFinite(sim.targetHpCur) ? sim.targetHpCur : targetHpMax;
+      if (Number.isFinite(baseDps) && baseDps > 0) {
+        ttkSec = sim.elapsedSec + (remHp / baseDps);
+      } else {
+        ttkSec = sim.elapsedSec + 12; // unknown DPS — large but bounded penalty.
+      }
+    }
+    // Survival floor breach penalty.
+    let survivalPenaltySec = 0;
+    if (Number.isFinite(sim.playerHpCur) && Number.isFinite(sim.playerHpMax) && sim.playerHpMax > 0) {
+      const ratio = sim.playerHpCur / sim.playerHpMax;
+      const floor = Number.isFinite(sp.survivalMinHpRatio) ? sp.survivalMinHpRatio : 0.18;
+      if (ratio < floor) {
+        const breach = (floor - ratio) / Math.max(0.01, floor);
+        const penaltyBase = Number.isFinite(sp.survivalBreachPenaltySec) ? sp.survivalBreachPenaltySec : 8;
+        survivalPenaltySec = penaltyBase * (1 + breach);
+      }
+      if (sim.playerHpCur <= 0) {
+        survivalPenaltySec += 25;
+      }
+    }
+    // HP-loss tiebreak — scaled by hpMax so it stays comparable across hero levels.
+    const hpLossRatio = Number.isFinite(sim.playerHpMax) && sim.playerHpMax > 0 ? (sim.hpLost / sim.playerHpMax) : 0;
+    const tieHpLossSec = (Number.isFinite(sp.tieBreakHpLossPerHpMaxSec) ? sp.tieBreakHpLossPerHpMaxSec : 1.5) * Math.max(0, hpLossRatio);
+    // MP waste tiebreak — discourage spending lots of MP when overkill is already obvious.
+    const mpSpent = Math.max(0, (combatState.player.mpCur || 0) - (Number.isFinite(sim.playerMpCur) ? sim.playerMpCur : 0));
+    let mpWaste = 0;
+    if (node.killedAtSec !== null) {
+      const overkill = Math.max(0, (node.cumulativeDamage - targetHpMax) / Math.max(1, targetHpMax));
+      mpWaste = mpSpent * overkill;
+    }
+    const tieMpWasteSec = (Number.isFinite(sp.tieBreakMpWasteCoefSec) ? sp.tieBreakMpWasteCoefSec : 0.0008) * mpWaste;
+    // Tempo tiebreak — prefer shorter actual elapsed time when TTK is similar.
+    const tieTempoSec = (Number.isFinite(sp.tieBreakTempoCoefSec) ? sp.tieBreakTempoCoefSec : 0.05) * sim.elapsedSec;
+    // Skill-own semantic nudges. (NOT combos — just intrinsic skill traits.)
+    let semanticAdjSec = 0;
+    for (let i = 0; i < node.actions.length; i += 1) {
+      const a = node.actions[i];
+      if (!a || !a.skill || !a.skill.normalizedKey) {
+        continue;
+      }
+      const sem = plannerSeqResolveSemanticEnrichment(a.skill.name || "");
+      if (!sem) {
+        continue;
+      }
+      if (sem.__semKey === "snipershot") {
+        // Penalize full-charge under pressure.
+        const isFullCharge = a.chargeMode === "full" || (a.chargeReleaseFraction != null && a.chargeReleaseFraction >= 0.95);
+        if (isFullCharge && combatState.fight.pressure >= 1) {
+          semanticAdjSec += Number.isFinite(sem.chargeFullPressurePenaltySec) ? sem.chargeFullPressurePenaltySec : 1.6;
+        }
+        // Reward as finisher when target HP low.
+        const targetHpPct = Number.isFinite(combatState.target.hpPct) ? combatState.target.hpPct : null;
+        if (Number.isFinite(targetHpPct) && targetHpPct <= (Number.isFinite(sem.finisherTargetHpPctMax) ? sem.finisherTargetHpPctMax : 0.45)) {
+          semanticAdjSec -= Number.isFinite(sem.finisherBonusSec) ? sem.finisherBonusSec : 0.8;
+        }
+      } else if (sem.__semKey === "distractingshot") {
+        // Bad calm opener (low pressure, fresh target, single attacker).
+        if (i === 0 && combatState.fight.pressure < 0.5 && (combatState.fight.activeAttackerCount || 0) <= 1) {
+          semanticAdjSec += Number.isFinite(sem.calmOpenerPenaltySec) ? sem.calmOpenerPenaltySec : 1.4;
+        }
+        // Good under active-attacker pressure (>=2).
+        if ((combatState.fight.activeAttackerCount || 0) >= 2 || combatState.fight.pressure >= 1.2) {
+          semanticAdjSec -= Number.isFinite(sem.pressureReliefBonusSec) ? sem.pressureReliefBonusSec : 1.2;
+        }
+      } else if (sem.__semKey === "fanvolley") {
+        // Penalize when only one enemy / one attacker (true AoE wasted) AND mana heavy.
+        if ((combatState.fight.enemiesPresent || 0) <= 1) {
+          semanticAdjSec += Number.isFinite(sem.singleTargetMisusePenaltySec) ? sem.singleTargetMisusePenaltySec : 1.8;
+        }
+        if ((combatState.fight.activeAttackerCount || 0) <= 1 && (combatState.fight.enemiesPresent || 0) <= 2) {
+          semanticAdjSec += Number.isFinite(sem.mpHeavyPenaltySec) ? sem.mpHeavyPenaltySec : 0.4;
+        }
+      }
+    }
+    return +(ttkSec + survivalPenaltySec + tieHpLossSec + tieMpWasteSec + tieTempoSec + semanticAdjSec).toFixed(4);
+  }
+
+  // AI CHANGED: Compose results — short summary, action list, kill prediction, survival summary.
+  function plannerSeqDescribeNode(node, combatState) {
+    return {
+      actions: node.actions,
+      cumulativeDamage: +node.cumulativeDamage.toFixed(2),
+      predictedKillAtSec: node.killedAtSec,
+      finalTargetHp: Number.isFinite(node.sim.targetHpCur) ? +node.sim.targetHpCur.toFixed(2) : null,
+      finalPlayerHp: Number.isFinite(node.sim.playerHpCur) ? +node.sim.playerHpCur.toFixed(2) : null,
+      finalPlayerMp: Number.isFinite(node.sim.playerMpCur) ? +node.sim.playerMpCur.toFixed(2) : null,
+      finalElapsedSec: +node.sim.elapsedSec.toFixed(3),
+      simHpLost: +node.sim.hpLost.toFixed(2),
+      score: node._finalScore != null ? node._finalScore : node._provisionalScore,
+      survivalSummary: {
+        playerHpPctEnd: Number.isFinite(node.sim.playerHpCur) && Number.isFinite(node.sim.playerHpMax) && node.sim.playerHpMax > 0
+          ? +(node.sim.playerHpCur / node.sim.playerHpMax).toFixed(4)
+          : null,
+        pressureStart: combatState.fight.pressure
+      }
+    };
+  }
+
+  // AI CHANGED: Diagnostics-only — preview top candidate sequences. Read-only; safe to call from console at any time.
+  function previewPlannerSequences(userOpts) {
+    const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
+    const combatState = plannerSeqBuildCombatState(opts);
+    const normalizedSkills = plannerSeqBuildNormalizedSkills(opts);
+    if (normalizedSkills.length === 0) {
+      return {
+        ok: false,
+        reason: "no_normalized_skills",
+        combatState: combatState
+      };
+    }
+    const seqs = plannerSeqSearchSequences(combatState, normalizedSkills, {
+      disallowChargeSkills: opts.disallowChargeSkills === true
+    });
+    const top = seqs.slice(0, 6).map(function (n) {
+      return plannerSeqDescribeNode(n, combatState);
+    });
+    return {
+      ok: true,
+      combatState: combatState,
+      normalizedSkills: normalizedSkills,
+      topSequences: top,
+      bestSequence: top[0] || null
+    };
+  }
+
+  // AI CHANGED: Sequence-planner ENTRY POINT. Returns adapter-shape pick (or null when planner cannot decide / no skills).
+  // Also stores last decision in Runtime.planner.lastSequencePlan for diagnostics.
+  function plannerSelectSequencePick(userOpts) {
+    const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
+    const sp = Config.planner && Config.planner.sequencePlanner ? Config.planner.sequencePlanner : {};
+    if (Config.planner.useSequencePlannerFoundation === false) {
+      return null;
+    }
+    if (sp.enabled === false) {
+      return null;
+    }
+    const combatState = plannerSeqBuildCombatState(opts);
+    if (!combatState || combatState.fight.combatMode === "easy") {
+      // In Easy mode, the sequence planner is intentionally bypassed — combat path uses basic only via existing gates.
+      return null;
+    }
+    const normalizedSkills = plannerSeqBuildNormalizedSkills(opts);
+    if (!Array.isArray(normalizedSkills) || normalizedSkills.length === 0) {
+      return null;
+    }
+    // Mana / cooldown gate: at least one feasible candidate must exist at depth 0.
+    const initialSim = {
+      elapsedSec: 0,
+      playerMpCur: combatState.player.mpCur,
+      skillCooldownReadyAtSec: {}
+    };
+    const initialActions = plannerSeqBuildCandidateActions(initialSim, normalizedSkills, {
+      disallowChargeSkills: opts.disallowChargeSkills === true
+    });
+    const hasFeasibleSkill = initialActions.some(function (a) { return a.kind === "skill" || a.kind === "skill_charge"; });
+    if (!hasFeasibleSkill) {
+      // No skill actually fires now — let caller fall back to basic.
+      Runtime.planner.lastSequencePlan = {
+        ok: false,
+        reason: "no_feasible_skill_at_depth0",
+        combatState: combatState,
+        candidates: initialActions
+      };
+      return null;
+    }
+    const seqs = plannerSeqSearchSequences(combatState, normalizedSkills, {
+      disallowChargeSkills: opts.disallowChargeSkills === true
+    });
+    if (!seqs || seqs.length === 0) {
+      Runtime.planner.lastSequencePlan = {
+        ok: false,
+        reason: "no_sequences_returned",
+        combatState: combatState
+      };
+      return null;
+    }
+    const best = seqs[0];
+    const firstAction = best.actions[0];
+    const secondAction = best.actions.length > 1 ? best.actions[1] : null;
+    const diagnosticTop = seqs.slice(0, 5).map(function (n) {
+      return plannerSeqDescribeNode(n, combatState);
+    });
+    Runtime.planner.lastSequencePlan = {
+      ok: true,
+      builtAt: Date.now(),
+      combatState: combatState,
+      normalizedSkillCount: normalizedSkills.length,
+      bestSequence: plannerSeqDescribeNode(best, combatState),
+      topSequences: diagnosticTop,
+      firstAction: firstAction || null,
+      secondActionHint: secondAction || null
+    };
+    if (Config.planner.sequencePlanner && Config.planner.sequencePlanner.debugLog === true) {
+      Logger.log("PLANNER", "sequencePlanner pick", Runtime.planner.lastSequencePlan);
+    }
+    return {
+      combatState: combatState,
+      best: best,
+      firstAction: firstAction,
+      secondAction: secondAction,
+      normalizedSkills: normalizedSkills
+    };
+  }
+
+  // AI CHANGED: Compatibility adapter — translate a sequence-planner pick into the legacy { slot, record, chargeReleasePlan, queuedAction } shape
+  // the current combat executor consumes. Returns null when first action is basic (caller falls through to basic-only path).
+  function plannerAdaptSequencePickToOpenerShape(seqPick) {
+    if (!seqPick || !seqPick.firstAction) {
+      return null;
+    }
+    const first = seqPick.firstAction;
+    if (first.kind === "basic") {
+      return { adapted: null, reason: "first_action_basic" };
+    }
+    if (!first.skill || typeof first.skill.slot !== "number") {
+      return null;
+    }
+    const slots = (Runtime.skills && Array.isArray(Runtime.skills.slots)) ? Runtime.skills.slots : [];
+    const record = slots[first.skill.slot] || null;
+    if (!record || record.kind !== "skill") {
+      return null;
+    }
+    // Charge release plan — derive from existing helper, optionally overriding releaseMs for partial-release.
+    let chargeReleasePlan = null;
+    if (first.kind === "skill_charge" && typeof plannerBuildChargeReleasePlan === "function") {
+      // Use existing helper for shape, then override release fraction when partial.
+      const liveState = readBasicState();
+      const builtPlan = plannerBuildChargeReleasePlan(record, {
+        horizonSec: Number.isFinite(seqPick.combatState && seqPick.combatState.timing && seqPick.combatState.timing.maxHorizonSec)
+          ? seqPick.combatState.timing.maxHorizonSec
+          : null,
+        enemyKey: seqPick.combatState && seqPick.combatState.target ? seqPick.combatState.target.fingerprintKey : null,
+        liveState: liveState,
+        mpAvailable: seqPick.combatState && seqPick.combatState.player ? seqPick.combatState.player.mpCur : null
+      });
+      if (builtPlan && first.chargeMode === "partial" && Number.isFinite(first.chargeReleaseFraction) && Number.isFinite(builtPlan.channelMaxMs)) {
+        const overrideMs = Math.max(1, Math.round(builtPlan.channelMaxMs * first.chargeReleaseFraction));
+        const minHoldRaw = Config.combat && Number.isFinite(Config.combat.chargeSkillReleaseMinHoldMs)
+          ? Config.combat.chargeSkillReleaseMinHoldMs
+          : 0;
+        const minHoldMs = Math.max(0, Math.min(Math.round(minHoldRaw), builtPlan.channelMaxMs));
+        const finalReleaseMs = Math.max(minHoldMs, Math.min(builtPlan.channelMaxMs, overrideMs));
+        builtPlan.releaseMs = finalReleaseMs;
+        builtPlan.releaseSec = +(finalReleaseMs / 1000).toFixed(3);
+        builtPlan.releaseFraction = +(finalReleaseMs / builtPlan.channelMaxMs).toFixed(4);
+        builtPlan.releaseSource = "sequencePlanner_partial_release";
+        builtPlan.strategy = finalReleaseMs >= builtPlan.channelMaxMs ? "full_charge" : "cancel_release";
+        builtPlan.selectionMode = "sequence_planner_override";
+      }
+      chargeReleasePlan = builtPlan || null;
+    } else if (typeof plannerBuildChargeReleasePlan === "function") {
+      chargeReleasePlan = plannerBuildChargeReleasePlan(record, {
+        enemyKey: seqPick.combatState && seqPick.combatState.target ? seqPick.combatState.target.fingerprintKey : null,
+        liveState: readBasicState(),
+        mpAvailable: seqPick.combatState && seqPick.combatState.player ? seqPick.combatState.player.mpCur : null
+      });
+    }
+    // Queued follow-up action — use second-action hint if it is a skill/charge; otherwise let plannerBuildCombatQueueAction decide.
+    let queuedAction = null;
+    const second = seqPick.secondAction;
+    if (second && (second.kind === "skill" || second.kind === "skill_charge") && second.skill && typeof second.skill.slot === "number") {
+      const followUpHint = {
+        mode: "follow_up_skill",
+        slot: second.skill.slot,
+        value: null
+      };
+      queuedAction = typeof plannerBuildCombatQueueAction === "function"
+        ? plannerBuildCombatQueueAction({
+            afterSlot: first.skill.slot,
+            liveState: readBasicState(),
+            followUpHint: followUpHint,
+            mpAvailable: seqPick.combatState && seqPick.combatState.player && Number.isFinite(seqPick.combatState.player.mpCur)
+              ? Math.max(0, seqPick.combatState.player.mpCur - (Number.isFinite(record.manaCost) ? record.manaCost : 0))
+              : null,
+            disallowChargeSkills: true
+          })
+        : null;
+    } else {
+      queuedAction = typeof plannerBuildCombatQueueAction === "function"
+        ? plannerBuildCombatQueueAction({
+            afterSlot: first.skill.slot,
+            liveState: readBasicState(),
+            mpAvailable: seqPick.combatState && seqPick.combatState.player && Number.isFinite(seqPick.combatState.player.mpCur)
+              ? Math.max(0, seqPick.combatState.player.mpCur - (Number.isFinite(record.manaCost) ? record.manaCost : 0))
+              : null,
+            disallowChargeSkills: true
+          })
+        : null;
+    }
+    return {
+      adapted: {
+        slot: first.skill.slot,
+        record: record,
+        chargeReleasePlan: chargeReleasePlan,
+        queuedAction: queuedAction
+      },
+      reason: "ok"
+    };
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // End planner rewrite v1 foundation.
+  // ───────────────────────────────────────────────────────────────────────────
+
   // AI CHANGED: Phase C4 slice 8+12+15 — pick opener with optional horizonSim (paper damage window); else first feasible heuristic order.
   function plannerPickSkillOpeningPick(userOpts) {
     plannerApplyClassProfile();
@@ -3031,7 +4054,89 @@
       return null;
     }
 
+    // AI CHANGED: Planner rewrite v1 — sequence-planner foundation runs FIRST and is the new core decision engine.
+    //   - When it returns a usable adapter shape, we use it as the canonical pick.
+    //   - When it cannot decide (Easy mode, no feasible skill, no normalized skills, no paper DPS), we fall back to legacy openerHorizonSim.
+    //   - Forced-opener test path is still honored AFTER the sequence-planner adapter (when applicable) for runUiTestBundle's forced tests.
     const forcedReq = plannerBuildForcedOpenerRequest(opts);
+    if (
+      !forcedReq &&
+      Config.planner.useSequencePlannerFoundation !== false &&
+      Config.planner.sequencePlanner &&
+      Config.planner.sequencePlanner.enabled !== false
+    ) {
+      try {
+        const seqPick = plannerSelectSequencePick({
+          disallowChargeSkills: disallowChargeSkills,
+          liveState: st
+        });
+        if (seqPick) {
+          const adapterOut = plannerAdaptSequencePickToOpenerShape(seqPick);
+          if (adapterOut) {
+            if (adapterOut.adapted) {
+              const pickedSlot = adapterOut.adapted.slot;
+              const pickedRecord = adapterOut.adapted.record;
+              if (typeof pickedSlot === "number" && pickedRecord && pickedRecord.kind === "skill" && !exclude.has(pickedSlot)) {
+                pr.lastOpeningPickReason = "picked";
+                pr.lastOpeningPickDetail = {
+                  source: "sequence_planner_v1",
+                  slot: pickedSlot,
+                  name: pickedRecord.name || "",
+                  chargeReleasePlan: adapterOut.adapted.chargeReleasePlan || null,
+                  queuedAction: adapterOut.adapted.queuedAction || null,
+                  bestSequence: Runtime.planner.lastSequencePlan && Runtime.planner.lastSequencePlan.bestSequence
+                    ? Runtime.planner.lastSequencePlan.bestSequence
+                    : null,
+                  topSequences: Runtime.planner.lastSequencePlan && Runtime.planner.lastSequencePlan.topSequences
+                    ? Runtime.planner.lastSequencePlan.topSequences
+                    : null,
+                  filteredOut: {
+                    cooldown: breakdown.cooldown,
+                    mpGate: breakdown.mp,
+                    noDirectDamage: breakdown.noDirectDamage,
+                    excluded: breakdown.exclude,
+                    chargeGuard: breakdown.chargeGuard
+                  },
+                  postRetargetNoChargeGuard: disallowChargeSkills
+                };
+                return {
+                  slot: pickedSlot,
+                  record: pickedRecord,
+                  chargeReleasePlan: adapterOut.adapted.chargeReleasePlan || null,
+                  queuedAction: adapterOut.adapted.queuedAction || null
+                };
+              }
+            } else if (adapterOut.reason === "first_action_basic") {
+              // Sequence planner explicitly recommends starting with a basic — let the basic-fallback path take over.
+              pr.lastOpeningPickReason = "sequence_planner_prefers_basic";
+              pr.lastOpeningPickDetail = {
+                source: "sequence_planner_v1",
+                bestSequence: Runtime.planner.lastSequencePlan && Runtime.planner.lastSequencePlan.bestSequence
+                  ? Runtime.planner.lastSequencePlan.bestSequence
+                  : null,
+                topSequences: Runtime.planner.lastSequencePlan && Runtime.planner.lastSequencePlan.topSequences
+                  ? Runtime.planner.lastSequencePlan.topSequences
+                  : null,
+                filteredOut: {
+                  cooldown: breakdown.cooldown,
+                  mpGate: breakdown.mp,
+                  noDirectDamage: breakdown.noDirectDamage,
+                  excluded: breakdown.exclude,
+                  chargeGuard: breakdown.chargeGuard
+                },
+                postRetargetNoChargeGuard: disallowChargeSkills
+              };
+              return null;
+            }
+          }
+        }
+      } catch (seqErr) {
+        Logger.warn("PLANNER", "sequence planner threw — falling back to legacy openerHorizonSim", {
+          error: String(seqErr && seqErr.message ? seqErr.message : seqErr)
+        });
+      }
+    }
+
     if (forcedReq) {
       const forcedPick = plannerPickForcedOpenerCandidate(slots, exclude, forcedReq, mpCur, reserve, {
         disallowChargeSkills: disallowChargeSkills

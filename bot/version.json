@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "1.0.5-alpha",
-    "description":  "buff policy split: OOC longbuffs, tile prebuffs, safer support cast wait",
-    "builtAt":  "2026-05-22T14:14:20.0770225+03:00",
+    "version":  "1.0.6-alpha",
+    "description":  "planner foundation rewrite: sequence state, debuff-aware semantics, Archer tactical model",
+    "builtAt":  "2026-05-22T17:08:32.9665623+03:00",
     "history":  [
+                    {
+                        "version":  "1.0.6-alpha",
+                        "description":  "planner foundation rewrite: sequence state, debuff-aware semantics, Archer tactical model",
+                        "date":  "2026-05-22T17:08:32.9665623+03:00"
+                    },
                     {
                         "version":  "1.0.5-alpha",
                         "description":  "buff policy split: OOC longbuffs, tile prebuffs, safer support cast wait",
@@ -247,11 +252,6 @@
                         "version":  "0.3.182",
                         "description":  "Config: tighter verify + 25ms retarget/ranked settle",
                         "date":  "2026-05-13T16:15:32.3290222+03:00"
-                    },
-                    {
-                        "version":  "0.3.181",
-                        "description":  "Combat: post-retarget cancel after find-enemy retarget too",
-                        "date":  "2026-05-13T15:55:19.9721273+03:00"
                     }
                 ]
 }

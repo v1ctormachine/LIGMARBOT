@@ -455,6 +455,85 @@
       chargeSkillHoldIncomingPressureEnabled: true,
       // AI CHANGED: Basic-DPS units per second of hold per unit incomingPressure (0.07 ≈ mild nudge when bleeding; 0 to disable math while keeping enable flag).
       chargeSkillHoldIncomingPressurePenaltyInBasicDps: 0.07,
+      // AI CHANGED: Planner rewrite v1 — short-sequence planner foundation (TTK-first, debuff/active-attacker aware). When enabled,
+      // plannerPickSkillOpeningPick first compares 2–5-action sequences via a bounded beam search; falls back to legacy openerHorizonSim if
+      // the new planner cannot produce a usable plan (e.g. no skills, missing paper DPS, sequence search empty).
+      useSequencePlannerFoundation: true,
+      sequencePlanner: {
+        enabled: true,
+        // AI CHANGED: Max actions in a planned short sequence (basic + skills). 1 = opener only; 5 = setup → burst → finisher window.
+        maxActions: 5,
+        // AI CHANGED: Max simulated time in seconds before sequence search stops expanding.
+        maxHorizonSec: 6,
+        // AI CHANGED: Beam width — top-K sequences kept at each expansion depth (higher = more thorough, slower).
+        beamWidth: 12,
+        // AI CHANGED: Stop sequence expansion when simulator predicts target HP <= 0.
+        pruneIfTargetDead: true,
+        // AI CHANGED: Assumed basic-swing interval (ms) when hero attackSpeed is unknown (paper estimateBasicAttackDps fallback).
+        basicSwingIntervalMsFallback: 1000,
+        // AI CHANGED: When true, simulator includes interleaved basic swings between skill casts (only between actions, never DURING a cast).
+        simBasicSwingsBetweenActions: true,
+        // AI CHANGED: When true, charge skills also generate a partial-release candidate at this fraction (Sniper Shot partial release).
+        chargePartialReleaseFraction: 0.55,
+        // AI CHANGED: Survival floor — if simulated player HP/maxHp ratio drops below this during sequence, line is heavily penalized.
+        survivalMinHpRatio: 0.18,
+        // AI CHANGED: Penalty (in TTK-equivalent seconds) added per breach of survival floor.
+        survivalBreachPenaltySec: 8,
+        // AI CHANGED: Tie-break weights (smaller = less influence). Used only when TTK is comparable across candidate sequences.
+        tieBreakHpLossPerHpMaxSec: 1.5,
+        tieBreakMpWasteCoefSec: 0.0008,
+        tieBreakTempoCoefSec: 0.05,
+        // AI CHANGED: Set true to log planner sequence search summary at debug level (no-op for combat behavior).
+        debugLog: false,
+        // AI CHANGED: Generic role nudges in TTK-equivalent seconds. Class-agnostic: these encode skill-own semantics that the simulator cannot
+        // see from the parsed effects alone (e.g. "magic resist shred raises damage of follow-up magic skills inside its debuff window").
+        // They are NOT combo recipes — they are intrinsic skill semantics.
+        archerSemantics: {
+          // role: finisher (charge skill — penalize full-charge under pressure, prefer partial release; reward use when target near death)
+          sniperShot: {
+            role: "finisher",
+            chargeFullPressurePenaltySec: 1.6,
+            partialReleasePreferredUnderPressure: true,
+            finisherTargetHpPctMax: 0.45,
+            finisherBonusSec: 0.8
+          },
+          // role: shred_magic_resist (debuff that buffs follow-up magic damage during its window)
+          piercingStrike: {
+            role: "shred_magic_resist",
+            debuffDurationSec: 15,
+            // AI CHANGED: simulator multiplies magic skill damage by 1+followUpMagicDamageBoost while shred is active.
+            followUpMagicDamageBoost: 0.2
+          },
+          // role: tempo (slow buys time and reduces incoming damage)
+          iceShard: {
+            role: "tempo_slow",
+            slowDurationSec: 5,
+            // AI CHANGED: simulator reduces incoming HP loss by this fraction while slow is active on target.
+            incomingDamageReductionFraction: 0.3
+          },
+          // role: survival_tempo (target loses focus, cannot attack hero)
+          distractingShot: {
+            role: "survival_tempo_distract",
+            distractDurationSec: 6,
+            calmOpenerPenaltySec: 1.4,
+            pressureReliefBonusSec: 1.2,
+            // AI CHANGED: simulator removes one active attacker from the pressure model while distract is active on the targeted attacker.
+            activeAttackerReliefCount: 1
+          },
+          // role: aoe (true cleave, mana-heavy)
+          fanVolley: {
+            role: "aoe",
+            aoeFactor: 2,
+            mpHeavyPenaltySec: 0.4,
+            singleTargetMisusePenaltySec: 1.8
+          },
+          // role: defensive_utility (absorb shield — not generic damage)
+          windyDome: {
+            role: "defensive_utility",
+            preferUnderPressure: true
+          }
+        }
+      },
       // AI CHANGED: When true, attack-skill rank order uses conception first (master/scanned role model) instead of parsed effect magnitudes.
       skillRankUseConception: true,
       // AI CHANGED: Conception-first opener gate — allow horizon tie-break only within this score distance from best conception score.
@@ -689,6 +768,13 @@
       attackersPopupList: "div.member-list",
       attackersPopupCard: "app-battle-member-card.battle-member",
       attackersPopupCardName: ".info-top",
+      // AI CHANGED: Planner rewrite — active-attacker counter is the red badge inside the attackers button (closed popup) or member-list card count (open popup).
+      attackersBadgeValue: "app-button-icon.button-attackers .counter, app-button-icon.button-attackers .badge-value, app-button-icon.button-attackers span",
+      // AI CHANGED: Planner rewrite — best-effort visible target effects: profile-effects > app-effect-card with .effect-time and inner icon.
+      targetEffectsRoot: ".profile-effects",
+      targetEffectCard: "app-effect-card",
+      targetEffectTime: ".effect-time",
+      targetEffectIcon: "app-icon, img",
       // AI CHANGED: AUTO chat spammer — open battle log chat, type into the chat input, switch to Local, send, then close dialog.
       chatOpenButton: "div.battle-logs",
       chatInput: "app-input input[placeholder='Message...']",

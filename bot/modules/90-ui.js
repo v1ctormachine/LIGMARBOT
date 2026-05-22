@@ -2299,6 +2299,400 @@
         addCheck("prebuff_tile_gate_skips_same_tile", false, { error: String(err && err.message ? err.message : err) }, false);
       }
 
+      // AI CHANGED: Planner rewrite v1 — combat-state model shape sanity. Should expose player/target/fight/timing sub-objects whether or not
+      // a fight is live (best-effort fields are nulled when unknown, never absent).
+      try {
+        if (typeof getPlannerCombatState === "function") {
+          const cs = getPlannerCombatState();
+          const shapeOk = !!(
+            cs &&
+            cs.player && typeof cs.player === "object" &&
+            cs.target && typeof cs.target === "object" &&
+            cs.fight && typeof cs.fight === "object" &&
+            cs.timing && typeof cs.timing === "object" &&
+            Object.prototype.hasOwnProperty.call(cs.player, "hpCur") &&
+            Object.prototype.hasOwnProperty.call(cs.player, "mpCur") &&
+            Object.prototype.hasOwnProperty.call(cs.target, "hpCur") &&
+            Object.prototype.hasOwnProperty.call(cs.target, "visibleEffects") &&
+            Array.isArray(cs.target.visibleEffects) &&
+            Object.prototype.hasOwnProperty.call(cs.fight, "enemiesPresent") &&
+            Object.prototype.hasOwnProperty.call(cs.fight, "activeAttackerCount") &&
+            Object.prototype.hasOwnProperty.call(cs.fight, "pressure") &&
+            Object.prototype.hasOwnProperty.call(cs.timing, "maxHorizonSec") &&
+            Object.prototype.hasOwnProperty.call(cs.timing, "maxActions")
+          );
+          addCheck("planner_combat_state_shape", shapeOk, {
+            hasPlayer: !!(cs && cs.player),
+            hasTarget: !!(cs && cs.target),
+            hasFight: !!(cs && cs.fight),
+            hasTiming: !!(cs && cs.timing),
+            maxActions: cs && cs.timing ? cs.timing.maxActions : null,
+            maxHorizonSec: cs && cs.timing ? cs.timing.maxHorizonSec : null,
+            activeAttackerCount: cs && cs.fight ? cs.fight.activeAttackerCount : null,
+            activeAttackerSource: cs && cs.fight ? cs.fight.activeAttackerSource : null,
+            visibleEffectsCount: cs && cs.target && Array.isArray(cs.target.visibleEffects) ? cs.target.visibleEffects.length : null
+          }, false);
+        } else {
+          addCheck("planner_combat_state_shape", false, { reason: "fn_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_combat_state_shape threw", err);
+        addCheck("planner_combat_state_shape", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Planner rewrite v1 — active-attacker reader is available + returns either an object or null.
+      try {
+        if (typeof readActiveAttackerCount === "function") {
+          const a = readActiveAttackerCount();
+          const ok = a === null || (a && typeof a === "object" && Number.isFinite(a.count));
+          addCheck("planner_active_attacker_reader", !!ok, {
+            result: a,
+            buttonSelector: Config.selectors.attackersButton
+          }, false);
+        } else {
+          addCheck("planner_active_attacker_reader", false, { reason: "fn_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_active_attacker_reader threw", err);
+        addCheck("planner_active_attacker_reader", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Planner rewrite v1 — target effect reader returns array (empty when no target / no effect cards present).
+      try {
+        if (typeof readTargetVisibleEffects === "function") {
+          const eff = readTargetVisibleEffects();
+          const shapeOk = Array.isArray(eff) && eff.every(function (e) {
+            return e && typeof e === "object"
+              && Object.prototype.hasOwnProperty.call(e, "id")
+              && Object.prototype.hasOwnProperty.call(e, "label")
+              && Object.prototype.hasOwnProperty.call(e, "remainingSec")
+              && Object.prototype.hasOwnProperty.call(e, "raw");
+          });
+          addCheck("planner_target_effect_reader_shape", shapeOk, {
+            effectCount: Array.isArray(eff) ? eff.length : null,
+            sample: Array.isArray(eff) ? eff.slice(0, 3) : null,
+            selectorsUsed: {
+              root: Config.selectors.targetEffectsRoot,
+              card: Config.selectors.targetEffectCard,
+              time: Config.selectors.targetEffectTime
+            }
+          }, false);
+        } else {
+          addCheck("planner_target_effect_reader_shape", false, { reason: "fn_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_target_effect_reader_shape threw", err);
+        addCheck("planner_target_effect_reader_shape", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Planner rewrite v1 — Archer skill semantic enrichment is loaded into Config.planner.sequencePlanner.archerSemantics.
+      // We do NOT require those skills to be on the bar; we only verify the SEMANTIC table is intact + has the expected keys/values.
+      try {
+        const sem = Config.planner && Config.planner.sequencePlanner && Config.planner.sequencePlanner.archerSemantics;
+        const ok = !!(
+          sem &&
+          sem.sniperShot && sem.sniperShot.role === "finisher" &&
+          sem.piercingStrike && sem.piercingStrike.role === "shred_magic_resist" && Number.isFinite(sem.piercingStrike.debuffDurationSec) &&
+          sem.iceShard && sem.iceShard.role === "tempo_slow" && Number.isFinite(sem.iceShard.slowDurationSec) &&
+          sem.distractingShot && sem.distractingShot.role === "survival_tempo_distract" &&
+          sem.fanVolley && sem.fanVolley.role === "aoe" && sem.fanVolley.aoeFactor >= 1
+        );
+        addCheck("planner_archer_semantic_table", ok, {
+          sniperShotRole: sem && sem.sniperShot ? sem.sniperShot.role : null,
+          piercingStrikeRole: sem && sem.piercingStrike ? sem.piercingStrike.role : null,
+          piercingStrikeDuration: sem && sem.piercingStrike ? sem.piercingStrike.debuffDurationSec : null,
+          iceShardRole: sem && sem.iceShard ? sem.iceShard.role : null,
+          iceShardDuration: sem && sem.iceShard ? sem.iceShard.slowDurationSec : null,
+          distractingShotRole: sem && sem.distractingShot ? sem.distractingShot.role : null,
+          fanVolleyRole: sem && sem.fanVolley ? sem.fanVolley.role : null
+        }, false);
+      } catch (err) {
+        Logger.warn("TEST", "planner_archer_semantic_table threw", err);
+        addCheck("planner_archer_semantic_table", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Planner rewrite v1 — normalized skill view exposes the right per-skill fields (slot/name/cast/cooldown/manaCost/damage shape/charge/AoE/control).
+      try {
+        if (typeof getPlannerNormalizedSkills === "function") {
+          const ns = getPlannerNormalizedSkills();
+          const shapeOk = Array.isArray(ns) && ns.every(function (s) {
+            return s && typeof s === "object"
+              && Object.prototype.hasOwnProperty.call(s, "slot")
+              && Object.prototype.hasOwnProperty.call(s, "name")
+              && Object.prototype.hasOwnProperty.call(s, "manaCost")
+              && Object.prototype.hasOwnProperty.call(s, "castTimeSec")
+              && Object.prototype.hasOwnProperty.call(s, "cooldownSec")
+              && Object.prototype.hasOwnProperty.call(s, "immediateDamage")
+              && Object.prototype.hasOwnProperty.call(s, "dotPerSec")
+              && Object.prototype.hasOwnProperty.call(s, "isCharge")
+              && Object.prototype.hasOwnProperty.call(s, "isAoe")
+              && Object.prototype.hasOwnProperty.call(s, "isControl")
+              && Object.prototype.hasOwnProperty.call(s, "damageType")
+              && Object.prototype.hasOwnProperty.call(s, "tacticalRoles")
+              && Object.prototype.hasOwnProperty.call(s, "semantic");
+          });
+          // Also verify any Archer skill on the bar that we have semantics for resolves to the right semantic key.
+          const byKey = {};
+          for (let i = 0; i < ns.length; i += 1) {
+            const k = ns[i].normalizedKey || "";
+            byKey[k] = ns[i];
+          }
+          const archerKeys = ["snipershot", "piercingstrike", "iceshard", "distractingshot", "fanvolley"];
+          const semanticHits = archerKeys.filter(function (k) {
+            return byKey[k] && byKey[k].semantic && byKey[k].semantic.__semKey === k;
+          });
+          addCheck("planner_normalized_skill_semantics", shapeOk, {
+            count: Array.isArray(ns) ? ns.length : null,
+            archerSemanticsHits: semanticHits,
+            sample: Array.isArray(ns) ? ns.slice(0, 4).map(function (s) {
+              return {
+                slot: s.slot,
+                name: s.name,
+                normalizedKey: s.normalizedKey,
+                immediateDamage: s.immediateDamage,
+                dotPerSec: s.dotPerSec,
+                isCharge: s.isCharge,
+                isAoe: s.isAoe,
+                isControl: s.isControl,
+                damageType: s.damageType,
+                semanticRole: s.semantic ? s.semantic.role : null
+              };
+            }) : null
+          }, false);
+        } else {
+          addCheck("planner_normalized_skill_semantics", false, { reason: "fn_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_normalized_skill_semantics threw", err);
+        addCheck("planner_normalized_skill_semantics", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Planner rewrite v1 — candidate sequence preview returns shape we expect (combatState + normalizedSkills + topSequences[] with actions/score),
+      // or a reasoned `ok:false` when no normalized skills are available (e.g. empty bar in dev/test).
+      try {
+        if (typeof previewPlannerSequences === "function") {
+          const p = previewPlannerSequences();
+          const okShape = !!(
+            p && typeof p === "object" &&
+            (
+              (p.ok === true &&
+                p.combatState && typeof p.combatState === "object" &&
+                Array.isArray(p.normalizedSkills) &&
+                Array.isArray(p.topSequences) &&
+                p.topSequences.every(function (s) {
+                  return s && Array.isArray(s.actions) && Object.prototype.hasOwnProperty.call(s, "score");
+                })
+              )
+              ||
+              (p.ok === false && typeof p.reason === "string")
+            )
+          );
+          addCheck("planner_sequence_preview_shape", okShape, {
+            ok: p && p.ok,
+            reason: p && p.reason,
+            topCount: p && Array.isArray(p.topSequences) ? p.topSequences.length : null,
+            firstSequenceActions: p && p.topSequences && p.topSequences[0]
+              ? p.topSequences[0].actions.map(function (a) { return { kind: a.kind, name: a.name, slot: a.slot, chargeMode: a.chargeMode }; })
+              : null
+          }, false);
+        } else {
+          addCheck("planner_sequence_preview_shape", false, { reason: "fn_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_sequence_preview_shape threw", err);
+        addCheck("planner_sequence_preview_shape", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Planner rewrite v1 — compatibility adapter still produces { slot, record, chargeReleasePlan, queuedAction } when the new planner
+      // returns a usable skill pick, OR returns null cleanly when first action is basic / no feasible skill. We can only assert the type contract here;
+      // a real combat call is exercised by live AUTO runs.
+      try {
+        if (typeof plannerSelectSequencePick === "function" && typeof plannerAdaptSequencePickToOpenerShape === "function") {
+          const seqPick = plannerSelectSequencePick({});
+          let adapterShapeOk = false;
+          let adapterReason = null;
+          if (seqPick) {
+            const adapterOut = plannerAdaptSequencePickToOpenerShape(seqPick);
+            if (adapterOut) {
+              adapterReason = adapterOut.reason;
+              if (adapterOut.adapted) {
+                adapterShapeOk = !!(
+                  adapterOut.adapted &&
+                  typeof adapterOut.adapted.slot === "number" &&
+                  adapterOut.adapted.record &&
+                  Object.prototype.hasOwnProperty.call(adapterOut.adapted, "chargeReleasePlan") &&
+                  Object.prototype.hasOwnProperty.call(adapterOut.adapted, "queuedAction")
+                );
+              } else if (adapterOut.reason === "first_action_basic") {
+                adapterShapeOk = true;
+              }
+            } else {
+              adapterShapeOk = true;
+            }
+          } else {
+            // No sequence pick (Easy mode, no skills, no paper DPS, etc.) — adapter contract still satisfied.
+            adapterShapeOk = true;
+            adapterReason = "no_sequence_pick";
+          }
+          addCheck("planner_compat_adapter_shape", adapterShapeOk, {
+            seqPickPresent: !!seqPick,
+            adapterReason: adapterReason,
+            lastPlanReason: Runtime.planner && Runtime.planner.lastSequencePlan ? Runtime.planner.lastSequencePlan.reason || null : null
+          }, false);
+        } else {
+          addCheck("planner_compat_adapter_shape", false, { reason: "fns_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_compat_adapter_shape threw", err);
+        addCheck("planner_compat_adapter_shape", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Planner rewrite v1 — pure logic check: with no live UI, build a synthetic combat state + normalized skill set covering
+      // (a) full-charge Sniper Shot under pressure (b) partial-release Sniper Shot under pressure (c) Distracting Shot as opener vs calm.
+      // We use ONLY public planner internals; this is a shape/logic sanity test, NOT a tactical perfection test.
+      try {
+        if (
+          typeof plannerSeqBuildCandidateActions === "function" &&
+          typeof plannerSeqSimulateAction === "function" &&
+          typeof plannerSeqScoreNode === "function"
+        ) {
+          // Synthetic skills.
+          const sniper = {
+            slot: 0, name: "Sniper Shot", normalizedKey: "snipershot",
+            isAttack: true, hasDirectDamage: true, manaCost: 0, castTimeSec: 0, cooldownSec: 6,
+            immediateDamage: 200, dotPerSec: 0, dotDurationSec: 0, damageType: "physical",
+            isCharge: true, chargeMaxSec: 4, chargeGearPct: 200, isAoe: false, isControl: false,
+            controlDurationSec: 0, tacticalRoles: ["channeled"],
+            semantic: { __semKey: "snipershot", role: "finisher",
+              chargeFullPressurePenaltySec: 1.6, finisherTargetHpPctMax: 0.45, finisherBonusSec: 0.8 }
+          };
+          const distract = {
+            slot: 1, name: "Distracting Shot", normalizedKey: "distractingshot",
+            isAttack: true, hasDirectDamage: true, manaCost: 0, castTimeSec: 0.4, cooldownSec: 12,
+            immediateDamage: 80, dotPerSec: 0, dotDurationSec: 0, damageType: "physical",
+            isCharge: false, chargeMaxSec: 0, chargeGearPct: 0, isAoe: false, isControl: false,
+            controlDurationSec: 0, tacticalRoles: ["offensive"],
+            semantic: { __semKey: "distractingshot", role: "survival_tempo_distract",
+              distractDurationSec: 6, calmOpenerPenaltySec: 1.4, pressureReliefBonusSec: 1.2, activeAttackerReliefCount: 1 }
+          };
+          function mkSim(playerHpRatio) {
+            return {
+              elapsedSec: 0, playerHpCur: playerHpRatio * 1000, playerHpMax: 1000,
+              playerMpCur: 100, playerMpMax: 100, targetHpCur: 1000, targetHpMax: 1000,
+              enemyCount: 1, activeAttackers: 1, pressure: 0,
+              incomingHpLossPerSec: 0, basicSwingIntervalSec: 1, expectedBasicHit: 50,
+              basicAttackLikelyUnderway: false, skillCooldownReadyAtSec: {},
+              targetFlags: { hasMagicResistShred: false, hasSlow: false, hasDistract: false,
+                magicResistShredRemainingSec: 0, slowRemainingSec: 0, distractRemainingSec: 0 },
+              lastActionTimeSec: 0, mpWasted: 0, hpLost: 0, mobFactor: 1
+            };
+          }
+          // 1) Under pressure: full-charge vs partial-release Sniper Shot — partial-release should score better (lower is better).
+          const pressureState = {
+            mode: "fast",
+            player: { hpCur: 600, hpMax: 1000, hpPct: 0.6, mpCur: 100, mpMax: 100, mpPct: 1,
+              basicSwingIntervalSec: 1, expectedBasicHit: 50, basicDpsAdjusted: 50, basicAttackLikelyUnderway: false, longSelfBuffs: [] },
+            target: { hpCur: 1000, hpMax: 1000, hpPct: 1, visibleEffects: [],
+              flags: { hasMagicResistShred: false, hasSlow: false, hasDistract: false,
+                magicResistShredRemainingSec: 0, slowRemainingSec: 0, distractRemainingSec: 0 }, fingerprintKey: null },
+            fight: { enemiesPresent: 2, activeAttackerCount: 2, activeAttackerSource: "test",
+              pressure: 1.4, incomingHpLossPerSec: 0, combatMode: "fast" },
+            timing: { nowMs: Date.now(), maxHorizonSec: 6, maxActions: 5 },
+            paperBasicDps: 50, mobFactor: 1
+          };
+          const simP = mkSim(0.6);
+          const fullChargeStep = plannerSeqSimulateAction(simP, {
+            kind: "skill_charge", chargeMode: "full", chargeReleaseFraction: 1, name: "Sniper Shot", slot: 0, skill: sniper
+          });
+          const partialStep = plannerSeqSimulateAction(simP, {
+            kind: "skill_charge", chargeMode: "partial", chargeReleaseFraction: 0.5, name: "Sniper Shot", slot: 0, skill: sniper
+          });
+          const fullNode = {
+            sim: fullChargeStep.next, actions: [{ kind: "skill_charge", chargeMode: "full", chargeReleaseFraction: 1,
+              skill: { slot: 0, name: "Sniper Shot", normalizedKey: "snipershot", damageType: "physical" } }],
+            cumulativeDamage: fullChargeStep.damageDealt, killedAtSec: null
+          };
+          const partialNode = {
+            sim: partialStep.next, actions: [{ kind: "skill_charge", chargeMode: "partial", chargeReleaseFraction: 0.5,
+              skill: { slot: 0, name: "Sniper Shot", normalizedKey: "snipershot", damageType: "physical" } }],
+            cumulativeDamage: partialStep.damageDealt, killedAtSec: null
+          };
+          const fullScore = plannerSeqScoreNode(fullNode, pressureState);
+          const partialScore = plannerSeqScoreNode(partialNode, pressureState);
+          const partialBetterUnderPressure = partialScore < fullScore;
+          // 2) Calm opener: Distracting Shot first should score WORSE than basic first (penalize calm-opener distract).
+          const calmState = {
+            mode: "fast",
+            player: { hpCur: 1000, hpMax: 1000, hpPct: 1, mpCur: 100, mpMax: 100, mpPct: 1,
+              basicSwingIntervalSec: 1, expectedBasicHit: 50, basicDpsAdjusted: 50, basicAttackLikelyUnderway: false, longSelfBuffs: [] },
+            target: { hpCur: 600, hpMax: 600, hpPct: 1, visibleEffects: [],
+              flags: { hasMagicResistShred: false, hasSlow: false, hasDistract: false,
+                magicResistShredRemainingSec: 0, slowRemainingSec: 0, distractRemainingSec: 0 }, fingerprintKey: null },
+            fight: { enemiesPresent: 1, activeAttackerCount: 1, activeAttackerSource: "test",
+              pressure: 0, incomingHpLossPerSec: 0, combatMode: "fast" },
+            timing: { nowMs: Date.now(), maxHorizonSec: 6, maxActions: 5 },
+            paperBasicDps: 50, mobFactor: 1
+          };
+          const calmSimBasic = mkSim(1);
+          const basicStep = plannerSeqSimulateAction(calmSimBasic, { kind: "basic", name: "Basic Attack", slot: null });
+          const calmSimDist = mkSim(1);
+          const distStep = plannerSeqSimulateAction(calmSimDist, {
+            kind: "skill", name: "Distracting Shot", slot: 1, skill: distract
+          });
+          const basicNode = {
+            sim: basicStep.next, actions: [{ kind: "basic", name: "Basic Attack", slot: null }],
+            cumulativeDamage: basicStep.damageDealt, killedAtSec: null
+          };
+          const distNode = {
+            sim: distStep.next, actions: [{ kind: "skill", name: "Distracting Shot", slot: 1,
+              skill: { slot: 1, name: "Distracting Shot", normalizedKey: "distractingshot", damageType: "physical" } }],
+            cumulativeDamage: distStep.damageDealt, killedAtSec: null
+          };
+          const basicScore = plannerSeqScoreNode(basicNode, calmState);
+          const distScore = plannerSeqScoreNode(distNode, calmState);
+          const distractCalmIsWorseThanBasic = distScore > basicScore;
+          // 3) Active-attacker = 2 pressure → distract should score BETTER than basic.
+          const pressureSim = mkSim(0.7);
+          const pressureBasicStep = plannerSeqSimulateAction(pressureSim, { kind: "basic", name: "Basic Attack", slot: null });
+          const pressureDistStep = plannerSeqSimulateAction(mkSim(0.7), {
+            kind: "skill", name: "Distracting Shot", slot: 1, skill: distract
+          });
+          const pressureBasicNode = {
+            sim: pressureBasicStep.next, actions: [{ kind: "basic", name: "Basic Attack", slot: null }],
+            cumulativeDamage: pressureBasicStep.damageDealt, killedAtSec: null
+          };
+          const pressureDistNode = {
+            sim: pressureDistStep.next, actions: [{ kind: "skill", name: "Distracting Shot", slot: 1,
+              skill: { slot: 1, name: "Distracting Shot", normalizedKey: "distractingshot", damageType: "physical" } }],
+            cumulativeDamage: pressureDistStep.damageDealt, killedAtSec: null
+          };
+          const pressureBasicScore = plannerSeqScoreNode(pressureBasicNode, pressureState);
+          const pressureDistScore = plannerSeqScoreNode(pressureDistNode, pressureState);
+          const distractUnderPressureIsBetterThanBasic = pressureDistScore < pressureBasicScore;
+          addCheck(
+            "planner_sequence_logic_archer_smoke",
+            partialBetterUnderPressure && distractCalmIsWorseThanBasic && distractUnderPressureIsBetterThanBasic,
+            {
+              fullChargeScore: fullScore,
+              partialReleaseScore: partialScore,
+              partialBetterUnderPressure: partialBetterUnderPressure,
+              calmBasicScore: basicScore,
+              calmDistractScore: distScore,
+              distractCalmIsWorseThanBasic: distractCalmIsWorseThanBasic,
+              pressureBasicScore: pressureBasicScore,
+              pressureDistractScore: pressureDistScore,
+              distractUnderPressureIsBetterThanBasic: distractUnderPressureIsBetterThanBasic
+            },
+            false
+          );
+        } else {
+          addCheck("planner_sequence_logic_archer_smoke", false, { reason: "internal_fns_unreachable" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_sequence_logic_archer_smoke threw", err);
+        addCheck("planner_sequence_logic_archer_smoke", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
       // AI CHANGED: Night mode — persistence round-trip via the shared autoFarmUi blob (key `ligmarbot.autoFarmUi.v1`).
       try {
         if (

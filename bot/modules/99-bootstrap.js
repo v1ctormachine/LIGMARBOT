@@ -354,7 +354,26 @@
       // AI CHANGED: Diagnostics-only threshold suggestion from ranked runtime telemetry (no auto-write to Config).
       plannerBuildRankedTuningHint: plannerBuildRankedTuningHint,
       // AI CHANGED: openerHorizonSim — paper damage window preview for ranked candidates (86-planner.js).
-      previewOpenerHorizonSim: previewOpenerHorizonSim
+      previewOpenerHorizonSim: previewOpenerHorizonSim,
+      // AI CHANGED: Planner rewrite v1 — read-only diagnostics for the new short-sequence planner foundation (86-planner.js).
+      getPlannerCombatState:
+        typeof getPlannerCombatState === "function" ? getPlannerCombatState : null,
+      getPlannerNormalizedSkills:
+        typeof getPlannerNormalizedSkills === "function" ? getPlannerNormalizedSkills : null,
+      previewPlannerSequences:
+        typeof previewPlannerSequences === "function" ? previewPlannerSequences : null,
+      plannerSelectSequencePick:
+        typeof plannerSelectSequencePick === "function" ? plannerSelectSequencePick : null,
+      plannerAdaptSequencePickToOpenerShape:
+        typeof plannerAdaptSequencePickToOpenerShape === "function" ? plannerAdaptSequencePickToOpenerShape : null,
+      // AI CHANGED: Best-effort live readers for active-attacker count + visible target effects (40-state.js).
+      readActiveAttackerCount:
+        typeof readActiveAttackerCount === "function" ? readActiveAttackerCount : null,
+      readTargetVisibleEffects:
+        typeof readTargetVisibleEffects === "function" ? readTargetVisibleEffects : null,
+      getPlannerLastSequencePlan: function () {
+        return Runtime && Runtime.planner ? Runtime.planner.lastSequencePlan || null : null;
+      }
     };
 
     Logger.log("BOOT", "Debug API exposed as window.ligmarBot");
