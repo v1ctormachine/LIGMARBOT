@@ -3698,6 +3698,39 @@
     // above, or absorbed by the cast/swing). After any action the schedule is `+Infinity`, so the simulator can NEVER credit a second
     // carry-over at depth 1+. This is the contract that makes "no free basics during cast/channel" impossible to violate by construction.
     next.nextBasicReadyAtSec = Number.POSITIVE_INFINITY;
+    // AI CHANGED: Planner tactical tuning v1.1.2 — evolve simulated pressure to reflect current debuff state. Without this, `pre.pressure`
+    // for subsequent actions stayed equal to the initial combat-state pressure forever, so Distracting Shot / Ice Shard relief never
+    // "unlocked" calmer follow-up choices (e.g. Sniper Shot full-charge after Distract). We recompute pressure from the now-current
+    // effective attacker count (post-distract) and effective incoming HP loss (post-slow + post-distract) using the SAME formula as
+    // `plannerSeqBuildCombatState`. Active attacker COUNT itself is left as the raw value (the attacker is still there, just distracted)
+    // so `pre.activeAttackers` stays a reliable real-world signal for AoE scoring.
+    const distractReliefCountPost = Config.planner.sequencePlanner.archerSemantics
+      && Config.planner.sequencePlanner.archerSemantics.distractingShot
+      && Number.isFinite(Config.planner.sequencePlanner.archerSemantics.distractingShot.activeAttackerReliefCount)
+      ? Config.planner.sequencePlanner.archerSemantics.distractingShot.activeAttackerReliefCount
+      : 1;
+    const slowReductionPost = Config.planner.sequencePlanner.archerSemantics
+      && Config.planner.sequencePlanner.archerSemantics.iceShard
+      && Number.isFinite(Config.planner.sequencePlanner.archerSemantics.iceShard.incomingDamageReductionFraction)
+      ? Config.planner.sequencePlanner.archerSemantics.iceShard.incomingDamageReductionFraction
+      : 0.3;
+    const rawAtkPost = Number.isFinite(next.activeAttackers) ? next.activeAttackers : 0;
+    const effAtkPost = next.targetFlags.hasDistract ? Math.max(0, rawAtkPost - distractReliefCountPost) : rawAtkPost;
+    const slowFactorPost = next.targetFlags.hasSlow ? (1 - slowReductionPost) : 1;
+    let pressurePost = Math.max(0, effAtkPost - 1);
+    if (Number.isFinite(next.playerHpCur) && Number.isFinite(next.playerHpMax) && next.playerHpMax > 0) {
+      const rPost = next.playerHpCur / next.playerHpMax;
+      if (rPost < 0.65) {
+        pressurePost += (0.65 - rPost) * 2;
+      }
+    }
+    if (Number.isFinite(next.incomingHpLossPerSec) && next.incomingHpLossPerSec > 0
+        && Number.isFinite(next.playerHpMax) && next.playerHpMax > 0) {
+      const distractIncomingScale = (next.targetFlags.hasDistract && rawAtkPost > 0) ? (effAtkPost / rawAtkPost) : 1;
+      const effIncomingPost = next.incomingHpLossPerSec * slowFactorPost * distractIncomingScale;
+      pressurePost += Math.min(2.5, (effIncomingPost / next.playerHpMax) * 8);
+    }
+    next.pressure = +pressurePost.toFixed(3);
     // Track tempo / mana waste tiebreaks.
     if (action.kind !== "basic" && action.skill && action.skill.manaCost > 0) {
       if (Number.isFinite(next.targetHpCur) && next.targetHpCur <= 0) {
@@ -3792,6 +3825,13 @@
           // with diagnostic callers that already read that name.
           const preBasicCarryOverPending = typeof node.sim.nextBasicReadyAtSec === "number"
             && node.sim.nextBasicReadyAtSec <= node.sim.elapsedSec + 1e-9;
+          // AI CHANGED: Planner tactical tuning v1.1.2 — expose MP fraction in pre-snapshot so scoring can detect when a skill cast would
+          // commit a large portion of the current mana pool (mainly used by Fan Volley's mp-fraction penalty).
+          const preMpFraction = Number.isFinite(node.sim.playerMpCur)
+            && Number.isFinite(node.sim.playerMpMax)
+            && node.sim.playerMpMax > 0
+            ? +(node.sim.playerMpCur / node.sim.playerMpMax).toFixed(4)
+            : null;
           const preSnapshot = {
             elapsedSec: +node.sim.elapsedSec.toFixed(3),
             targetHpPct: preTargetHpPct,
@@ -3804,7 +3844,13 @@
             hasSlow: !!(node.sim.targetFlags && node.sim.targetFlags.hasSlow),
             hasDistract: !!(node.sim.targetFlags && node.sim.targetFlags.hasDistract),
             basicCarryOverPending: preBasicCarryOverPending,
-            basicAttackLikelyUnderway: preBasicCarryOverPending
+            basicAttackLikelyUnderway: preBasicCarryOverPending,
+            mpCur: Number.isFinite(node.sim.playerMpCur) ? node.sim.playerMpCur : null,
+            mpMax: Number.isFinite(node.sim.playerMpMax) ? node.sim.playerMpMax : null,
+            mpFraction: preMpFraction,
+            magicResistShredRemainingSec: node.sim.targetFlags && Number.isFinite(node.sim.targetFlags.magicResistShredRemainingSec)
+              ? +node.sim.targetFlags.magicResistShredRemainingSec.toFixed(3)
+              : 0
           };
           const stepped = plannerSeqSimulateAction(node.sim, cand);
           const nextNode = {
@@ -3813,7 +3859,22 @@
               kind: cand.kind,
               name: cand.name,
               slot: cand.slot,
-              skill: cand.skill ? { slot: cand.skill.slot, name: cand.skill.name, normalizedKey: cand.skill.normalizedKey, damageType: cand.skill.damageType } : null,
+              skill: cand.skill ? {
+                slot: cand.skill.slot,
+                name: cand.skill.name,
+                normalizedKey: cand.skill.normalizedKey,
+                damageType: cand.skill.damageType,
+                // AI CHANGED: Planner tactical tuning v1.1.2 — surface typed-damage hints + mana cost on the action.skill subset so scoring
+                // can run setup-detection / mp-fraction checks without needing access to the full normalized skill object.
+                manaCost: Number.isFinite(cand.skill.manaCost) ? cand.skill.manaCost : 0,
+                immediateMagic: cand.skill.immediateDamageByType && Number.isFinite(cand.skill.immediateDamageByType.magic)
+                  ? cand.skill.immediateDamageByType.magic
+                  : 0,
+                dotMagicPerSec: cand.skill.dotPerSecByType && Number.isFinite(cand.skill.dotPerSecByType.magic)
+                  ? cand.skill.dotPerSecByType.magic
+                  : 0,
+                isAoe: !!cand.skill.isAoe
+              } : null,
               chargeMode: cand.chargeMode || null,
               chargeReleaseFraction: Number.isFinite(cand.chargeReleaseFraction) ? cand.chargeReleaseFraction : null,
               actionTimeSec: +stepped.actionTimeSec.toFixed(3),
@@ -3857,6 +3918,197 @@
       return a._finalScore - b._finalScore;
     });
     return finalScored;
+  }
+
+  // AI CHANGED: Planner tactical tuning v1.1.2 — extracted per-action semantic explanation. Walks `node.actions[]` and emits per-action
+  // reason tags + score contributions (in TTK-equivalent seconds) so scoring AND diagnostics share ONE source of truth for tactical
+  // valuation. Used by `plannerSeqScoreNode` (sums `semanticAdjSec`) and `plannerSeqDescribeNode` (embeds per-action explanation).
+  //
+  // Per-action `contributions` keys are stable strings (e.g. `snipershot_finisher_bonus`, `piercingstrike_setup_bonus`); positive values
+  // INCREASE TTK (penalty), negative values DECREASE TTK (bonus). `reasonTags` is a tag list summarizing why the contributions fired.
+  //
+  // IMPORTANT: this function reads `pre` snapshots ONLY (the moment of cast); it never re-runs the simulator. It is referentially
+  // transparent for a fixed node + combatState.
+  function plannerSeqExplainSemantic(node, combatState) {
+    const actionsLen = node && Array.isArray(node.actions) ? node.actions.length : 0;
+    const contributionsPerAction = new Array(actionsLen);
+    const reasonTagsPerAction = new Array(actionsLen);
+    let total = 0;
+    function preOrInitialNum(pre, preKey, initial, fallback) {
+      if (pre && Number.isFinite(pre[preKey])) {
+        return pre[preKey];
+      }
+      if (Number.isFinite(initial)) {
+        return initial;
+      }
+      return fallback;
+    }
+    for (let i = 0; i < actionsLen; i += 1) {
+      const a = node.actions[i];
+      const contributions = {};
+      const tags = [];
+      if (!a || !a.skill || !a.skill.normalizedKey) {
+        contributionsPerAction[i] = contributions;
+        reasonTagsPerAction[i] = tags;
+        continue;
+      }
+      const sem = plannerSeqResolveSemanticEnrichment(a.skill.name || "");
+      if (!sem) {
+        contributionsPerAction[i] = contributions;
+        reasonTagsPerAction[i] = tags;
+        continue;
+      }
+      const pre = a.pre || null;
+      if (sem.__semKey === "snipershot") {
+        const isFullCharge = a.chargeMode === "full" || (a.chargeReleaseFraction != null && a.chargeReleaseFraction >= 0.95);
+        const effPressure = preOrInitialNum(pre, "pressure", combatState.fight.pressure, 0);
+        const effTargetHpPct = pre && Number.isFinite(pre.targetHpPct)
+          ? pre.targetHpPct
+          : (Number.isFinite(combatState.target.hpPct) ? combatState.target.hpPct : null);
+        const isOpenerMoment = pre ? pre.elapsedSec === 0 : (i === 0);
+        if (isFullCharge && effPressure >= 1) {
+          const v = Number.isFinite(sem.chargeFullPressurePenaltySec) ? sem.chargeFullPressurePenaltySec : 1.6;
+          contributions.snipershot_full_under_pressure = +v.toFixed(3);
+          total += v;
+          tags.push("snipershot_full_under_pressure");
+        }
+        if (Number.isFinite(effTargetHpPct) && effTargetHpPct <= (Number.isFinite(sem.finisherTargetHpPctMax) ? sem.finisherTargetHpPctMax : 0.45)) {
+          const v = Number.isFinite(sem.finisherBonusSec) ? sem.finisherBonusSec : 0.8;
+          contributions.snipershot_finisher_bonus = -(+v.toFixed(3));
+          total -= v;
+          tags.push("snipershot_finisher_window");
+          if (Number.isFinite(effTargetHpPct) && effTargetHpPct <= (Number.isFinite(sem.finisherLowHpPctMax) ? sem.finisherLowHpPctMax : 0.25)) {
+            const vLow = Number.isFinite(sem.finisherLowHpExtraBonusSec) ? sem.finisherLowHpExtraBonusSec : 0.4;
+            contributions.snipershot_finisher_low_hp_bonus = -(+vLow.toFixed(3));
+            total -= vLow;
+            tags.push("snipershot_lethal_window");
+          }
+        }
+        if (isFullCharge && isOpenerMoment && Number.isFinite(effTargetHpPct)
+            && effTargetHpPct >= (Number.isFinite(sem.fullChargeFullHpOpenerThreshold) ? sem.fullChargeFullHpOpenerThreshold : 0.8)) {
+          const v = Number.isFinite(sem.fullChargeFullHpOpenerPenaltySec) ? sem.fullChargeFullHpOpenerPenaltySec : 1.0;
+          contributions.snipershot_full_charge_full_hp_opener = +v.toFixed(3);
+          total += v;
+          tags.push("snipershot_full_charge_full_hp_opener");
+        }
+      } else if (sem.__semKey === "distractingshot") {
+        const effAttackers = pre && Number.isFinite(pre.effectiveActiveAttackers)
+          ? pre.effectiveActiveAttackers
+          : (Number.isFinite(combatState.fight.activeAttackerCount) ? combatState.fight.activeAttackerCount : 0);
+        const effPressure = preOrInitialNum(pre, "pressure", combatState.fight.pressure, 0);
+        const isOpenerMoment = pre ? pre.elapsedSec === 0 : (i === 0);
+        const effTargetHpPct = pre && Number.isFinite(pre.targetHpPct)
+          ? pre.targetHpPct
+          : (Number.isFinite(combatState.target.hpPct) ? combatState.target.hpPct : null);
+        if (isOpenerMoment && effPressure < 0.5 && effAttackers <= 1) {
+          const v = Number.isFinite(sem.calmOpenerPenaltySec) ? sem.calmOpenerPenaltySec : 1.4;
+          contributions.distractingshot_calm_opener = +v.toFixed(3);
+          total += v;
+          tags.push("distractingshot_calm_opener");
+          if (Number.isFinite(effTargetHpPct) && effTargetHpPct >= (Number.isFinite(sem.calmOpenerFullTargetHpPctMin) ? sem.calmOpenerFullTargetHpPctMin : 0.85)) {
+            const vExtra = Number.isFinite(sem.calmOpenerFullTargetExtraPenaltySec) ? sem.calmOpenerFullTargetExtraPenaltySec : 0.6;
+            contributions.distractingshot_calm_opener_full_target = +vExtra.toFixed(3);
+            total += vExtra;
+            tags.push("distractingshot_calm_opener_full_target");
+          }
+        }
+        if (effAttackers >= 2 || effPressure >= 1.2) {
+          const v = Number.isFinite(sem.pressureReliefBonusSec) ? sem.pressureReliefBonusSec : 1.2;
+          contributions.distractingshot_pressure_relief = -(+v.toFixed(3));
+          total -= v;
+          tags.push("distractingshot_pressure_relief");
+        }
+      } else if (sem.__semKey === "fanvolley") {
+        const effEnemyCount = pre && Number.isFinite(pre.enemyCount)
+          ? pre.enemyCount
+          : (Number.isFinite(combatState.fight.enemiesPresent) ? combatState.fight.enemiesPresent : 0);
+        const effActiveAttackers = pre && Number.isFinite(pre.effectiveActiveAttackers)
+          ? pre.effectiveActiveAttackers
+          : (Number.isFinite(combatState.fight.activeAttackerCount) ? combatState.fight.activeAttackerCount : 0);
+        if (effEnemyCount <= 1) {
+          const v = Number.isFinite(sem.singleTargetMisusePenaltySec) ? sem.singleTargetMisusePenaltySec : 1.8;
+          contributions.fanvolley_single_target_misuse = +v.toFixed(3);
+          total += v;
+          tags.push("fanvolley_single_target_misuse");
+        }
+        if (effActiveAttackers <= 1 && effEnemyCount <= 2) {
+          const v = Number.isFinite(sem.mpHeavyPenaltySec) ? sem.mpHeavyPenaltySec : 0.4;
+          contributions.fanvolley_mp_heavy = +v.toFixed(3);
+          total += v;
+          tags.push("fanvolley_mp_heavy");
+        }
+        const mana = a.skill && Number.isFinite(a.skill.manaCost) ? a.skill.manaCost : 0;
+        const mpMax = pre && Number.isFinite(pre.mpMax) ? pre.mpMax : (Number.isFinite(combatState.player.mpMax) ? combatState.player.mpMax : 0);
+        const mpFracThreshold = Number.isFinite(sem.mpFractionPenaltyThreshold) ? sem.mpFractionPenaltyThreshold : 0.4;
+        if (mana > 0 && mpMax > 0 && (mana / mpMax) >= mpFracThreshold) {
+          const v = Number.isFinite(sem.mpFractionHighPenaltySec) ? sem.mpFractionHighPenaltySec : 0.7;
+          contributions.fanvolley_mp_fraction_high = +v.toFixed(3);
+          total += v;
+          tags.push("fanvolley_mp_fraction_high");
+        }
+        const atkThresh = Number.isFinite(sem.trueMultiThreatAttackerThreshold) ? sem.trueMultiThreatAttackerThreshold : 2;
+        const enemyThresh = Number.isFinite(sem.trueMultiThreatEnemyThreshold) ? sem.trueMultiThreatEnemyThreshold : 2;
+        if (effEnemyCount >= enemyThresh && effActiveAttackers >= atkThresh) {
+          const v = Number.isFinite(sem.trueMultiThreatBonusSec) ? sem.trueMultiThreatBonusSec : 1.0;
+          contributions.fanvolley_true_multi_threat_bonus = -(+v.toFixed(3));
+          total -= v;
+          tags.push("fanvolley_true_multi_threat");
+        }
+      } else if (sem.__semKey === "iceshard") {
+        const effPressure = preOrInitialNum(pre, "pressure", combatState.fight.pressure, 0);
+        const effAttackers = pre && Number.isFinite(pre.effectiveActiveAttackers)
+          ? pre.effectiveActiveAttackers
+          : (Number.isFinite(combatState.fight.activeAttackerCount) ? combatState.fight.activeAttackerCount : 0);
+        const atkThresh = Number.isFinite(sem.tempoBonusAttackerThreshold) ? sem.tempoBonusAttackerThreshold : 2;
+        if (effPressure >= 1 || effAttackers >= atkThresh) {
+          const v = Number.isFinite(sem.tempoBonusUnderPressureSec) ? sem.tempoBonusUnderPressureSec : 0.9;
+          contributions.iceshard_tempo_under_pressure = -(+v.toFixed(3));
+          total -= v;
+          tags.push("iceshard_tempo_under_pressure");
+        }
+      } else if (sem.__semKey === "piercingstrike") {
+        // AI CHANGED: Planner tactical tuning v1.1.2 — sequence-level setup detection. Bonus when a magic-typed skill appears LATER in the
+        // same sequence within the shred window; penalty when no such follow-up exists (Piercing Strike chosen but its setup is wasted).
+        const shredDuration = Number.isFinite(sem.debuffDurationSec) ? sem.debuffDurationSec : 15;
+        const actionStart = pre && Number.isFinite(pre.elapsedSec) ? pre.elapsedSec : 0;
+        const actionEnd = actionStart + (Number.isFinite(a.actionTimeSec) ? a.actionTimeSec : 0);
+        let hasMagicFollowUp = false;
+        for (let j = i + 1; j < actionsLen; j += 1) {
+          const b = node.actions[j];
+          if (!b) continue;
+          const bStart = b.pre && Number.isFinite(b.pre.elapsedSec) ? b.pre.elapsedSec : actionEnd;
+          if (bStart - actionEnd > shredDuration) {
+            break;
+          }
+          // Detect magic follow-up via either the skill's own dominant damageType or any positive magic damage portion.
+          const bDmgType = b.skill && b.skill.damageType ? String(b.skill.damageType).toLowerCase() : "";
+          const bMagicImmediate = b.skill && Number.isFinite(b.skill.immediateMagic) ? b.skill.immediateMagic : 0;
+          const bMagicDot = b.skill && Number.isFinite(b.skill.dotMagicPerSec) ? b.skill.dotMagicPerSec : 0;
+          if (bDmgType === "magic" || bMagicImmediate > 0 || bMagicDot > 0) {
+            hasMagicFollowUp = true;
+            break;
+          }
+        }
+        if (hasMagicFollowUp) {
+          const v = Number.isFinite(sem.setupBonusWithMagicFollowUpSec) ? sem.setupBonusWithMagicFollowUpSec : 0.6;
+          contributions.piercingstrike_setup_with_magic_follow_up = -(+v.toFixed(3));
+          total -= v;
+          tags.push("piercingstrike_setup_with_magic_follow_up");
+        } else {
+          const v = Number.isFinite(sem.wastedSetupPenaltySec) ? sem.wastedSetupPenaltySec : 0.5;
+          contributions.piercingstrike_wasted_setup = +v.toFixed(3);
+          total += v;
+          tags.push("piercingstrike_wasted_setup");
+        }
+      }
+      contributionsPerAction[i] = contributions;
+      reasonTagsPerAction[i] = tags;
+    }
+    return {
+      semanticAdjSec: +total.toFixed(4),
+      contributionsPerAction: contributionsPerAction,
+      reasonTagsPerAction: reasonTagsPerAction
+    };
   }
 
   // AI CHANGED: Score a sequence node. Primary objective: minimize expected time-to-kill. Secondary tiebreaks: lower HP loss, lower MP waste,
@@ -3905,85 +4157,32 @@
     const tieMpWasteSec = (Number.isFinite(sp.tieBreakMpWasteCoefSec) ? sp.tieBreakMpWasteCoefSec : 0.0008) * mpWaste;
     // Tempo tiebreak — prefer shorter actual elapsed time when TTK is similar.
     const tieTempoSec = (Number.isFinite(sp.tieBreakTempoCoefSec) ? sp.tieBreakTempoCoefSec : 0.05) * sim.elapsedSec;
-    // Skill-own semantic nudges. (NOT combos — just intrinsic skill traits.)
-    // AI CHANGED: Planner rewrite v1.2 — semantic tie-breaks now consult per-action `pre` simulated state (target HP %, effective attackers,
-    // pressure, enemy count) so e.g. Sniper Shot rewards a finisher window EARNED earlier in the sequence, and Distracting Shot value reflects
-    // the simulated attacker pressure at the moment of cast. When `pre` is missing (legacy callers / hand-built nodes), we fall back to the
-    // initial combatState values so behavior is back-compat.
-    let semanticAdjSec = 0;
-    function preOrInitialNum(pre, preKey, initial, fallback) {
-      if (pre && Number.isFinite(pre[preKey])) {
-        return pre[preKey];
-      }
-      if (Number.isFinite(initial)) {
-        return initial;
-      }
-      return fallback;
-    }
-    for (let i = 0; i < node.actions.length; i += 1) {
-      const a = node.actions[i];
-      if (!a || !a.skill || !a.skill.normalizedKey) {
-        continue;
-      }
-      const sem = plannerSeqResolveSemanticEnrichment(a.skill.name || "");
-      if (!sem) {
-        continue;
-      }
-      const pre = a.pre || null;
-      if (sem.__semKey === "snipershot") {
-        // Penalize full-charge under pressure — use simulated pressure at moment-of-cast (pre-snapshot) when available, else initial.
-        const isFullCharge = a.chargeMode === "full" || (a.chargeReleaseFraction != null && a.chargeReleaseFraction >= 0.95);
-        const effPressure = preOrInitialNum(pre, "pressure", combatState.fight.pressure, 0);
-        if (isFullCharge && effPressure >= 1) {
-          semanticAdjSec += Number.isFinite(sem.chargeFullPressurePenaltySec) ? sem.chargeFullPressurePenaltySec : 1.6;
-        }
-        // Reward as finisher when target HP is low AT THE TIME this action fires — this is the most simulation-sensitive case (the planner
-        // can EARN a finisher window over the previous actions in the sequence and the bonus then unlocks the Sniper Shot).
-        const effTargetHpPct = pre && Number.isFinite(pre.targetHpPct)
-          ? pre.targetHpPct
-          : (Number.isFinite(combatState.target.hpPct) ? combatState.target.hpPct : null);
-        if (Number.isFinite(effTargetHpPct) && effTargetHpPct <= (Number.isFinite(sem.finisherTargetHpPctMax) ? sem.finisherTargetHpPctMax : 0.45)) {
-          semanticAdjSec -= Number.isFinite(sem.finisherBonusSec) ? sem.finisherBonusSec : 0.8;
-        }
-      } else if (sem.__semKey === "distractingshot") {
-        // Use simulated effective attacker count + pressure at the moment of cast.
-        const effAttackers = pre && Number.isFinite(pre.effectiveActiveAttackers)
-          ? pre.effectiveActiveAttackers
-          : (Number.isFinite(combatState.fight.activeAttackerCount) ? combatState.fight.activeAttackerCount : 0);
-        const effPressure = preOrInitialNum(pre, "pressure", combatState.fight.pressure, 0);
-        // Bad calm opener (low pressure, fresh target, single attacker). Use elapsedSec === 0 instead of index so a Distracting Shot inserted
-        // later in the sequence is judged on the simulated moment, not its array index.
-        const isOpenerMoment = pre ? pre.elapsedSec === 0 : (i === 0);
-        if (isOpenerMoment && effPressure < 0.5 && effAttackers <= 1) {
-          semanticAdjSec += Number.isFinite(sem.calmOpenerPenaltySec) ? sem.calmOpenerPenaltySec : 1.4;
-        }
-        // Good under active-attacker pressure (>=2). Use simulated values so distract repeats / mid-sequence casts can still be valued.
-        if (effAttackers >= 2 || effPressure >= 1.2) {
-          semanticAdjSec -= Number.isFinite(sem.pressureReliefBonusSec) ? sem.pressureReliefBonusSec : 1.2;
-        }
-      } else if (sem.__semKey === "fanvolley") {
-        // Penalize when only one enemy / one attacker (true AoE wasted) AND mana heavy — use simulated enemy/attacker counts from pre state.
-        const effEnemyCount = pre && Number.isFinite(pre.enemyCount)
-          ? pre.enemyCount
-          : (Number.isFinite(combatState.fight.enemiesPresent) ? combatState.fight.enemiesPresent : 0);
-        const effActiveAttackers = pre && Number.isFinite(pre.effectiveActiveAttackers)
-          ? pre.effectiveActiveAttackers
-          : (Number.isFinite(combatState.fight.activeAttackerCount) ? combatState.fight.activeAttackerCount : 0);
-        if (effEnemyCount <= 1) {
-          semanticAdjSec += Number.isFinite(sem.singleTargetMisusePenaltySec) ? sem.singleTargetMisusePenaltySec : 1.8;
-        }
-        if (effActiveAttackers <= 1 && effEnemyCount <= 2) {
-          semanticAdjSec += Number.isFinite(sem.mpHeavyPenaltySec) ? sem.mpHeavyPenaltySec : 0.4;
-        }
-      }
-    }
+    // AI CHANGED: Planner tactical tuning v1.1.2 — semantic adjustments now flow through the shared `plannerSeqExplainSemantic` helper so
+    // scoring AND diagnostics use the SAME tactical rules (Sniper finisher / under-pressure / full-charge full-hp penalty, Distracting Shot
+    // calm-vs-pressure, Fan Volley calm / mp-fraction / true-multi-threat, Ice Shard tempo-under-pressure, Piercing Strike setup detection).
+    const explained = plannerSeqExplainSemantic(node, combatState);
+    const semanticAdjSec = Number.isFinite(explained.semanticAdjSec) ? explained.semanticAdjSec : 0;
     return +(ttkSec + survivalPenaltySec + tieHpLossSec + tieMpWasteSec + tieTempoSec + semanticAdjSec).toFixed(4);
   }
 
   // AI CHANGED: Compose results — short summary, action list, kill prediction, survival summary.
+  // AI CHANGED: Planner tactical tuning v1.1.2 — also embed per-action `reasonTags` + `scoreContributions` (in TTK-equivalent seconds) so
+  // `previewPlannerSequences()` callers can see WHY one sequence beat another (e.g. `snipershot_finisher_window` + `iceshard_tempo_under_pressure`).
+  // The original `node.actions[]` is never mutated — we shallow-clone each entry to attach the explanation without leaking it back into the
+  // beam-search nodes (which would corrupt subsequent score calls).
   function plannerSeqDescribeNode(node, combatState) {
+    const explanation = plannerSeqExplainSemantic(node, combatState);
+    const enrichedActions = Array.isArray(node.actions)
+      ? node.actions.map(function (a, i) {
+          const enriched = Object.assign({}, a, {
+            reasonTags: Array.isArray(explanation.reasonTagsPerAction[i]) ? explanation.reasonTagsPerAction[i].slice(0) : [],
+            scoreContributions: explanation.contributionsPerAction[i] || {}
+          });
+          return enriched;
+        })
+      : [];
     return {
-      actions: node.actions,
+      actions: enrichedActions,
       cumulativeDamage: +node.cumulativeDamage.toFixed(2),
       predictedKillAtSec: node.killedAtSec,
       finalTargetHp: Number.isFinite(node.sim.targetHpCur) ? +node.sim.targetHpCur.toFixed(2) : null,
@@ -3992,11 +4191,13 @@
       finalElapsedSec: +node.sim.elapsedSec.toFixed(3),
       simHpLost: +node.sim.hpLost.toFixed(2),
       score: node._finalScore != null ? node._finalScore : node._provisionalScore,
+      semanticAdjSec: explanation.semanticAdjSec,
       survivalSummary: {
         playerHpPctEnd: Number.isFinite(node.sim.playerHpCur) && Number.isFinite(node.sim.playerHpMax) && node.sim.playerHpMax > 0
           ? +(node.sim.playerHpCur / node.sim.playerHpMax).toFixed(4)
           : null,
-        pressureStart: combatState.fight.pressure
+        pressureStart: combatState.fight.pressure,
+        pressureEnd: Number.isFinite(node.sim.pressure) ? node.sim.pressure : null
       }
     };
   }

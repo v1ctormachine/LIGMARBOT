@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "1.1.1-alpha",
-    "description":  "planner part 2.1: fix active-attacker replan bug and wire shouldReplan into combat loop",
-    "builtAt":  "2026-05-22T20:35:05.8132815+03:00",
+    "version":  "1.1.2-alpha",
+    "description":  "planner tactical tuning: better Sniper, Distracting Shot, Fan Volley, Piercing Strike, Ice Shard decisions",
+    "builtAt":  "2026-05-22T21:18:03.5911365+03:00",
     "history":  [
+                    {
+                        "version":  "1.1.2-alpha",
+                        "description":  "planner tactical tuning: better Sniper, Distracting Shot, Fan Volley, Piercing Strike, Ice Shard decisions",
+                        "date":  "2026-05-22T21:18:03.5911365+03:00"
+                    },
                     {
                         "version":  "1.1.1-alpha",
                         "description":  "planner part 2.1: fix active-attacker replan bug and wire shouldReplan into combat loop",
@@ -247,11 +252,6 @@
                         "version":  "0.3.188",
                         "description":  "calibration: hp_drop ratio adds opener pressure + charge hold when harder than paper",
                         "date":  "2026-05-13T17:35:16.5609473+03:00"
-                    },
-                    {
-                        "version":  "0.3.187",
-                        "description":  "charge hold: incoming sustain penalty; pullTier on danger pressure; TEST channel hold risk",
-                        "date":  "2026-05-13T17:22:56.9835142+03:00"
                     }
                 ]
 }

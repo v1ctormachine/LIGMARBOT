@@ -362,6 +362,10 @@
         typeof getPlannerNormalizedSkills === "function" ? getPlannerNormalizedSkills : null,
       previewPlannerSequences:
         typeof previewPlannerSequences === "function" ? previewPlannerSequences : null,
+      // AI CHANGED: Planner tactical tuning v1.1.2 — expose the per-action semantic explanation helper so a console caller can inspect
+      // WHY a candidate sequence won/lost (per-action reasonTags + scoreContributions in TTK-equivalent seconds).
+      plannerSeqExplainSemantic:
+        typeof plannerSeqExplainSemantic === "function" ? plannerSeqExplainSemantic : null,
       plannerSelectSequencePick:
         typeof plannerSelectSequencePick === "function" ? plannerSelectSequencePick : null,
       plannerAdaptSequencePickToOpenerShape:

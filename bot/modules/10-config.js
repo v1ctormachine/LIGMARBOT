@@ -495,21 +495,44 @@
             chargeFullPressurePenaltySec: 1.6,
             partialReleasePreferredUnderPressure: true,
             finisherTargetHpPctMax: 0.45,
-            finisherBonusSec: 0.8
+            finisherBonusSec: 0.8,
+            // AI CHANGED: Planner tactical tuning v1.1.2 — extra finisher bonus when target HP is *very* low (lethal window).
+            //   When pre-snapshot target HP fraction is below `finisherLowHpPctMax`, add `finisherLowHpExtraBonusSec` on top of the base
+            //   finisher bonus so a near-death partial-release Sniper Shot wins over a slower follow-up line.
+            finisherLowHpPctMax: 0.25,
+            finisherLowHpExtraBonusSec: 0.4,
+            // AI CHANGED: Planner tactical tuning v1.1.2 — penalize Sniper Shot full-charge OPENER when target is full HP (>=80%) regardless
+            //   of pressure. The legacy `chargeFullPressurePenaltySec` only fires under pressure; this knob targets the second observed bad
+            //   pattern: full-charge as a calm opener that wastes its finisher value and lengthens TTK vs a normal skill rotation.
+            fullChargeFullHpOpenerPenaltySec: 1.0,
+            fullChargeFullHpOpenerThreshold: 0.8
           },
           // role: shred_magic_resist (debuff that buffs follow-up magic damage during its window)
           piercingStrike: {
             role: "shred_magic_resist",
             debuffDurationSec: 15,
             // AI CHANGED: simulator multiplies magic skill damage by 1+followUpMagicDamageBoost while shred is active.
-            followUpMagicDamageBoost: 0.2
+            followUpMagicDamageBoost: 0.2,
+            // AI CHANGED: Planner tactical tuning v1.1.2 — sequence-level setup valuation. When a Piercing Strike step is FOLLOWED by a
+            //   magic-typed skill within the shred window (15s by default), give a small setup bonus on top of the natural damage boost
+            //   (the shred bonus already lowers TTK; this extra nudge values the *intent* of setup play). When NO magic follow-up appears
+            //   in the same sequence within the shred window, apply a small "wasted setup" penalty so the planner does not pick Piercing
+            //   Strike just to fill a slot when nothing later capitalizes on the magic-resist debuff.
+            setupBonusWithMagicFollowUpSec: 0.6,
+            wastedSetupPenaltySec: 0.5
           },
           // role: tempo (slow buys time and reduces incoming damage)
           iceShard: {
             role: "tempo_slow",
             slowDurationSec: 5,
             // AI CHANGED: simulator reduces incoming HP loss by this fraction while slow is active on target.
-            incomingDamageReductionFraction: 0.3
+            incomingDamageReductionFraction: 0.3,
+            // AI CHANGED: Planner tactical tuning v1.1.2 — scoring nudge so Ice Shard wins as opener when tempo/danger reduction matters.
+            //   Triggered when the simulated effective active-attacker count >= `tempoBonusAttackerThreshold` OR pressure >= 1 at the moment
+            //   of cast. No calm penalty — Ice Shard is a real damage skill, so it should not be punished for being chosen when calm; it just
+            //   doesn't get the tempo bonus there.
+            tempoBonusUnderPressureSec: 0.9,
+            tempoBonusAttackerThreshold: 2
           },
           // role: survival_tempo (target loses focus, cannot attack hero)
           distractingShot: {
@@ -518,14 +541,29 @@
             calmOpenerPenaltySec: 1.4,
             pressureReliefBonusSec: 1.2,
             // AI CHANGED: simulator removes one active attacker from the pressure model while distract is active on the targeted attacker.
-            activeAttackerReliefCount: 1
+            activeAttackerReliefCount: 1,
+            // AI CHANGED: Planner tactical tuning v1.1.2 — extra penalty when Distracting Shot is picked but ALL of the following hold:
+            //   calm opener moment (elapsedSec === 0, single attacker, low pressure) AND target HP is full / fresh. This sharpens the
+            //   existing calmOpenerPenaltySec without affecting mid-sequence distract picks under pressure.
+            calmOpenerFullTargetExtraPenaltySec: 0.6,
+            calmOpenerFullTargetHpPctMin: 0.85
           },
           // role: aoe (true cleave, mana-heavy)
           fanVolley: {
             role: "aoe",
             aoeFactor: 2,
             mpHeavyPenaltySec: 0.4,
-            singleTargetMisusePenaltySec: 1.8
+            singleTargetMisusePenaltySec: 1.8,
+            // AI CHANGED: Planner tactical tuning v1.1.2 — scale mp-heavy penalty by the fraction of current MP that the cast actually
+            //   commits. When `skill.manaCost / pre.mpMax >= mpFractionPenaltyThreshold` we add `mpFractionHighPenaltySec`. This makes Fan
+            //   Volley meaningfully *worse* when it eats a big chunk of the mana pool with no real multi-threat justification.
+            mpFractionPenaltyThreshold: 0.4,
+            mpFractionHighPenaltySec: 0.7,
+            // AI CHANGED: Planner tactical tuning v1.1.2 — bonus when Fan Volley fires into genuine multi-threat (>=2 enemies AND >=2 active
+            //   attackers at moment of cast). Counterweights the existing penalties so Fan Volley wins in true cleave situations.
+            trueMultiThreatBonusSec: 1.0,
+            trueMultiThreatAttackerThreshold: 2,
+            trueMultiThreatEnemyThreshold: 2
           },
           // role: defensive_utility (absorb shield — not generic damage)
           windyDome: {
