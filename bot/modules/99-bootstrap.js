@@ -387,6 +387,17 @@
         typeof plannerNextCombatQueueAction === "function" ? plannerNextCombatQueueAction : null,
       plannerExecutionPlanStepToQueueAction:
         typeof plannerExecutionPlanStepToQueueAction === "function" ? plannerExecutionPlanStepToQueueAction : null,
+      // AI CHANGED: Planner Part 2 retarget fix v1.1.3 — lethal guard helper + post-retarget cancel helper exposed for tests
+      // and for live console diagnostics. `plannerWouldCommittedActionAlreadyKillTarget` is the planner-side predictor used by
+      // both the opener queue-arm site and the in-burst chain site to skip overkill follow-ups. `cancelPostRetargetAutoBasic` is
+      // the runtime-side helper that cancels the game's auto-basic immediately after retarget so the planner skill becomes the
+      // real first action.
+      plannerWouldCommittedActionAlreadyKillTarget:
+        typeof plannerWouldCommittedActionAlreadyKillTarget === "function"
+          ? plannerWouldCommittedActionAlreadyKillTarget
+          : null,
+      cancelPostRetargetAutoBasic:
+        typeof cancelPostRetargetAutoBasic === "function" ? cancelPostRetargetAutoBasic : null,
       getActiveExecutionPlan: function () {
         return Runtime && Runtime.planner ? Runtime.planner.activeExecutionPlan || null : null;
       },

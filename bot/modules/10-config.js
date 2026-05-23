@@ -82,6 +82,20 @@
       chargingCancelHintScanRoot: "app-game",
       // AI CHANGED: Legacy-named retarget guard — after a successful re-target in a surviving pull, skip charge skills until the first verified progress on that new target.
       disallowChargeSkillFirstBurstAfterRetarget: true,
+      // AI CHANGED: Planner Part 2 retarget fix v1.1.3 — POST-RETARGET POLICY KNOBS.
+      //   `postRetargetCancelAutoBasic`             : when true (default), cancel the game's auto-started basic immediately after a
+      //                                                successful retarget (Find Enemy / attackers popup) via the map-toggle/canvas
+      //                                                gap "empty UI" click, then drive the planner-selected skill as the real first
+      //                                                opener. Set to false to disable the cancel and revert to whatever applies for
+      //                                                the first burst (the legacy queue-on-game-basic path is OPT-IN via the next
+      //                                                knob below).
+      //   `postRetargetCancelSettleMs`              : tiny settle after the cancel click so the game absorbs the cancel before the
+      //                                                planner opener click registers (60ms default; below 0 is treated as 0).
+      //   `postRetargetQueueOnGameBasicFallback`    : OPT-IN. When true AND the cancel could not be dispatched, fall back to the
+      //                                                legacy "queue planner skill onto game basic cast bar" path. Default false.
+      postRetargetCancelAutoBasic: true,
+      postRetargetCancelSettleMs: 60,
+      postRetargetQueueOnGameBasicFallback: false,
       // AI CHANGED: Runtime queue v1 — pre-click one non-charge/basic follow-up action when safe.
       combatQueueEnabled: true,
       // AI CHANGED: Legacy delay knob kept at 0 — queue trigger is now progress-bar-name driven instead of time driven.
@@ -310,6 +324,14 @@
       logPlannerAfterSecureTile: false,
       // AI CHANGED: Combat readiness pack — ranked combat is now the default production path for the current build.
       useRankedAttackSkillsInCombat: true,
+      // AI CHANGED: Planner Part 2 retarget fix v1.1.3 — LETHAL GUARD CONFIDENCE FACTOR.
+      //   Multiplier applied to current target HP when deciding whether the just-fired action will, by itself, kill the target.
+      //   The action is considered "already lethal" only when predictedDamage >= targetHpCur * lethalGuardConfidenceFactor.
+      //   A factor > 1 introduces an overkill margin so we strongly prefer FALSE NEGATIVES (still queue the follow-up "just in
+      //   case") over FALSE POSITIVES (skip a needed follow-up and the target survives). 1.3 (≈ require 30% headroom) is the
+      //   conservative production default. Lower this only if you observe lots of unnecessary Sniper-Shot-after-already-lethal
+      //   queueings; raise it if you ever observe missed kills due to a skipped follow-up.
+      lethalGuardConfidenceFactor: 1.3,
       // AI CHANGED: Absolute MP floor: cast only if curMp >= manaCost + skillMpReserve (skip skill if MP unread).
       skillMpReserve: 5,
       // AI CHANGED: Phase C4 slice 9 — only first attack burst after each find-enemy uses ranked skill; later bursts basic-only (saves MP/CD on multi-mob pulls).

@@ -4986,6 +4986,123 @@
     return legacy;
   }
 
+  // AI CHANGED: Planner Part 2 retarget fix v1.1.3 — LETHAL GUARD HELPER.
+  //   Predicts whether an action that has already been COMMITTED (clicked / firing / mid-channel) is, by itself, expected to kill
+  //   the live target. Used by the combat runtime to skip queueing a follow-up "finisher" (e.g. Sniper Shot) behind an in-flight
+  //   step that is already lethal, so we don't waste mana / cooldown / a full-charge release on overkill.
+  //
+  //   Inputs (all optional, in priority order):
+  //     - opts.committedPredictedDamage : explicit predicted damage number (highest priority)
+  //     - opts.plan + opts.committedStepIndex : read predictedDamageDealt from the active execution plan step.
+  //         (default committedStepIndex = plan.currentIndex - 1, i.e. "the step that just fired")
+  //     - opts.committedSlot : derive predicted immediate damage from the normalized skill record on that bar slot.
+  //         DoT damage is intentionally IGNORED here — it lands over time and would create false positives.
+  //     - opts.liveState : live combat snapshot; falls back to readBasicState() if available.
+  //     - opts.confidenceFactor : multiplier applied to current target HP. Default = `Config.planner.lethalGuardConfidenceFactor`.
+  //         The action is "lethal" only when predictedDamage >= targetHpCur * confidenceFactor. A factor > 1 introduces headroom
+  //         so the guard prefers FALSE NEGATIVES (queue the follow-up "just in case") over FALSE POSITIVES (skip a needed
+  //         follow-up and the target survives). 1.3 is the conservative default (≈ require 30% overkill margin).
+  //
+  //   Returns:
+  //     {
+  //       wouldKill          : boolean
+  //       reason             : "no_live_state" | "no_live_target" | "target_already_dead" |
+  //                            "no_predicted_damage" | "predicted_lethal" | "predicted_not_lethal"
+  //       targetHpCur        : number | null
+  //       predictedDamage    : number | null
+  //       confidenceFactor   : number | null
+  //       requiredPredicted  : number | null    -- targetHpCur * confidenceFactor (the bar to cross)
+  //       source             : string  | null    -- where predictedDamage came from
+  //     }
+  function plannerWouldCommittedActionAlreadyKillTarget(userOpts) {
+    const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
+    const result = {
+      wouldKill: false,
+      reason: null,
+      targetHpCur: null,
+      predictedDamage: null,
+      confidenceFactor: null,
+      requiredPredicted: null,
+      source: null
+    };
+    const liveState =
+      opts.liveState ||
+      (typeof readBasicState === "function" ? readBasicState() : null);
+    if (!liveState) {
+      result.reason = "no_live_state";
+      return result;
+    }
+    const targetHp =
+      liveState && liveState.combat && liveState.combat.targetHp ? liveState.combat.targetHp : null;
+    if (!targetHp || !targetHp.valid || !Number.isFinite(targetHp.cur)) {
+      result.reason = "no_live_target";
+      return result;
+    }
+    if (targetHp.cur <= 0) {
+      result.wouldKill = true;
+      result.reason = "target_already_dead";
+      result.targetHpCur = targetHp.cur;
+      return result;
+    }
+    result.targetHpCur = +targetHp.cur.toFixed(2);
+    let predicted = null;
+    let source = null;
+    if (Number.isFinite(opts.committedPredictedDamage) && opts.committedPredictedDamage > 0) {
+      predicted = opts.committedPredictedDamage;
+      source = "explicit_predicted";
+    } else if (opts.plan && Array.isArray(opts.plan.actions)) {
+      const baseIdx = Number.isFinite(opts.plan.currentIndex) ? opts.plan.currentIndex : 0;
+      const idx = Number.isFinite(opts.committedStepIndex) ? opts.committedStepIndex : Math.max(0, baseIdx - 1);
+      if (idx >= 0 && idx < opts.plan.actions.length) {
+        const step = opts.plan.actions[idx];
+        if (step && Number.isFinite(step.predictedDamageDealt) && step.predictedDamageDealt > 0) {
+          predicted = step.predictedDamageDealt;
+          source = "plan_step_index_" + idx;
+        }
+      }
+    }
+    if (!Number.isFinite(predicted) && Number.isFinite(opts.committedSlot)) {
+      const slots = Runtime && Runtime.skills && Array.isArray(Runtime.skills.slots) ? Runtime.skills.slots : [];
+      const row = slots[opts.committedSlot] || null;
+      if (row && row.kind === "skill") {
+        const paper = typeof estimatePaperBasicAttackDps === "function" ? estimatePaperBasicAttackDps() : null;
+        const expectedHit =
+          typeof plannerExpectedBasicHitFromPaper === "function" ? plannerExpectedBasicHitFromPaper(paper) : null;
+        const enemyKey =
+          opts.enemyKey ||
+          (Runtime && Runtime.enemy && Runtime.enemy.lastFoughtKey ? Runtime.enemy.lastFoughtKey : null);
+        const mobFactor =
+          typeof plannerMobCalibrationFactorForKey === "function" ? plannerMobCalibrationFactorForKey(enemyKey) : 1;
+        const norm =
+          typeof plannerSeqNormalizeOneSkill === "function"
+            ? plannerSeqNormalizeOneSkill(row, paper, mobFactor, expectedHit)
+            : null;
+        if (norm && Number.isFinite(norm.immediateDamage) && norm.immediateDamage > 0) {
+          predicted = norm.immediateDamage;
+          source = "skill_normalized_slot_" + opts.committedSlot;
+        }
+      }
+    }
+    if (!Number.isFinite(predicted) || predicted <= 0) {
+      result.reason = "no_predicted_damage";
+      return result;
+    }
+    result.predictedDamage = +predicted.toFixed(2);
+    result.source = source;
+    const confidenceRaw =
+      Number.isFinite(opts.confidenceFactor) && opts.confidenceFactor > 0
+        ? opts.confidenceFactor
+        : Number.isFinite(Config.planner && Config.planner.lethalGuardConfidenceFactor) &&
+          Config.planner.lethalGuardConfidenceFactor > 0
+        ? Config.planner.lethalGuardConfidenceFactor
+        : 1.3;
+    result.confidenceFactor = +confidenceRaw.toFixed(3);
+    result.requiredPredicted = +(targetHp.cur * confidenceRaw).toFixed(2);
+    result.wouldKill = predicted >= result.requiredPredicted;
+    result.reason = result.wouldKill ? "predicted_lethal" : "predicted_not_lethal";
+    return result;
+  }
+
   // AI CHANGED: Planner Part 2 — adapter for any step within an execution plan into the legacy opener shape. Used when the executor
   // needs to translate a plan step (typically `currentIndex`) into `{ slot, record, chargeReleasePlan, queuedAction }` so the existing
   // opener click + charge release code paths stay reusable.

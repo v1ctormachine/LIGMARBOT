@@ -4062,10 +4062,57 @@
     queue.anchorSource = queuedAction.source;
     queue.anchorNeedsReset = true;
     const postQueueState = readBasicState();
+    // AI CHANGED: Planner Part 2 retarget fix v1.1.3 — LETHAL GUARD on chain continuation. If the action we just fired is, by
+    // itself, predicted to kill the live target, do NOT compute a follow-up `nextQueuedAction`. This is the second line of
+    // defense against the observed Sniper-Shot-after-already-lethal-action overcommit (the first being the opener-time guard
+    // in `attackUntilProgress`). Conservative confidence factor (default 1.3) keeps false positives rare.
+    let chainLethalSkip = false;
+    if (queuedAction.mode === "skill" && typeof plannerWouldCommittedActionAlreadyKillTarget === "function") {
+      try {
+        const livePlanFire =
+          typeof plannerGetActiveExecutionPlan === "function" ? plannerGetActiveExecutionPlan() : null;
+        const chainLethalDecision = plannerWouldCommittedActionAlreadyKillTarget({
+          liveState: postQueueState,
+          plan: livePlanFire,
+          committedStepIndex:
+            livePlanFire && Number.isFinite(queue.planStepIndex) ? queue.planStepIndex : null,
+          committedSlot: Number.isFinite(queuedAction.slot) ? queuedAction.slot : null
+        });
+        if (chainLethalDecision && chainLethalDecision.wouldKill === true) {
+          chainLethalSkip = true;
+          Logger.log("COMBAT", "Lethal guard: queued action already lethal — clearing chain (no overkill follow-up)", chainLethalDecision);
+          plannerRecordOpenerRuntimeEvent("queue_chain_skipped_lethal", {
+            slot: queuedAction.slot,
+            predictedDamage: chainLethalDecision.predictedDamage,
+            targetHpCur: chainLethalDecision.targetHpCur,
+            source: chainLethalDecision.source
+          });
+          if (Runtime.autoFarm && Runtime.autoFarm.combatExecution) {
+            Runtime.autoFarm.combatExecution.lastLethalGuardEvent = {
+              at: Date.now(),
+              site: "fire_chain",
+              wouldKill: true,
+              predictedDamage: chainLethalDecision.predictedDamage,
+              targetHpCur: chainLethalDecision.targetHpCur,
+              confidenceFactor: chainLethalDecision.confidenceFactor,
+              requiredPredicted: chainLethalDecision.requiredPredicted,
+              source: chainLethalDecision.source,
+              reason: chainLethalDecision.reason,
+              committedSlot: Number.isFinite(queuedAction.slot) ? queuedAction.slot : null
+            };
+            Runtime.autoFarm.combatExecution.lethalGuardSkips =
+              (Runtime.autoFarm.combatExecution.lethalGuardSkips || 0) + 1;
+          }
+        }
+      } catch (err) {
+        Logger.warn("COMBAT", "plannerWouldCommittedActionAlreadyKillTarget threw at fire chain", err);
+      }
+    }
     // AI CHANGED: Planner Part 2 — prefer the active execution plan's next step over the legacy single-step lookahead.
     // `plannerNextCombatQueueAction` transparently falls back to `plannerBuildCombatQueueAction` when no plan is active.
-    const nextQueuedAction =
-      typeof plannerNextCombatQueueAction === "function"
+    const nextQueuedAction = chainLethalSkip
+      ? null
+      : (typeof plannerNextCombatQueueAction === "function"
         ? plannerNextCombatQueueAction({
             afterSlot: queuedAction.mode === "skill" ? queuedAction.slot : null,
             liveState: postQueueState,
@@ -4077,23 +4124,27 @@
                 liveState: postQueueState,
                 disallowChargeSkills: opts.disallowChargeSkills !== false
               })
-            : null);
+            : null));
     if (!nextQueuedAction || !nextQueuedAction.mode) {
       queue.fromExecutionPlan = false;
       queue.planStepIndex = null;
-      clearCombatActionQueue("no_followup_after_queue_fire", {
-        anchorMode: queue.anchorMode,
-        anchorSlot: queue.anchorSlot,
-        anchorName: queue.anchorName,
-        anchorSource: queue.anchorSource
-      });
+      clearCombatActionQueue(
+        chainLethalSkip ? "lethal_committed_action_no_chain" : "no_followup_after_queue_fire",
+        {
+          anchorMode: queue.anchorMode,
+          anchorSlot: queue.anchorSlot,
+          anchorName: queue.anchorName,
+          anchorSource: queue.anchorSource
+        }
+      );
       return {
         fired: true,
         mode: queuedAction.mode,
         slot: queuedAction.slot,
         name: queuedAction.name,
         source: queuedAction.source,
-        chainContinues: false
+        chainContinues: false,
+        lethalGuardSkippedChain: chainLethalSkip === true
       };
     }
     queue.mode = nextQueuedAction.mode;
@@ -4130,9 +4181,97 @@
     };
   }
 
-  // AI CHANGED: After mid-pull retarget the game winds a default basic — do not click opener or cancel; arm queue on Attack cast (see applyPostRetargetQueueOpenerPick).
+  // AI CHANGED: Planner Part 2 retarget fix v1.1.3 — POST-RETARGET POLICY CHANGED.
+  //   Old policy (deleted): assume the game's auto-basic is the first action of the burst, queue the planner skill onto the
+  //   game-basic cast bar, and let the queue fire when the basic cast registers. That delayed real skill pressure by ~1 basic
+  //   cast and effectively wasted the burst's first action.
+  //   New policy (this version): assume the game starts an auto-basic after retarget, IMMEDIATELY cancel it via the map-toggle/
+  //   canvas gap "empty UI" click (same primitive used to cancel charges), then drive the planner-selected skill as the actual
+  //   first opener click. The plan cursor only advances when a real planned skill commits — a cancel does NOT advance the plan.
+  //   See `cancelPostRetargetAutoBasic()` below and the `firstBurstAfterRetarget` branch of `attackUntilProgress`.
 
-  // AI CHANGED: Post-retarget burst — skip opener bar click; queue planner non-charge opener skill while game basic casts; charge opener falls back to normal tap path.
+  // AI CHANGED: Planner Part 2 retarget fix v1.1.3 — Post-retarget cancel helper. Tries to interrupt the auto-started basic
+  // attack the game schedules immediately after a retarget (Find Enemy / attackers popup). The map-toggle/canvas gap click is
+  // treated as "empty UI" by the game and cancels in-flight charges/basic windups; it works whether the basic was already
+  // mid-cast or just queued. The helper is stop-cooperative, no-op when disabled by config, and returns a structured result so
+  // callers (and tests) can reason about whether a cancel actually went out.
+  //   Returns:
+  //     {
+  //       ok:        boolean   - helper completed without throwing
+  //       cancelled: boolean   - a cancel-equivalent click was dispatched
+  //       reason:    string    - "stop_requested" | "disabled_by_config" | "click_dispatched"
+  //                              | "click_failed" | "no_method_available"
+  //       method:    string?   - "map_toggle_canvas_gap" | null
+  //     }
+  async function cancelPostRetargetAutoBasic(userOpts) {
+    const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
+    const result = { ok: true, cancelled: false, reason: "no_method_available", method: null };
+    if (Runtime.autoFarm.stopRequested) {
+      result.reason = "stop_requested";
+      return result;
+    }
+    if (Config.combat && Config.combat.postRetargetCancelAutoBasic === false) {
+      result.reason = "disabled_by_config";
+      return result;
+    }
+    if (typeof clickChargeCancelViaMapToggleCanvasGap === "function") {
+      let clicked = false;
+      try {
+        clicked = !!clickChargeCancelViaMapToggleCanvasGap();
+      } catch (err) {
+        Logger.warn("COMBAT", "cancelPostRetargetAutoBasic threw on map-gap click", err);
+        result.ok = false;
+        result.reason = "click_threw";
+        result.method = "map_toggle_canvas_gap";
+        return result;
+      }
+      if (clicked) {
+        result.cancelled = true;
+        result.reason = "click_dispatched";
+        result.method = "map_toggle_canvas_gap";
+        const settleMs = Number.isFinite(Config.combat && Config.combat.postRetargetCancelSettleMs)
+          ? Math.max(0, Config.combat.postRetargetCancelSettleMs)
+          : 60;
+        if (settleMs > 0 && !(opts && opts.skipSettle === true)) {
+          await sleep(settleMs);
+        }
+        Logger.log("COMBAT", "Post-retarget auto-basic cancel dispatched", {
+          method: result.method,
+          settleMs: settleMs
+        });
+        plannerRecordOpenerRuntimeEvent("post_retarget_cancel_dispatched", { method: result.method });
+        if (Runtime.autoFarm && Runtime.autoFarm.combatExecution) {
+          Runtime.autoFarm.combatExecution.lastPostRetargetCancel = {
+            at: Date.now(),
+            method: result.method,
+            cancelled: true
+          };
+          Runtime.autoFarm.combatExecution.postRetargetCancelDispatches =
+            (Runtime.autoFarm.combatExecution.postRetargetCancelDispatches || 0) + 1;
+        }
+        return result;
+      }
+      result.reason = "click_failed";
+      result.method = "map_toggle_canvas_gap";
+      Logger.log("COMBAT", "Post-retarget auto-basic cancel: map-gap click failed (UI hidden?)", {});
+      if (Runtime.autoFarm && Runtime.autoFarm.combatExecution) {
+        Runtime.autoFarm.combatExecution.lastPostRetargetCancel = {
+          at: Date.now(),
+          method: result.method,
+          cancelled: false,
+          reason: result.reason
+        };
+      }
+      return result;
+    }
+    return result;
+  }
+
+  // AI CHANGED: Planner Part 2 retarget fix v1.1.3 — `applyPostRetargetQueueOpenerPick` was the OLD post-retarget path that
+  // intentionally preserved the game-basic and queued a planner skill behind it. It is no longer used by `attackUntilProgress`
+  // (which now calls `cancelPostRetargetAutoBasic()` followed by `applyPlannerOpeningPick()`). Function retained as a
+  // last-resort fallback ONLY when the cancel could not be dispatched and config explicitly opts in via
+  // `Config.combat.postRetargetQueueOnGameBasicFallback === true`. Default is to NOT use this path.
   async function applyPostRetargetQueueOpenerPick(pickWrap, opts, excludeSlots) {
     const wrap = pickWrap && typeof pickWrap === "object" ? pickWrap : { useRankedPath: false, opening: null };
     if (wrap.useRankedPath && wrap.opening && wrap.opening.slot != null && wrap.opening.record) {
@@ -4512,50 +4651,30 @@
 
     const pickWrap = resolvePlannerOpeningPick(opts, []);
 
+    // AI CHANGED: Planner Part 2 retarget fix v1.1.3 — episode telemetry no longer models a phantom "post_retarget_after_implicit_basic"
+    //   queued action. After retarget the runtime now CANCELS the auto-basic and clicks the planner opener directly, so the episode plan
+    //   matches the normal opener pick (real skill click as step 0).
     let planPickForEpisode = null;
-    // AI CHANGED: Episode telemetry — post-retarget queue-only path shows game basic then first queued skill, not a phantom opener_skill click.
-    if (opts && opts.firstBurstAfterRetarget) {
-      if (pickWrap.useRankedPath && pickWrap.opening && pickWrap.opening.slot != null && pickWrap.opening.record) {
-        const srEp = pickWrap.opening.record;
-        const isChargeEp =
-          srEp && typeof plannerGetChargeSkillEffect === "function" && plannerGetChargeSkillEffect(srEp);
-        if (!isChargeEp) {
-          planPickForEpisode = {
-            slot: null,
-            record: null,
-            chargeReleasePlan: null,
-            queuedAction: {
-              mode: "skill",
-              slot: pickWrap.opening.slot,
-              name: srEp.name || "",
-              source: "post_retarget_after_implicit_basic"
-            }
-          };
-        }
-      }
-    }
-    if (!planPickForEpisode) {
-      if (pickWrap.useRankedPath && pickWrap.opening) {
-        planPickForEpisode = pickWrap.opening;
-      } else {
-        const bq =
-          !(opts && opts.allowCombatQueue === false) &&
-          Config.combat &&
-          Config.combat.combatQueueEnabled !== false &&
-          typeof plannerBuildCombatQueueAction === "function"
-            ? plannerBuildCombatQueueAction({
-                afterSlot: null,
-                liveState: beforeState,
-                disallowChargeSkills: !!(opts && opts.disallowChargeSkills)
-              })
-            : null;
-        planPickForEpisode = {
-          slot: null,
-          record: null,
-          chargeReleasePlan: null,
-          queuedAction: bq
-        };
-      }
+    if (pickWrap.useRankedPath && pickWrap.opening) {
+      planPickForEpisode = pickWrap.opening;
+    } else {
+      const bq =
+        !(opts && opts.allowCombatQueue === false) &&
+        Config.combat &&
+        Config.combat.combatQueueEnabled !== false &&
+        typeof plannerBuildCombatQueueAction === "function"
+          ? plannerBuildCombatQueueAction({
+              afterSlot: null,
+              liveState: beforeState,
+              disallowChargeSkills: !!(opts && opts.disallowChargeSkills)
+            })
+          : null;
+      planPickForEpisode = {
+        slot: null,
+        record: null,
+        chargeReleasePlan: null,
+        queuedAction: bq
+      };
     }
 
     if (typeof plannerBuildCombatEpisodePlan === "function") {
@@ -4574,10 +4693,36 @@
       clearCombatEpisode("planner_build_missing");
     }
 
-    const open =
-      opts && opts.firstBurstAfterRetarget
-        ? await applyPostRetargetQueueOpenerPick(pickWrap, opts, [])
-        : await applyPlannerOpeningPick(pickWrap, opts, []);
+    // AI CHANGED: Planner Part 2 retarget fix v1.1.3 — POST-RETARGET POLICY CHANGED.
+    //   Step 1: best-effort cancel the game's auto-basic via `cancelPostRetargetAutoBasic()` (map-gap click).
+    //   Step 2: drive the planner-selected opener as a real skill click via `applyPlannerOpeningPick()`.
+    //   The cancel itself does NOT advance the plan cursor; only the real skill commit (or the queue firing a planned step)
+    //   advances `plan.currentIndex`. If the cancel fails AND the operator has explicitly opted into the legacy queue-on-game-basic
+    //   fallback via `Config.combat.postRetargetQueueOnGameBasicFallback === true`, we fall back to the old behavior. Default is
+    //   the new cancel-then-skill-click flow.
+    let open;
+    if (opts && opts.firstBurstAfterRetarget) {
+      const cancelOutcome = await cancelPostRetargetAutoBasic({});
+      if (Runtime.autoFarm.stopRequested) {
+        Logger.log("LOOP", "attackUntilProgress: stop requested after post-retarget cancel attempt");
+        return false;
+      }
+      const fallbackToQueueOnGameBasic =
+        !cancelOutcome.cancelled &&
+        Config.combat &&
+        Config.combat.postRetargetQueueOnGameBasicFallback === true;
+      if (fallbackToQueueOnGameBasic) {
+        Logger.log("LOOP", "Post-retarget cancel unavailable; using legacy queue-on-game-basic fallback (config opt-in)", {
+          reason: cancelOutcome.reason,
+          method: cancelOutcome.method
+        });
+        open = await applyPostRetargetQueueOpenerPick(pickWrap, opts, []);
+      } else {
+        open = await applyPlannerOpeningPick(pickWrap, opts, []);
+      }
+    } else {
+      open = await applyPlannerOpeningPick(pickWrap, opts, []);
+    }
     if (!open.ok) {
       Logger.warn("LOOP", "Attack loop aborted: no attack click succeeded");
       return false;
@@ -4643,15 +4788,64 @@
           Logger.warn("COMBAT", "plannerAdvanceExecutionPlanStep failed for opener", err);
         }
       }
+      // AI CHANGED: Planner Part 2 retarget fix v1.1.3 — LETHAL GUARD before arming queue follow-up.
+      //   If the just-fired opener is, by itself, predicted to kill the live target, do NOT arm a follow-up. This prevents the
+      //   observed bug where Sniper Shot (or any other queued finisher) was armed onto an in-flight already-lethal action and
+      //   wasted mana / cooldown / a full-charge release on overkill. The guard is conservative (`confidenceFactor` default 1.3 =
+      //   require ≥ 30% overkill margin) so false negatives (unnecessary follow-up still queued) are far more likely than false
+      //   positives (a needed follow-up skipped and the target survives).
+      let openerLethalSkip = false;
+      let openerLethalDecision = null;
+      if (typeof plannerWouldCommittedActionAlreadyKillTarget === "function") {
+        try {
+          openerLethalDecision = plannerWouldCommittedActionAlreadyKillTarget({
+            liveState: readBasicState(),
+            plan: livePlan,
+            committedStepIndex:
+              advancedPlanForOpener && livePlan && Number.isFinite(livePlan.currentIndex)
+                ? livePlan.currentIndex - 1
+                : null,
+            committedSlot: open && Number.isFinite(open.skillSlot) ? open.skillSlot : null
+          });
+        } catch (err) {
+          Logger.warn("COMBAT", "plannerWouldCommittedActionAlreadyKillTarget threw at opener", err);
+        }
+        if (openerLethalDecision && openerLethalDecision.wouldKill === true) {
+          openerLethalSkip = true;
+          Logger.log("COMBAT", "Lethal guard: opener already lethal — skipping queue follow-up arm", openerLethalDecision);
+          plannerRecordOpenerRuntimeEvent("queue_skipped_lethal_opener", {
+            slot: open && Number.isFinite(open.skillSlot) ? open.skillSlot : null,
+            predictedDamage: openerLethalDecision.predictedDamage,
+            targetHpCur: openerLethalDecision.targetHpCur,
+            source: openerLethalDecision.source
+          });
+          if (Runtime.autoFarm && Runtime.autoFarm.combatExecution) {
+            Runtime.autoFarm.combatExecution.lastLethalGuardEvent = {
+              at: Date.now(),
+              site: "opener",
+              wouldKill: true,
+              predictedDamage: openerLethalDecision.predictedDamage,
+              targetHpCur: openerLethalDecision.targetHpCur,
+              confidenceFactor: openerLethalDecision.confidenceFactor,
+              requiredPredicted: openerLethalDecision.requiredPredicted,
+              source: openerLethalDecision.source,
+              reason: openerLethalDecision.reason,
+              committedSlot: open && Number.isFinite(open.skillSlot) ? open.skillSlot : null
+            };
+            Runtime.autoFarm.combatExecution.lethalGuardSkips =
+              (Runtime.autoFarm.combatExecution.lethalGuardSkips || 0) + 1;
+          }
+        }
+      }
       let queuedAction = null;
-      if (typeof plannerNextCombatQueueAction === "function") {
+      if (!openerLethalSkip && typeof plannerNextCombatQueueAction === "function") {
         queuedAction = plannerNextCombatQueueAction({
           afterSlot: open.skillSlot,
           liveState: readBasicState(),
           disallowChargeSkills: !!(opts && opts.disallowChargeSkills)
         });
       }
-      if (!queuedAction && open && open.queuedAction && open.queuedAction.mode) {
+      if (!openerLethalSkip && !queuedAction && open && open.queuedAction && open.queuedAction.mode) {
         queuedAction = open.queuedAction;
       }
       if (queuedAction && queuedAction.mode) {
@@ -5357,7 +5551,9 @@
               Logger.warn("LOOP", "Target HP not detected after re-find; continuing by enemy-count logic");
             }
           }
-          // AI CHANGED: No post-retarget cancel — game winds default basic; first burst arms queue on Attack cast (applyPostRetargetQueueOpenerPick).
+          // AI CHANGED: Planner Part 2 retarget fix v1.1.3 — Post-retarget policy: the bot will CANCEL the auto-basic and drive the
+          //   planner-selected skill as the real first action of the next burst (see `cancelPostRetargetAutoBasic` in
+          //   `attackUntilProgress` first-burst-after-retarget branch). No more "queue onto game basic" by default.
           current = readBasicState();
           if (typeof current.combat.enemyCount === "number" && current.combat.enemyCount <= 0) {
             Logger.log("LOOP", "Enemies cleared during re-find after kill");

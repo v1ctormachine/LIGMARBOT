@@ -4063,6 +4063,249 @@
         addCheck("planner_tactical_quality_block", false, { error: String(err && err.message ? err.message : err) }, false);
       }
 
+      // AI CHANGED: Planner Part 2 retarget fix v1.1.3 — POST-RETARGET CANCEL HELPER + LETHAL GUARD + SNIPER OVERCOMMIT REGRESSION.
+      //   These checks pin the new runtime policy:
+      //     1. The post-retarget cancel helper exists, returns the documented structured shape, and respects stop-cooperation
+      //        and the disable-by-config knob (no DOM dependency — we exercise the early-return branches directly).
+      //     2. The lethal guard helper correctly classifies a clearly-overkill committed action as `wouldKill: true` and a
+      //        clearly-non-lethal action as `wouldKill: false`. Confidence factor is honored (overrides + default).
+      //     3. The lethal guard reads `predictedDamageDealt` from a synthetic execution plan step (the path used by both the
+      //        opener-time guard in `attackUntilProgress` and the chain-time guard in `fireCombatActionQueue`).
+      //     4. SNIPER SHOT OVERCOMMIT REGRESSION: a synthetic plan with [Piercing Strike (lethal), Sniper Shot] + a live target
+      //        whose HP is well below the predicted Piercing Strike damage must report wouldKill === true at committedStepIndex 0,
+      //        which is the gate the runtime uses to refuse to arm the queued Sniper Shot follow-up.
+      try {
+        let cancelHelper = typeof cancelPostRetargetAutoBasic === "function" ? cancelPostRetargetAutoBasic : null;
+        if (!cancelHelper && typeof window !== "undefined" && window.ligmarBot && typeof window.ligmarBot.cancelPostRetargetAutoBasic === "function") {
+          cancelHelper = window.ligmarBot.cancelPostRetargetAutoBasic;
+        }
+        if (cancelHelper) {
+          // (1a) stop_requested branch — Runtime.autoFarm.stopRequested = true must short-circuit before touching the DOM.
+          const prevStop = Runtime.autoFarm.stopRequested;
+          Runtime.autoFarm.stopRequested = true;
+          const stopRes = await cancelHelper({});
+          Runtime.autoFarm.stopRequested = prevStop;
+          const stopOk =
+            stopRes &&
+            stopRes.ok === true &&
+            stopRes.cancelled === false &&
+            stopRes.reason === "stop_requested" &&
+            stopRes.method === null;
+          // (1b) disabled_by_config branch — postRetargetCancelAutoBasic = false must short-circuit similarly.
+          const prevCfg = Config.combat.postRetargetCancelAutoBasic;
+          Config.combat.postRetargetCancelAutoBasic = false;
+          const cfgRes = await cancelHelper({});
+          Config.combat.postRetargetCancelAutoBasic = prevCfg;
+          const cfgOk =
+            cfgRes &&
+            cfgRes.ok === true &&
+            cfgRes.cancelled === false &&
+            cfgRes.reason === "disabled_by_config" &&
+            cfgRes.method === null;
+          addCheck(
+            "post_retarget_cancel_helper_shape",
+            stopOk && cfgOk,
+            { stopRes: stopRes, cfgRes: cfgRes },
+            false
+          );
+        } else {
+          addCheck("post_retarget_cancel_helper_shape", false, { reason: "fn_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "post_retarget_cancel_helper_shape threw", err);
+        addCheck("post_retarget_cancel_helper_shape", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      try {
+        let lethalGuard = typeof plannerWouldCommittedActionAlreadyKillTarget === "function" ? plannerWouldCommittedActionAlreadyKillTarget : null;
+        if (!lethalGuard && typeof window !== "undefined" && window.ligmarBot && typeof window.ligmarBot.plannerWouldCommittedActionAlreadyKillTarget === "function") {
+          lethalGuard = window.ligmarBot.plannerWouldCommittedActionAlreadyKillTarget;
+        }
+        if (lethalGuard) {
+          const liveLow = {
+            combat: { enemyCount: 1, targetHp: { valid: true, cur: 80, max: 1000 } },
+            player: { mp: { valid: true, cur: 1000, max: 1000 } }
+          };
+          const liveHigh = {
+            combat: { enemyCount: 1, targetHp: { valid: true, cur: 800, max: 1000 } },
+            player: { mp: { valid: true, cur: 1000, max: 1000 } }
+          };
+          // (2a) explicit predictedDamage 200 vs targetHp 80, factor 1.3 → required = 104 → 200 >= 104 → wouldKill true.
+          const lethalRes = lethalGuard({
+            liveState: liveLow,
+            committedPredictedDamage: 200,
+            confidenceFactor: 1.3
+          });
+          // (2b) explicit predictedDamage 80 vs targetHp 800, factor 1.3 → required = 1040 → 80 << 1040 → wouldKill false.
+          const safeRes = lethalGuard({
+            liveState: liveHigh,
+            committedPredictedDamage: 80,
+            confidenceFactor: 1.3
+          });
+          // (2c) borderline: predictedDamage 100 vs targetHp 90, factor 1.3 → required = 117 → 100 < 117 → wouldKill false (CONSERVATIVE).
+          const borderRes = lethalGuard({
+            liveState: { combat: { enemyCount: 1, targetHp: { valid: true, cur: 90, max: 1000 } }, player: { mp: { valid: true } } },
+            committedPredictedDamage: 100,
+            confidenceFactor: 1.3
+          });
+          // (2d) target_already_dead branch — targetHp.cur === 0 → wouldKill true regardless of predicted.
+          const deadRes = lethalGuard({
+            liveState: { combat: { enemyCount: 1, targetHp: { valid: true, cur: 0, max: 1000 } }, player: { mp: { valid: true } } }
+          });
+          // (2e) no_predicted_damage branch — no source available → wouldKill false (NOT a default-true bug).
+          const noPredRes = lethalGuard({ liveState: liveLow });
+          const passed =
+            lethalRes && lethalRes.wouldKill === true && lethalRes.reason === "predicted_lethal" &&
+              Math.abs(lethalRes.requiredPredicted - 104) < 0.01 && lethalRes.confidenceFactor === 1.3 &&
+            safeRes && safeRes.wouldKill === false && safeRes.reason === "predicted_not_lethal" &&
+            borderRes && borderRes.wouldKill === false && borderRes.reason === "predicted_not_lethal" &&
+            deadRes && deadRes.wouldKill === true && deadRes.reason === "target_already_dead" &&
+            noPredRes && noPredRes.wouldKill === false && noPredRes.reason === "no_predicted_damage";
+          addCheck(
+            "planner_lethal_guard_basic_shape",
+            passed,
+            { lethalRes: lethalRes, safeRes: safeRes, borderRes: borderRes, deadRes: deadRes, noPredRes: noPredRes },
+            false
+          );
+        } else {
+          addCheck("planner_lethal_guard_basic_shape", false, { reason: "fn_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_lethal_guard_basic_shape threw", err);
+        addCheck("planner_lethal_guard_basic_shape", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      try {
+        let lethalGuard = typeof plannerWouldCommittedActionAlreadyKillTarget === "function" ? plannerWouldCommittedActionAlreadyKillTarget : null;
+        if (!lethalGuard && typeof window !== "undefined" && window.ligmarBot && typeof window.ligmarBot.plannerWouldCommittedActionAlreadyKillTarget === "function") {
+          lethalGuard = window.ligmarBot.plannerWouldCommittedActionAlreadyKillTarget;
+        }
+        if (lethalGuard) {
+          // Synthetic execution plan: step 0 = Piercing Strike (predicted 200), step 1 = Sniper Shot (would be the overcommit).
+          // Live target HP = 90 (clearly < 200 / 1.3 = 153.8). Plan cursor is at 1 (we already advanced past step 0).
+          // The runtime calls the guard with committedStepIndex = currentIndex - 1 → reads step 0's predictedDamageDealt → wouldKill true.
+          const plan = {
+            version: 2,
+            planId: "ep_test_sniper_overcommit",
+            actions: [
+              { index: 0, kind: "skill", slot: 1, name: "Piercing Strike", damageType: "physical", predictedDamageDealt: 200, predictedActionTimeSec: 0.6, predictedEndElapsedSec: 0.6, reasonTags: [] },
+              { index: 1, kind: "skill_charge", slot: 4, name: "Sniper Shot", damageType: "physical", chargeMode: "full", chargeReleaseFraction: 1, predictedDamageDealt: 600, predictedActionTimeSec: 4, predictedEndElapsedSec: 4.6, reasonTags: [] }
+            ],
+            currentIndex: 1,
+            valid: true
+          };
+          const liveTargetLow = {
+            combat: { enemyCount: 1, targetHp: { valid: true, cur: 90, max: 1000 } },
+            player: { mp: { valid: true, cur: 1000, max: 1000 } }
+          };
+          const guardRes = lethalGuard({
+            liveState: liveTargetLow,
+            plan: plan,
+            committedStepIndex: plan.currentIndex - 1
+          });
+          const passed =
+            guardRes &&
+            guardRes.wouldKill === true &&
+            guardRes.reason === "predicted_lethal" &&
+            guardRes.source === "plan_step_index_0" &&
+            Math.abs(guardRes.predictedDamage - 200) < 0.01 &&
+            guardRes.targetHpCur === 90;
+          addCheck(
+            "planner_sniper_shot_overcommit_regression",
+            passed,
+            { guardRes: guardRes },
+            false
+          );
+        } else {
+          addCheck("planner_sniper_shot_overcommit_regression", false, { reason: "fn_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_sniper_shot_overcommit_regression threw", err);
+        addCheck("planner_sniper_shot_overcommit_regression", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      try {
+        // Plan-cursor advancement check: the cancel helper does NOT advance the plan; only `plannerAdvanceExecutionPlanStep`
+        // advances `currentIndex`. We exercise this by setting an active plan, calling the cancel helper (under stop_requested
+        // so we deterministically hit the early-return branch), and confirming `currentIndex` stayed at 0.
+        let setPlan = typeof plannerSetActiveExecutionPlan === "function" ? plannerSetActiveExecutionPlan : null;
+        let getPlan = typeof plannerGetActiveExecutionPlan === "function" ? plannerGetActiveExecutionPlan : null;
+        let cancelHelper = typeof cancelPostRetargetAutoBasic === "function" ? cancelPostRetargetAutoBasic : null;
+        if (!cancelHelper && typeof window !== "undefined" && window.ligmarBot && typeof window.ligmarBot.cancelPostRetargetAutoBasic === "function") {
+          cancelHelper = window.ligmarBot.cancelPostRetargetAutoBasic;
+        }
+        if (setPlan && getPlan && cancelHelper) {
+          const prevPlan = Runtime.planner ? Runtime.planner.activeExecutionPlan : null;
+          const fakePlan = {
+            version: 2,
+            planId: "ep_test_cursor_no_advance",
+            builtAt: Date.now(),
+            targetFingerprint: "fp-cursor",
+            actions: [
+              { index: 0, kind: "skill", slot: 1, name: "Piercing Strike", damageType: "physical", predictedDamageDealt: 50, reasonTags: [] },
+              { index: 1, kind: "skill", slot: 2, name: "Ice Shard", damageType: "magic", predictedDamageDealt: 90, reasonTags: [] }
+            ],
+            totalActions: 2,
+            currentIndex: 0,
+            valid: true,
+            invalidReason: null,
+            replanReason: null,
+            stepHistory: [],
+            excludeSlotsApplied: null,
+            disallowChargeSkills: false
+          };
+          setPlan(fakePlan);
+          const before = getPlan();
+          const beforeIndex = before ? before.currentIndex : null;
+          const prevStop = Runtime.autoFarm.stopRequested;
+          Runtime.autoFarm.stopRequested = true;
+          const cancelOutcome = await cancelHelper({});
+          Runtime.autoFarm.stopRequested = prevStop;
+          const after = getPlan();
+          const afterIndex = after ? after.currentIndex : null;
+          const passed =
+            cancelOutcome && cancelOutcome.cancelled === false &&
+            beforeIndex === 0 && afterIndex === 0 &&
+            after && after.valid === true;
+          setPlan(prevPlan);
+          addCheck(
+            "post_retarget_cancel_does_not_advance_plan_cursor",
+            passed,
+            { beforeIndex: beforeIndex, afterIndex: afterIndex, cancelOutcome: cancelOutcome },
+            false
+          );
+        } else {
+          addCheck("post_retarget_cancel_does_not_advance_plan_cursor", false, { reason: "fns_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "post_retarget_cancel_does_not_advance_plan_cursor threw", err);
+        addCheck("post_retarget_cancel_does_not_advance_plan_cursor", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      try {
+        // Policy regression: the new post-retarget runtime path no longer reroutes through the old "queue planner skill onto
+        // the game's auto-basic" intentionally — by default it cancels the auto-basic and clicks the planner skill directly.
+        // We verify the documented config knob `postRetargetQueueOnGameBasicFallback` defaults to false (legacy behavior is
+        // OPT-IN ONLY, used as a last resort when the cancel could not be dispatched).
+        const fallbackOff =
+          Config.combat &&
+          Object.prototype.hasOwnProperty.call(Config.combat, "postRetargetQueueOnGameBasicFallback") &&
+          Config.combat.postRetargetQueueOnGameBasicFallback === false;
+        const cancelOnByDefault =
+          Config.combat &&
+          Object.prototype.hasOwnProperty.call(Config.combat, "postRetargetCancelAutoBasic") &&
+          Config.combat.postRetargetCancelAutoBasic === true;
+        addCheck(
+          "post_retarget_policy_default_is_cancel_not_queue",
+          !!(fallbackOff && cancelOnByDefault),
+          { fallbackOff: fallbackOff, cancelOnByDefault: cancelOnByDefault },
+          false
+        );
+      } catch (err) {
+        Logger.warn("TEST", "post_retarget_policy_default_is_cancel_not_queue threw", err);
+        addCheck("post_retarget_policy_default_is_cancel_not_queue", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
       // AI CHANGED: Planner Part 2 — execution-plan CHARGE STEP shape test.
       //   Verify a charge step survives plan materialization with chargeMode + chargeReleaseFraction preserved, AND that
       //   `plannerExecutionPlanStepToQueueAction` correctly returns null for the charge step (queue cannot fire charges).

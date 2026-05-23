@@ -85,7 +85,16 @@
         plansReused: 0,
         plansInvalidated: 0,
         queueAdvancesFromPlan: 0,
-        queueAdvancesFromLegacy: 0
+        queueAdvancesFromLegacy: 0,
+        // AI CHANGED: Planner Part 2 retarget fix v1.1.3 — last post-retarget cancel attempt + dispatch counter.
+        //   `lastPostRetargetCancel` shape: { at, method, cancelled, reason? }. `postRetargetCancelDispatches` counts only successful dispatches.
+        lastPostRetargetCancel: null,
+        postRetargetCancelDispatches: 0,
+        // AI CHANGED: Planner Part 2 retarget fix v1.1.3 — last lethal guard event observed by the runtime when arming/chaining queue.
+        //   Shape: { at, site: "opener" | "fire_chain", wouldKill, predictedDamage, targetHpCur, source, reason, ... }.
+        //   Counter increments only when the guard actually skipped queueing a follow-up.
+        lastLethalGuardEvent: null,
+        lethalGuardSkips: 0
       },
       // AI CHANGED: AUTO ON chat spammer — next due time, last sent line, and recent send/fail telemetry.
       chatSpammer: {
