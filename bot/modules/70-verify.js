@@ -220,9 +220,12 @@
     const avoidChampions = typeof getAvoidChampions === "function" ? getAvoidChampions() : true;
     const avoidGoblins = typeof getAvoidGoblins === "function" ? getAvoidGoblins() : false;
     // Basement-end override permits champion engagement even when avoidChampions is true.
+    //   v1.2.2-alpha — accept either the live `atEndTile` UI flag OR the sticky "atEnd"/"complete" phase so the
+    //   override stays valid throughout the end-tile fight (champion icon disappears mid-fight).
     const basementEndOverride = !!(
       typeof isInBasement === "function" && isInBasement() &&
-      Runtime && Runtime.basement && Runtime.basement.atEndTile === true &&
+      Runtime && Runtime.basement &&
+      (Runtime.basement.atEndTile === true || Runtime.basement.phase === "atEnd" || Runtime.basement.phase === "complete") &&
       Config && Config.basement && Config.basement.endChampionOverride !== false
     );
     const wantChampion = !avoidChampions || basementEndOverride;

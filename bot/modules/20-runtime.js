@@ -213,17 +213,37 @@
       detectAttempts: 0,
       manualOverride: null
     },
-    // AI CHANGED: v1.2.0-alpha — basement farming runtime state. `active` flips true when the bot enters a basement; the
-    //   forward-objective scorer uses `lastDirection` to penalize backtracking and `atEndTile` to allow the end-champion
-    //   override (kill basement-end champion even when global champion avoidance is ON).
+    // AI CHANGED: v1.2.0-alpha — basement farming runtime state.
+    //   v1.2.2-alpha — Promoted to a real phase state machine to fix the immediate-exit bug. Phases:
+    //     "idle"     — not in a basement (default).
+    //     "active"   — inside basement, exploring forward. Ladder click is SUPPRESSED in this phase so the bot does
+    //                  not exit on the first cycle after entering.
+    //     "atEnd"    — current tile is (or was) showing a champion icon — we have reached the end of the run. Set on
+    //                  the rising edge by `updateBasementEndTileFlagFromVisibleIcons`. Sticky once set this run.
+    //     "complete" — objective is done (knowledge looted at end tile, OR ladder-only at end after enough suppressed
+    //                  cycles). Ladder click is now ALLOWED and exits the basement.
+    //   `active` boolean is kept in sync (`phase !== "idle"`) for backward compatibility. `atEndTile` boolean still
+    //   tracks live UI state ("champion icon visible NOW") but the phase machine takes the rising edge so `phase`
+    //   stays at "atEnd" / "complete" even after the champion dies and its icon disappears.
     basement: {
       active: false,
+      phase: "idle",
+      objectiveComplete: false,
       enteredAt: null,
+      exitedAt: null,
       lastEntrySource: null,
       lastDirection: null,
       atEndTile: false,
       mobsKilledHere: 0,
-      tilesAdvanced: 0
+      tilesAdvanced: 0,
+      // Diagnostic counters reset on entry. `exitSuppressedAtEndCount` doubles as a fallback completion signal:
+      //   when it crosses `Config.basement.exitSuppressedAtEndPromoteThreshold` we promote phase to "complete"
+      //   even without a knowledge-loot click (covers basements where the only highlighted button is the ladder).
+      exitSuppressedCount: 0,
+      exitSuppressedAtEndCount: 0,
+      knowledgeLootedCount: 0,
+      lastPhaseTransitionAt: null,
+      lastPhaseTransitionReason: null
     },
     // AI CHANGED: Track whether we've already zoomed the map to minimum so scans use calibrated step distances.
     zoom: {

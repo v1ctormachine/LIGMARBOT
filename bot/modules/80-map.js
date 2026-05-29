@@ -516,10 +516,12 @@
     const avoidGoblins = getAvoidGoblins();
     const inBasement = isInBasement();
     // Basement-end override: if we're at the basement end tile, allow champion engagement even when global avoidance is ON.
+    //   v1.2.2-alpha — accept either the live atEndTile UI flag OR the sticky "atEnd" phase, so the override remains
+    //   stable across the kill (champion icon disappears post-mortem but phase stays "atEnd" / "complete").
     const basementEndChampOverride =
       inBasement &&
       Runtime.basement &&
-      Runtime.basement.atEndTile === true &&
+      (Runtime.basement.atEndTile === true || Runtime.basement.phase === "atEnd" || Runtime.basement.phase === "complete") &&
       Config &&
       Config.basement &&
       Config.basement.endChampionOverride !== false;
@@ -1542,60 +1544,132 @@
     return { ok: true, isBasement: false };
   }
 
+  // AI CHANGED: v1.2.2-alpha — Phase state machine. ALL phase mutations route through this helper so we keep a single
+  //   place for invariants: `active` boolean stays in sync, `objectiveComplete` flag stays in sync, transitions are
+  //   logged with reasons, and we record `lastPhaseTransitionAt` / `lastPhaseTransitionReason` for diagnostics.
+  function basementSetPhase(nextPhase, reason) {
+    if (!Runtime.basement || typeof Runtime.basement !== "object") {
+      Runtime.basement = {
+        active: false, phase: "idle", objectiveComplete: false,
+        enteredAt: null, exitedAt: null, lastEntrySource: null, lastDirection: null,
+        atEndTile: false, mobsKilledHere: 0, tilesAdvanced: 0,
+        exitSuppressedCount: 0, exitSuppressedAtEndCount: 0, knowledgeLootedCount: 0,
+        lastPhaseTransitionAt: null, lastPhaseTransitionReason: null
+      };
+    }
+    const allowed = ["idle", "active", "atEnd", "complete"];
+    const target = allowed.indexOf(nextPhase) !== -1 ? nextPhase : null;
+    if (!target) return { ok: false, reason: "invalid_phase", attempted: nextPhase };
+    const prev = Runtime.basement.phase || "idle";
+    if (prev === target) return { ok: true, skipped: true, phase: prev };
+    Runtime.basement.phase = target;
+    Runtime.basement.objectiveComplete = (target === "complete");
+    Runtime.basement.active = (target !== "idle");
+    Runtime.basement.lastPhaseTransitionAt = Date.now();
+    Runtime.basement.lastPhaseTransitionReason = reason || null;
+    Logger.log("BASEMENT", "phase transition", { from: prev, to: target, reason: reason || null });
+    return { ok: true, from: prev, to: target };
+  }
+
   function markBasementEntered(meta) {
     if (!Runtime.basement || typeof Runtime.basement !== "object") {
-      Runtime.basement = { active: false, enteredAt: null, lastEntrySource: null, lastDirection: null, atEndTile: false, mobsKilledHere: 0, tilesAdvanced: 0 };
+      Runtime.basement = {};
     }
-    Runtime.basement.active = true;
     Runtime.basement.enteredAt = Date.now();
+    Runtime.basement.exitedAt = null;
     Runtime.basement.lastEntrySource = meta && meta.source ? String(meta.source) : "unknown";
     Runtime.basement.lastDirection = null;
     Runtime.basement.atEndTile = false;
     Runtime.basement.mobsKilledHere = 0;
     Runtime.basement.tilesAdvanced = 0;
-    Logger.log("BASEMENT", "entered", { source: Runtime.basement.lastEntrySource });
+    Runtime.basement.exitSuppressedCount = 0;
+    Runtime.basement.exitSuppressedAtEndCount = 0;
+    Runtime.basement.knowledgeLootedCount = 0;
+    basementSetPhase("active", "mark_basement_entered");
+    Logger.log("BASEMENT", "entered", { source: Runtime.basement.lastEntrySource, substring: meta && meta.substring ? meta.substring : null });
     return { ok: true, state: Object.assign({}, Runtime.basement) };
   }
 
   function markBasementExited(meta) {
     if (!Runtime.basement) return { ok: false, reason: "no_state" };
-    Runtime.basement.active = false;
+    Runtime.basement.exitedAt = Date.now();
     Runtime.basement.atEndTile = false;
     Runtime.basement.lastDirection = null;
-    Logger.log("BASEMENT", "exited", { reason: meta && meta.reason ? meta.reason : null });
+    basementSetPhase("idle", (meta && meta.reason) || "mark_basement_exited");
+    Logger.log("BASEMENT", "exited", { reason: meta && meta.reason ? meta.reason : null, substring: meta && meta.substring ? meta.substring : null });
     return { ok: true };
   }
 
   function setBasementAtEndTile(value) {
     if (!Runtime.basement || typeof Runtime.basement !== "object") return { ok: false, reason: "no_state" };
-    Runtime.basement.atEndTile = !!value;
-    return { ok: true, atEndTile: Runtime.basement.atEndTile };
+    const v = !!value;
+    Runtime.basement.atEndTile = v;
+    // Rising edge into atEnd phase only happens from "active". From "atEnd"/"complete" we stay sticky.
+    if (v && Runtime.basement.phase === "active") {
+      basementSetPhase("atEnd", "set_basement_at_end_tile");
+    }
+    return { ok: true, atEndTile: v, phase: Runtime.basement.phase };
+  }
+
+  // AI CHANGED: v1.2.2-alpha — Convenience boolean: are we allowed to take the basement exit ladder right now?
+  //   True only when phase === "complete". Used by the loot wrapper and (optionally) by external desktop-app callers.
+  function getBasementCanExit() {
+    return !!(Runtime && Runtime.basement && Runtime.basement.phase === "complete");
   }
 
   function getBasementState() {
     const b = Runtime.basement || {};
     return {
       active: !!b.active,
+      phase: b.phase || "idle",
+      objectiveComplete: !!b.objectiveComplete,
+      canExit: b.phase === "complete",
       enteredAt: b.enteredAt || null,
+      exitedAt: b.exitedAt || null,
       atEndTile: !!b.atEndTile,
       mobsKilledHere: Number.isFinite(b.mobsKilledHere) ? b.mobsKilledHere : 0,
       tilesAdvanced: Number.isFinite(b.tilesAdvanced) ? b.tilesAdvanced : 0,
       lastDirection: b.lastDirection || null,
-      lastEntrySource: b.lastEntrySource || null
+      lastEntrySource: b.lastEntrySource || null,
+      exitSuppressedCount: Number.isFinite(b.exitSuppressedCount) ? b.exitSuppressedCount : 0,
+      exitSuppressedAtEndCount: Number.isFinite(b.exitSuppressedAtEndCount) ? b.exitSuppressedAtEndCount : 0,
+      knowledgeLootedCount: Number.isFinite(b.knowledgeLootedCount) ? b.knowledgeLootedCount : 0,
+      lastPhaseTransitionAt: b.lastPhaseTransitionAt || null,
+      lastPhaseTransitionReason: b.lastPhaseTransitionReason || null
     };
   }
 
-  // AI CHANGED: v1.2.1-alpha — Wraps a loot-click async function and applies basement-state transitions when the
-  //   highlighted collect button looks like a basement entry/exit (text/aria-label matches Config.basement.entryDetectSubstrings).
+  // AI CHANGED: v1.2.1-alpha / v1.2.2-alpha — Basement objective wrapper. Wraps an async loot/activate function with a
+  //   phase-aware decision tree so the bot does NOT immediately exit the basement on the cycle right after entry.
   //
-  //   Flow:
-  //     1. Snapshot `detectBasementEntryFromUi()` BEFORE the click (the highlighted button vanishes after a successful click).
-  //     2. Run the wrapped loot fn.
-  //     3. If basement farming is enabled AND the BEFORE snapshot saw a basement substring AND the click succeeded:
-  //          - If we were NOT inside a basement → mark entered (this is the basement-entry collect click).
-  //          - If we WERE inside a basement → mark exited (this is the basement-exit collect/ladder click).
+  //   Decision tree (checks `detectBasementEntryFromUi()` BEFORE clicking — the highlighted button vanishes after a
+  //   successful click, so we MUST snapshot first):
   //
-  //   When basement farming is disabled, the wrapper is a transparent pass-through. When the loot fn fails, no state
+  //     phase=="idle":
+  //       - isLadder + click ok        → markBasementEntered  (phase → active)
+  //       - !isLadder + click ok       → normal loot, no state change
+  //
+  //     phase=="active":  (we just entered, exploring forward)
+  //       - isLadder                   → SUPPRESS click. Return ok/skipped/reason="basement_exit_suppressed".
+  //                                       Increment exitSuppressedCount. Critical: this is the fix for the
+  //                                       immediate-exit bug — the entrance-tile ladder is the same button as the
+  //                                       exit ladder, so detect-substring matches it; without this gate the wrapper
+  //                                       would flip phase back to idle on cycle 2.
+  //       - !isLadder + click ok       → normal loot (chest/altar/contract on the way), no phase change.
+  //
+  //     phase=="atEnd":   (champion icon was seen on this tile this run; sticky)
+  //       - isLadder                   → SUPPRESS first N cycles (Config.basement.exitSuppressedAtEndPromoteThreshold).
+  //                                       Increment exitSuppressedAtEndCount. After threshold reached, promote phase
+  //                                       → "complete" and FALL THROUGH to actually click the ladder (this is the
+  //                                       fallback for basements that have no separate knowledge button).
+  //       - !isLadder + click ok       → KNOWLEDGE LOOTED. Promote phase → "complete". The next cycle's ladder click
+  //                                       will be allowed and will exit the basement.
+  //
+  //     phase=="complete":
+  //       - isLadder + click ok        → markBasementExited (phase → idle). This is the allowed exit click.
+  //       - !isLadder + click ok       → normal loot, no phase change (rare; secondary loot at end tile).
+  //
+  //   When basement farming is disabled, the wrapper is a transparent pass-through. When the loot fn fails, no phase
   //   transition is applied (the bot will retry on a later cycle).
   async function maybeApplyBasementTransitionAroundLoot(lootFn) {
     const farmingOn = typeof getBasementFarmingEnabled === "function" ? getBasementFarmingEnabled() : false;
@@ -1608,13 +1682,78 @@
     } catch (err) {
       beforeDetect = null;
     }
+    const isLadder = !!(beforeDetect && beforeDetect.ok === true && beforeDetect.isBasement === true);
+    if (!Runtime.basement || typeof Runtime.basement !== "object") {
+      basementSetPhase("idle", "wrapper_init_default");
+    }
+    let phase = Runtime.basement.phase || "idle";
+    const promoteThreshold =
+      Config && Config.basement && Number.isFinite(Config.basement.exitSuppressedAtEndPromoteThreshold)
+        ? Config.basement.exitSuppressedAtEndPromoteThreshold
+        : 2;
+
+    // PHASE-AWARE PRE-CLICK GATE.
+    if (isLadder) {
+      if (phase === "active") {
+        Runtime.basement.exitSuppressedCount = (Runtime.basement.exitSuppressedCount || 0) + 1;
+        Logger.log("BASEMENT", "ladder click suppressed (active phase)", {
+          phase: phase,
+          exitSuppressedCount: Runtime.basement.exitSuppressedCount,
+          substring: beforeDetect ? beforeDetect.substring : null
+        });
+        return {
+          ok: true, clicked: false, verified: true, skipped: true,
+          reason: "basement_exit_suppressed",
+          phase: phase,
+          exitSuppressedCount: Runtime.basement.exitSuppressedCount
+        };
+      }
+      if (phase === "atEnd") {
+        Runtime.basement.exitSuppressedCount = (Runtime.basement.exitSuppressedCount || 0) + 1;
+        Runtime.basement.exitSuppressedAtEndCount = (Runtime.basement.exitSuppressedAtEndCount || 0) + 1;
+        if (Runtime.basement.exitSuppressedAtEndCount >= promoteThreshold) {
+          // Promote to complete and fall through to actually click the ladder = exit.
+          Logger.log("BASEMENT", "promoting to complete via suppressed-at-end threshold", {
+            exitSuppressedAtEndCount: Runtime.basement.exitSuppressedAtEndCount,
+            threshold: promoteThreshold
+          });
+          basementSetPhase("complete", "atEnd_suppressed_threshold_reached");
+          phase = "complete";
+        } else {
+          Logger.log("BASEMENT", "ladder click suppressed (atEnd phase)", {
+            phase: phase,
+            exitSuppressedAtEndCount: Runtime.basement.exitSuppressedAtEndCount,
+            threshold: promoteThreshold,
+            substring: beforeDetect ? beforeDetect.substring : null
+          });
+          return {
+            ok: true, clicked: false, verified: true, skipped: true,
+            reason: "basement_exit_suppressed",
+            phase: phase,
+            exitSuppressedAtEndCount: Runtime.basement.exitSuppressedAtEndCount,
+            promoteThreshold: promoteThreshold
+          };
+        }
+      }
+    }
+
+    // CLICK (suppression has already short-circuited above for protected phases).
     const lootResult = await lootFn();
-    if (lootResult && lootResult.ok === true && beforeDetect && beforeDetect.ok === true && beforeDetect.isBasement === true) {
-      const wasActive = typeof isInBasement === "function" && isInBasement();
-      if (!wasActive) {
-        try { markBasementEntered({ source: "loot_collect_click", substring: beforeDetect.substring }); } catch (err) {}
+
+    // POST-CLICK PHASE TRANSITIONS.
+    if (lootResult && lootResult.ok === true) {
+      if (isLadder) {
+        if (phase === "idle") {
+          try { markBasementEntered({ source: "loot_collect_click", substring: beforeDetect.substring }); } catch (err) {}
+        } else if (phase === "complete") {
+          try { markBasementExited({ reason: "loot_collect_click_exit", substring: beforeDetect.substring }); } catch (err) {}
+        }
       } else {
-        try { markBasementExited({ reason: "loot_collect_click_exit", substring: beforeDetect.substring }); } catch (err) {}
+        // Non-ladder loot succeeded.
+        if (phase === "atEnd" && lootResult.clicked === true && !lootResult.skipped) {
+          Runtime.basement.knowledgeLootedCount = (Runtime.basement.knowledgeLootedCount || 0) + 1;
+          basementSetPhase("complete", "knowledge_looted_at_end_tile");
+        }
       }
     }
     return lootResult;
@@ -1651,5 +1790,11 @@
     if (hasChampion !== previous) {
       Logger.log("BASEMENT", "atEndTile flag updated", { previous: previous, current: hasChampion, iconsScanned: icons.length });
     }
-    return { ok: true, atEndTile: hasChampion, iconsScanned: icons.length };
+    // AI CHANGED: v1.2.2-alpha — Rising edge into "atEnd" phase only happens FROM "active" so atEnd / complete are sticky.
+    //   This means once we've reached the basement end tile, even after the champion dies and its icon disappears,
+    //   the phase machine does NOT regress.
+    if (Runtime.basement.phase === "active" && previous === false && hasChampion === true) {
+      basementSetPhase("atEnd", "champion_icon_visible_in_basement");
+    }
+    return { ok: true, atEndTile: hasChampion, phase: Runtime.basement.phase, iconsScanned: icons.length };
   }

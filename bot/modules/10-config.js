@@ -49,7 +49,15 @@
       collectButtonSelector: "div.battle-event-button.highlight",
       endChampionOverride: true,
       // Heuristic: a basement is detected when a battle-event-button.highlight exists AND its accessible name includes one of these substrings.
-      entryDetectSubstrings: ["basement", "ladder", "stairs", "stair", "cellar", "underground", "подвал", "лестница"]
+      entryDetectSubstrings: ["basement", "ladder", "stairs", "stair", "cellar", "underground", "подвал", "лестница"],
+      // AI CHANGED: v1.2.2-alpha — Phase state machine knobs.
+      // After the bot transitions to phase "atEnd" (champion icon seen on current tile), the loot wrapper SUPPRESSES
+      //   ladder/exit clicks until the basement objective is complete. Completion is signaled by a successful non-ladder
+      //   loot (knowledge crystal) at the end tile. Some basements may not have a separate knowledge button — they may
+      //   only have the ladder. To avoid getting stuck, the wrapper falls through to phase "complete" after this many
+      //   suppressed ladder cycles at atEnd. Default 2 (one suppressed cycle to confirm combat is fully cleared, then
+      //   on the next cycle promote to complete and click the ladder = exit).
+      exitSuppressedAtEndPromoteThreshold: 2
     },
     // AI CHANGED: Added action verification timing config for click+confirm flows.
     verification: {

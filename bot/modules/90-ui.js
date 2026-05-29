@@ -4893,6 +4893,384 @@
         addCheck("v121_basement_lifecycle_shape", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
       }
 
+      // AI CHANGED: v1.2.2-alpha — BASEMENT COMPLETION TESTS. The wrapper now implements a phase state machine:
+      //   idle → active → atEnd → complete → idle. We exercise every edge with a stub loot fn + stub UI detect via
+      //   a small monkey-patch of `detectBasementEntryFromUi`. Restore the original at the end.
+      const __v122_origDetect =
+        typeof detectBasementEntryFromUi === "function" ? detectBasementEntryFromUi : null;
+      let __v122_stubLadder = false;
+      let __v122_stubSubstring = null;
+      const __v122_installStub = function () {
+        if (typeof detectBasementEntryFromUi === "function") {
+          // We can't reassign a `function` declaration in this scope from outside, but we CAN swap the global
+          // reference if it lives on `window`. Most modules export to a closure-scoped const, so as a safe fallback
+          // we mark these tests skipped when monkey-patching is impossible. In the IIFE bundle the helper is module-
+          // scoped — we can still re-stub via `Runtime.basement._testLadderStub` checked by the wrapper. Instead, we
+          // simulate the wrapper's decision tree directly using basementSetPhase + counters and assert the shape.
+        }
+      };
+      void __v122_origDetect;
+      void __v122_installStub;
+
+      // 1) Phase machine: idle → active → atEnd → complete → idle (synthetic, no DOM).
+      try {
+        if (typeof basementSetPhase !== "function" || typeof getBasementState !== "function" || typeof markBasementEntered !== "function" || typeof markBasementExited !== "function" || typeof setBasementAtEndTile !== "function") {
+          addCheck("v122_basement_phase_full_cycle", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startSnap = getBasementState();
+          markBasementEntered({ source: "test_phase_full" });
+          const afterEnter = getBasementState();
+          // setBasementAtEndTile(true) should auto-promote phase from active → atEnd.
+          setBasementAtEndTile(true);
+          const afterAtEnd = getBasementState();
+          // Promote to complete (simulating knowledge looted).
+          basementSetPhase("complete", "test_promote_complete");
+          const afterComplete = getBasementState();
+          // Allowed exit.
+          markBasementExited({ reason: "test_phase_full_done" });
+          const afterExit = getBasementState();
+          // Restore.
+          if (Runtime.basement) {
+            Runtime.basement.active = !!startSnap.active;
+            Runtime.basement.phase = startSnap.phase || "idle";
+            Runtime.basement.atEndTile = !!startSnap.atEndTile;
+            Runtime.basement.objectiveComplete = !!startSnap.objectiveComplete;
+          }
+          const ok =
+            afterEnter.phase === "active" && afterEnter.active === true && afterEnter.objectiveComplete === false && afterEnter.canExit === false &&
+            afterAtEnd.phase === "atEnd" && afterAtEnd.atEndTile === true && afterAtEnd.canExit === false &&
+            afterComplete.phase === "complete" && afterComplete.objectiveComplete === true && afterComplete.canExit === true &&
+            afterExit.phase === "idle" && afterExit.active === false && afterExit.canExit === false;
+          addCheck("v122_basement_phase_full_cycle", ok, {
+            afterEnter: afterEnter, afterAtEnd: afterAtEnd, afterComplete: afterComplete, afterExit: afterExit
+          }, false);
+        }
+      } catch (err) {
+        addCheck("v122_basement_phase_full_cycle", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // 2) markBasementEntered resets all run counters.
+      try {
+        if (typeof markBasementEntered !== "function" || typeof getBasementState !== "function") {
+          addCheck("v122_basement_entry_resets_counters", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startSnap = getBasementState();
+          // Pollute counters to simulate a previous run that left state behind.
+          if (Runtime.basement) {
+            Runtime.basement.exitSuppressedCount = 99;
+            Runtime.basement.exitSuppressedAtEndCount = 99;
+            Runtime.basement.knowledgeLootedCount = 99;
+            Runtime.basement.atEndTile = true;
+          }
+          markBasementEntered({ source: "test_reset" });
+          const after = getBasementState();
+          // Restore.
+          if (Runtime.basement) {
+            Runtime.basement.active = !!startSnap.active;
+            Runtime.basement.phase = startSnap.phase || "idle";
+            Runtime.basement.atEndTile = !!startSnap.atEndTile;
+            Runtime.basement.objectiveComplete = !!startSnap.objectiveComplete;
+            Runtime.basement.exitSuppressedCount = startSnap.exitSuppressedCount || 0;
+            Runtime.basement.exitSuppressedAtEndCount = startSnap.exitSuppressedAtEndCount || 0;
+            Runtime.basement.knowledgeLootedCount = startSnap.knowledgeLootedCount || 0;
+          }
+          const ok =
+            after.exitSuppressedCount === 0 && after.exitSuppressedAtEndCount === 0 &&
+            after.knowledgeLootedCount === 0 && after.atEndTile === false && after.phase === "active";
+          addCheck("v122_basement_entry_resets_counters", ok, { after: after }, false);
+        }
+      } catch (err) {
+        addCheck("v122_basement_entry_resets_counters", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 3) Wrapper SUPPRESSES ladder click during phase=active (the immediate-exit fix).
+      //   We simulate: basement just entered (phase=active). The current tile still has the entrance ladder
+      //   (which `detectBasementEntryFromUi` matches by substring). Without the fix the wrapper would mark exited.
+      //   We can't easily monkey-patch `detectBasementEntryFromUi` from this scope, but we CAN add a temporary
+      //   highlighted button to the live DOM that contains a basement substring and assert the wrapper suppresses.
+      try {
+        if (typeof maybeApplyBasementTransitionAroundLoot !== "function" || typeof markBasementEntered !== "function" || typeof markBasementExited !== "function" || typeof setBasementFarmingEnabled !== "function") {
+          addCheck("v122_wrapper_suppresses_active_ladder", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startEnabled = typeof getBasementFarmingEnabled === "function" ? getBasementFarmingEnabled() : false;
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          // Inject a fake basement-substring button into the DOM.
+          const fake = document.createElement("div");
+          fake.className = "battle-event-button highlight";
+          fake.textContent = "Use ladder";
+          fake.setAttribute("aria-label", "ladder");
+          document.body.appendChild(fake);
+          setBasementFarmingEnabled(true);
+          markBasementEntered({ source: "test_active_suppression" });
+          let lootCalls = 0;
+          const fakeLoot = async function () { lootCalls += 1; return { ok: true, clicked: true, verified: true }; };
+          const result = await maybeApplyBasementTransitionAroundLoot(fakeLoot);
+          const afterPhase = (Runtime.basement && Runtime.basement.phase) || "idle";
+          // Cleanup.
+          if (fake.parentNode) fake.parentNode.removeChild(fake);
+          markBasementExited({ reason: "test_active_suppression_done" });
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.active = !!startSnap.active;
+            Runtime.basement.phase = startSnap.phase || "idle";
+          }
+          setBasementFarmingEnabled(!!startEnabled);
+          const ok =
+            lootCalls === 0 &&
+            result && result.ok === true && result.skipped === true && result.reason === "basement_exit_suppressed" &&
+            afterPhase === "active";
+          addCheck("v122_wrapper_suppresses_active_ladder", ok, { result: result, lootCalls: lootCalls, afterPhase: afterPhase }, false);
+        }
+      } catch (err) {
+        addCheck("v122_wrapper_suppresses_active_ladder", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // 4) Wrapper SUPPRESSES ladder click during phase=atEnd (until threshold reached).
+      try {
+        if (typeof maybeApplyBasementTransitionAroundLoot !== "function" || typeof basementSetPhase !== "function") {
+          addCheck("v122_wrapper_suppresses_atend_until_threshold", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startEnabled = typeof getBasementFarmingEnabled === "function" ? getBasementFarmingEnabled() : false;
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          const startThreshold = Config && Config.basement ? Config.basement.exitSuppressedAtEndPromoteThreshold : null;
+          // Force threshold to 2 for the test.
+          if (Config && Config.basement) Config.basement.exitSuppressedAtEndPromoteThreshold = 2;
+          const fake = document.createElement("div");
+          fake.className = "battle-event-button highlight";
+          fake.textContent = "Use ladder";
+          fake.setAttribute("aria-label", "ladder");
+          document.body.appendChild(fake);
+          setBasementFarmingEnabled(true);
+          markBasementEntered({ source: "test_atend_threshold" });
+          basementSetPhase("atEnd", "test_force_atend");
+          let lootCalls = 0;
+          const fakeLoot = async function () { lootCalls += 1; return { ok: true, clicked: true, verified: true }; };
+          const r1 = await maybeApplyBasementTransitionAroundLoot(fakeLoot);
+          const phaseAfter1 = (Runtime.basement && Runtime.basement.phase) || "idle";
+          // 1st cycle suppressed (count=1, threshold=2).
+          const r2 = await maybeApplyBasementTransitionAroundLoot(fakeLoot);
+          // 2nd cycle: count reaches 2 → promote to complete and click → exits.
+          const phaseAfter2 = (Runtime.basement && Runtime.basement.phase) || "idle";
+          // Cleanup.
+          if (fake.parentNode) fake.parentNode.removeChild(fake);
+          markBasementExited({ reason: "test_atend_threshold_done" });
+          if (Config && Config.basement) Config.basement.exitSuppressedAtEndPromoteThreshold = startThreshold;
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.active = !!startSnap.active;
+            Runtime.basement.phase = startSnap.phase || "idle";
+          }
+          setBasementFarmingEnabled(!!startEnabled);
+          // r1: suppressed, no loot call. r2: clicked through (loot called), wrapper sees phase complete → marks exited → phase becomes idle.
+          const ok =
+            r1 && r1.ok === true && r1.skipped === true && r1.reason === "basement_exit_suppressed" &&
+            phaseAfter1 === "atEnd" &&
+            r2 && r2.ok === true && r2.clicked === true &&
+            phaseAfter2 === "idle" &&
+            lootCalls === 1;
+          addCheck("v122_wrapper_suppresses_atend_until_threshold", ok, {
+            r1: r1, r2: r2, phaseAfter1: phaseAfter1, phaseAfter2: phaseAfter2, lootCalls: lootCalls
+          }, false);
+        }
+      } catch (err) {
+        addCheck("v122_wrapper_suppresses_atend_until_threshold", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // 5) Knowledge loot (non-ladder click at atEnd) promotes phase to complete.
+      try {
+        if (typeof maybeApplyBasementTransitionAroundLoot !== "function" || typeof basementSetPhase !== "function") {
+          addCheck("v122_knowledge_loot_promotes_complete", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startEnabled = typeof getBasementFarmingEnabled === "function" ? getBasementFarmingEnabled() : false;
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          // No basement-substring button this time → detect.isBasement = false → wrapper treats as normal loot.
+          setBasementFarmingEnabled(true);
+          markBasementEntered({ source: "test_knowledge" });
+          basementSetPhase("atEnd", "test_force_atend_knowledge");
+          let lootCalls = 0;
+          const fakeLoot = async function () { lootCalls += 1; return { ok: true, clicked: true, verified: true }; };
+          const result = await maybeApplyBasementTransitionAroundLoot(fakeLoot);
+          const phaseAfter = (Runtime.basement && Runtime.basement.phase) || "idle";
+          const knowledgeCount = (Runtime.basement && Runtime.basement.knowledgeLootedCount) || 0;
+          // Cleanup.
+          markBasementExited({ reason: "test_knowledge_done" });
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.active = !!startSnap.active;
+            Runtime.basement.phase = startSnap.phase || "idle";
+          }
+          setBasementFarmingEnabled(!!startEnabled);
+          const ok =
+            lootCalls === 1 && result && result.ok === true && result.clicked === true &&
+            phaseAfter === "complete" && knowledgeCount === 1;
+          addCheck("v122_knowledge_loot_promotes_complete", ok, { result: result, phaseAfter: phaseAfter, knowledgeCount: knowledgeCount, lootCalls: lootCalls }, false);
+        }
+      } catch (err) {
+        addCheck("v122_knowledge_loot_promotes_complete", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // 6) Wrapper ALLOWS ladder exit during phase=complete (markBasementExited fires).
+      try {
+        if (typeof maybeApplyBasementTransitionAroundLoot !== "function" || typeof basementSetPhase !== "function") {
+          addCheck("v122_wrapper_allows_exit_when_complete", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startEnabled = typeof getBasementFarmingEnabled === "function" ? getBasementFarmingEnabled() : false;
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          const fake = document.createElement("div");
+          fake.className = "battle-event-button highlight";
+          fake.textContent = "Use ladder";
+          fake.setAttribute("aria-label", "ladder");
+          document.body.appendChild(fake);
+          setBasementFarmingEnabled(true);
+          markBasementEntered({ source: "test_exit_when_complete" });
+          basementSetPhase("complete", "test_force_complete");
+          let lootCalls = 0;
+          const fakeLoot = async function () { lootCalls += 1; return { ok: true, clicked: true, verified: true }; };
+          const result = await maybeApplyBasementTransitionAroundLoot(fakeLoot);
+          const phaseAfter = (Runtime.basement && Runtime.basement.phase) || "idle";
+          if (fake.parentNode) fake.parentNode.removeChild(fake);
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.active = !!startSnap.active;
+            Runtime.basement.phase = startSnap.phase || "idle";
+          }
+          setBasementFarmingEnabled(!!startEnabled);
+          const ok = lootCalls === 1 && result && result.ok === true && phaseAfter === "idle";
+          addCheck("v122_wrapper_allows_exit_when_complete", ok, { result: result, phaseAfter: phaseAfter, lootCalls: lootCalls }, false);
+        }
+      } catch (err) {
+        addCheck("v122_wrapper_allows_exit_when_complete", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // 7) Wrapper passes through normally during phase=idle entry click.
+      try {
+        if (typeof maybeApplyBasementTransitionAroundLoot !== "function") {
+          addCheck("v122_wrapper_idle_entry_marks_entered", false, { reason: "missing_helper" }, false);
+        } else {
+          const startEnabled = typeof getBasementFarmingEnabled === "function" ? getBasementFarmingEnabled() : false;
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          // Ensure idle phase.
+          if (Runtime.basement) {
+            Runtime.basement.active = false;
+            Runtime.basement.phase = "idle";
+          }
+          const fake = document.createElement("div");
+          fake.className = "battle-event-button highlight";
+          fake.textContent = "Enter basement";
+          fake.setAttribute("aria-label", "basement entry");
+          document.body.appendChild(fake);
+          setBasementFarmingEnabled(true);
+          let lootCalls = 0;
+          const fakeLoot = async function () { lootCalls += 1; return { ok: true, clicked: true, verified: true }; };
+          const result = await maybeApplyBasementTransitionAroundLoot(fakeLoot);
+          const phaseAfter = (Runtime.basement && Runtime.basement.phase) || "idle";
+          if (fake.parentNode) fake.parentNode.removeChild(fake);
+          markBasementExited({ reason: "test_entry_done" });
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.active = !!startSnap.active;
+            Runtime.basement.phase = startSnap.phase || "idle";
+          }
+          setBasementFarmingEnabled(!!startEnabled);
+          const ok = lootCalls === 1 && result && result.ok === true && phaseAfter === "active";
+          addCheck("v122_wrapper_idle_entry_marks_entered", ok, { result: result, phaseAfter: phaseAfter, lootCalls: lootCalls }, false);
+        }
+      } catch (err) {
+        addCheck("v122_wrapper_idle_entry_marks_entered", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // 8) Basement-end champion override is sticky across phase=atEnd / phase=complete (so the score and the
+      //    special-target helper still fire even after the champion icon disappeared post-mortem).
+      try {
+        if (typeof scoreScannedTile !== "function" || typeof basementSetPhase !== "function") {
+          addCheck("v122_end_champion_override_sticky_across_phase", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          const startCh = typeof getAvoidChampions === "function" ? getAvoidChampions() : true;
+          if (typeof setAvoidChampions === "function") setAvoidChampions(true);
+          markBasementEntered({ source: "test_sticky_override" });
+          // Force atEnd phase but flip atEndTile false (simulating post-mortem icon gone).
+          basementSetPhase("atEnd", "test_sticky_atend");
+          if (Runtime.basement) Runtime.basement.atEndTile = false;
+          const tileBoss = {
+            ok: true, classification: "walkable", key: "TR",
+            enemies: 1, allies: 0,
+            lootIcons: ["mob-type-champion event-champion"]
+          };
+          const scoreAtEnd = scoreScannedTile(tileBoss);
+          // Promote to complete.
+          basementSetPhase("complete", "test_sticky_complete");
+          const scoreComplete = scoreScannedTile(tileBoss);
+          // Cleanup.
+          if (typeof setAvoidChampions === "function") setAvoidChampions(!!startCh);
+          markBasementExited({ reason: "test_sticky_done" });
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.active = !!startSnap.active;
+            Runtime.basement.phase = startSnap.phase || "idle";
+            Runtime.basement.atEndTile = !!startSnap.atEndTile;
+          }
+          // Champion target base is 950000 by default → both scores should be POSITIVE (override active),
+          // not -500000 (avoid baseline).
+          const ok = scoreAtEnd > 0 && scoreComplete > 0;
+          addCheck("v122_end_champion_override_sticky_across_phase", ok, { scoreAtEnd: scoreAtEnd, scoreComplete: scoreComplete }, false);
+        }
+      } catch (err) {
+        addCheck("v122_end_champion_override_sticky_across_phase", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 9) Farming-disabled wrapper passes through with no phase mutation.
+      try {
+        if (typeof maybeApplyBasementTransitionAroundLoot !== "function" || typeof setBasementFarmingEnabled !== "function") {
+          addCheck("v122_wrapper_disabled_no_mutation", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startEnabled = typeof getBasementFarmingEnabled === "function" ? getBasementFarmingEnabled() : false;
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          setBasementFarmingEnabled(false);
+          // Inject a basement-substring button — wrapper must still passthrough since farming is OFF.
+          const fake = document.createElement("div");
+          fake.className = "battle-event-button highlight";
+          fake.textContent = "Use ladder";
+          fake.setAttribute("aria-label", "ladder");
+          document.body.appendChild(fake);
+          let lootCalls = 0;
+          const fakeLoot = async function () { lootCalls += 1; return { ok: true, clicked: true, verified: true }; };
+          const result = await maybeApplyBasementTransitionAroundLoot(fakeLoot);
+          const phaseAfter = (Runtime.basement && Runtime.basement.phase) || "idle";
+          if (fake.parentNode) fake.parentNode.removeChild(fake);
+          setBasementFarmingEnabled(!!startEnabled);
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.active = !!startSnap.active;
+            Runtime.basement.phase = startSnap.phase || "idle";
+          }
+          const ok = lootCalls === 1 && result && result.ok === true &&
+            phaseAfter === (startSnap ? (startSnap.phase || "idle") : "idle");
+          addCheck("v122_wrapper_disabled_no_mutation", ok, { result: result, phaseAfter: phaseAfter, lootCalls: lootCalls }, false);
+        }
+      } catch (err) {
+        addCheck("v122_wrapper_disabled_no_mutation", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 10) getBasementCanExit reflects phase=complete only.
+      try {
+        if (typeof getBasementCanExit !== "function" || typeof basementSetPhase !== "function") {
+          addCheck("v122_canExit_only_when_complete", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          basementSetPhase("idle", "test_canexit");
+          const e1 = getBasementCanExit();
+          basementSetPhase("active", "test_canexit");
+          const e2 = getBasementCanExit();
+          basementSetPhase("atEnd", "test_canexit");
+          const e3 = getBasementCanExit();
+          basementSetPhase("complete", "test_canexit");
+          const e4 = getBasementCanExit();
+          basementSetPhase("idle", "test_canexit_restore");
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.active = !!startSnap.active;
+            Runtime.basement.phase = startSnap.phase || "idle";
+          }
+          const ok = e1 === false && e2 === false && e3 === false && e4 === true;
+          addCheck("v122_canExit_only_when_complete", ok, { e1: e1, e2: e2, e3: e3, e4: e4 }, false);
+        }
+      } catch (err) {
+        addCheck("v122_canExit_only_when_complete", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
       // 9) Manual chat is the documented primary mode (default `useUserMessages !== false` and dispatcher uses it).
       try {
         const useUser = !!(Config.chat && Config.chat.useUserMessages !== false);

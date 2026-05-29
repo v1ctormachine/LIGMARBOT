@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "1.2.1-alpha",
-    "description":  "feature completion: special target select flow, automatic lens detection, real basement farming",
-    "builtAt":  "2026-05-29T22:07:19.8425638+03:00",
+    "version":  "1.2.2-alpha",
+    "description":  "basement completion: prevent immediate exit, require objective completion, preserve end champion override",
+    "builtAt":  "2026-05-29T22:37:46.3484453+03:00",
     "history":  [
+                    {
+                        "version":  "1.2.2-alpha",
+                        "description":  "basement completion: prevent immediate exit, require objective completion, preserve end champion override",
+                        "date":  "2026-05-29T22:37:46.3484453+03:00"
+                    },
                     {
                         "version":  "1.2.1-alpha",
                         "description":  "feature completion: special target select flow, automatic lens detection, real basement farming",
@@ -247,11 +252,6 @@
                         "version":  "0.3.193",
                         "description":  "retarget: no cancel; queue first skill on game basic cast; post-retarget burst allowCombatQueue",
                         "date":  "2026-05-13T18:56:26.2566231+03:00"
-                    },
-                    {
-                        "version":  "0.3.192",
-                        "description":  "horizon: typed paper mob blend physical vs magic; instant arrow-tier regex; TEST Horizon typed paper mob calibration",
-                        "date":  "2026-05-13T18:22:48.6304947+03:00"
                     }
                 ]
 }
