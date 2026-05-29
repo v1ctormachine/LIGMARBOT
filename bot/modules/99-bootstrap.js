@@ -135,6 +135,23 @@
         typeof clearSupportBuffAssumedDurationTracking === "function" ? clearSupportBuffAssumedDurationTracking : null,
       getSupportBuffAssumedDurationTrackingSnapshot:
         typeof getSupportBuffAssumedDurationTrackingSnapshot === "function" ? getSupportBuffAssumedDurationTrackingSnapshot : null,
+      // AI CHANGED: Buff system v1.0.5-alpha — duration-based policy classifier + read-only snapshot of all slots.
+      //   <60s ⇒ prebuff (tile-keyed on new mob tile); >=60s ⇒ longbuff (OOC only, timer-driven); Windy Dome / safety reserved excluded.
+      classifySupportBuffPolicyForRow:
+        typeof classifySupportBuffPolicyForRow === "function" ? classifySupportBuffPolicyForRow : null,
+      getSupportBuffPolicySnapshot:
+        typeof getSupportBuffPolicySnapshot === "function" ? getSupportBuffPolicySnapshot : null,
+      // AI CHANGED: Buff system v1.0.5-alpha — runtime pipelines + cast-resolution wait (replaces slot-cooldown-only wait).
+      maybeApplyPrebuffsForNewMobTile:
+        typeof maybeApplyPrebuffsForNewMobTile === "function" ? maybeApplyPrebuffsForNewMobTile : null,
+      maintainLongbuffsOutOfCombat:
+        typeof maintainLongbuffsOutOfCombat === "function" ? maintainLongbuffsOutOfCombat : null,
+      waitForSupportCastResolved:
+        typeof waitForSupportCastResolved === "function" ? waitForSupportCastResolved : null,
+      resetSupportBuffPrebuffTileGate:
+        typeof resetSupportBuffPrebuffTileGate === "function" ? resetSupportBuffPrebuffTileGate : null,
+      resetSupportBuffLongbuffSessionState:
+        typeof resetSupportBuffLongbuffSessionState === "function" ? resetSupportBuffLongbuffSessionState : null,
       waitForCondition: waitForCondition,
       clickFindEnemyVerified: clickFindEnemyVerified,
       clickLootOrActivateVerified: clickLootOrActivateVerified,
@@ -156,6 +173,42 @@
       scanSecondRingForColor: scanSecondRingForColor,
       getSecondRingOffsets: getSecondRingOffsets,
       ringHasUsefulLoot: ringHasUsefulLoot,
+      // AI CHANGED: v1.2.0-alpha — DESKTOP APP API. Champion red 2-ring scan + 3-ring scan + lens helpers.
+      scanSecondRingForChampion: scanSecondRingForChampion,
+      scanThirdRingForColor: scanThirdRingForColor,
+      getThirdRingOffsets: getThirdRingOffsets,
+      detectLensState: detectLensState,
+      getLensState: getLensState,
+      setLensStateOverride: setLensStateOverride,
+      // AI CHANGED: v1.2.0-alpha — DESKTOP APP API. Avoidance / basement preference setters/getters.
+      getAvoidChampions: getAvoidChampions,
+      setAvoidChampions: setAvoidChampions,
+      getAvoidGoblins: getAvoidGoblins,
+      setAvoidGoblins: setAvoidGoblins,
+      getBasementFarmingEnabled: getBasementFarmingEnabled,
+      setBasementFarmingEnabled: setBasementFarmingEnabled,
+      getBotPreferencesSnapshot: getBotPreferencesSnapshot,
+      saveBotPreferencesToStorage: saveBotPreferencesToStorage,
+      loadBotPreferencesFromStorage: loadBotPreferencesFromStorage,
+      detectBasementEntryFromUi: detectBasementEntryFromUi,
+      markBasementEntered: markBasementEntered,
+      markBasementExited: markBasementExited,
+      setBasementAtEndTile: setBasementAtEndTile,
+      getBasementState: getBasementState,
+      isInBasement: isInBasement,
+      // AI CHANGED: v1.2.1-alpha — DESKTOP APP API. Real basement automation primitives.
+      maybeApplyBasementTransitionAroundLoot:
+        typeof maybeApplyBasementTransitionAroundLoot === "function" ? maybeApplyBasementTransitionAroundLoot : null,
+      updateBasementEndTileFlagFromVisibleIcons:
+        typeof updateBasementEndTileFlagFromVisibleIcons === "function" ? updateBasementEndTileFlagFromVisibleIcons : null,
+      // AI CHANGED: v1.2.2-alpha — DESKTOP APP API. Phase state machine helpers.
+      basementSetPhase: typeof basementSetPhase === "function" ? basementSetPhase : null,
+      getBasementCanExit: typeof getBasementCanExit === "function" ? getBasementCanExit : null,
+      // AI CHANGED: v1.2.1-alpha — DESKTOP APP API. Lens auto-detect latch helper (also runs in `startAutoFarmLoop`).
+      maybeAutoDetectLensIfNeeded:
+        typeof maybeAutoDetectLensIfNeeded === "function" ? maybeAutoDetectLensIfNeeded : null,
+      // AI CHANGED: v1.2.0-alpha — DESKTOP APP API. Active special-target click on current tile.
+      selectSpecialTileTargetIfDesired: selectSpecialTileTargetIfDesired,
       // AI CHANGED: Expose overlay control so user can manually clear / re-render from console.
       renderSecondRingOverlay: renderSecondRingOverlay,
       clearSecondRingOverlay: clearSecondRingOverlay,
@@ -174,6 +227,23 @@
       getAutoFarmStatus: getAutoFarmStatus,
       setAutoFarmCombatMode: setAutoFarmCombatMode,
       applyAutoFarmCombatMode: applyAutoFarmCombatMode,
+      // AI CHANGED: v1.2.0-alpha — DESKTOP APP API. Canonical mode getter returns "normal"/"hard"/"easy".
+      getAutoFarmCombatMode: typeof getAutoFarmCombatMode === "function" ? getAutoFarmCombatMode : null,
+      normalizeCombatModeName: typeof normalizeCombatModeName === "function" ? normalizeCombatModeName : null,
+      // AI CHANGED: Easy-mode predicate exposed for console debugging of buff/scan suppression.
+      isAutoFarmEasyMode: typeof isAutoFarmEasyMode === "function" ? isAutoFarmEasyMode : null,
+      // AI CHANGED: v1.2.0-alpha — DESKTOP APP API. Manual chat message + interval API.
+      getAutoChatMessages: typeof getAutoChatMessages === "function" ? getAutoChatMessages : null,
+      setAutoChatMessages: typeof setAutoChatMessages === "function" ? setAutoChatMessages : null,
+      addAutoChatMessage: typeof addAutoChatMessage === "function" ? addAutoChatMessage : null,
+      removeAutoChatMessage: typeof removeAutoChatMessage === "function" ? removeAutoChatMessage : null,
+      clearAutoChatMessages: typeof clearAutoChatMessages === "function" ? clearAutoChatMessages : null,
+      getAutoChatIntervalRange: typeof getAutoChatIntervalRange === "function" ? getAutoChatIntervalRange : null,
+      setAutoChatIntervalRange: typeof setAutoChatIntervalRange === "function" ? setAutoChatIntervalRange : null,
+      getAutoChatEnabled: typeof getAutoChatEnabled === "function" ? getAutoChatEnabled : null,
+      setAutoChatEnabled: typeof setAutoChatEnabled === "function" ? setAutoChatEnabled : null,
+      saveAutoChatPrefsToStorage: typeof saveAutoChatPrefsToStorage === "function" ? saveAutoChatPrefsToStorage : null,
+      loadAutoChatPrefsFromStorage: typeof loadAutoChatPrefsFromStorage === "function" ? loadAutoChatPrefsFromStorage : null,
       getCombatEpisode: function () {
         return Runtime.autoFarm && Runtime.autoFarm.combatEpisode ? Runtime.autoFarm.combatEpisode : null;
       },
@@ -183,6 +253,35 @@
       readPersistedAutoRecoveryResume: readPersistedAutoRecoveryResume,
       clearPersistedAutoRecoveryResume: clearPersistedAutoRecoveryResume,
       resumeAutoFarmAfterRecoveryBootIfNeeded: resumeAutoFarmAfterRecoveryBootIfNeeded,
+      // AI CHANGED: Night mode — unattended overnight farm: hourly reload + boot autostart, persisted in `ligmarbot.autoFarmUi.v1`.
+      isNightModeEnabled: typeof isNightModeEnabled === "function" ? isNightModeEnabled : null,
+      setNightModeEnabled: typeof setNightModeEnabled === "function" ? setNightModeEnabled : null,
+      scheduleNightModeHourlyReloadIfNeeded:
+        typeof scheduleNightModeHourlyReloadIfNeeded === "function" ? scheduleNightModeHourlyReloadIfNeeded : null,
+      cancelNightModeHourlyReload:
+        typeof cancelNightModeHourlyReload === "function" ? cancelNightModeHourlyReload : null,
+      triggerNightModeHourlyReload:
+        typeof triggerNightModeHourlyReload === "function" ? triggerNightModeHourlyReload : null,
+      writeNightModeBootAutostartTokenIfNeeded:
+        typeof writeNightModeBootAutostartTokenIfNeeded === "function"
+          ? writeNightModeBootAutostartTokenIfNeeded
+          : null,
+      getNightModeStatus: function () {
+        const nm =
+          Runtime.autoFarm && Runtime.autoFarm.nightMode && typeof Runtime.autoFarm.nightMode === "object"
+            ? Runtime.autoFarm.nightMode
+            : null;
+        return {
+          enabled: !!(nm && nm.enabled),
+          hourlyReloadDueAt: nm ? nm.hourlyReloadDueAt : null,
+          hourlyReloadScheduledAt: nm ? nm.hourlyReloadScheduledAt : null,
+          hourlyReloadMs: (Config.nightMode && Config.nightMode.hourlyReloadMs) || 3600000,
+          autoFarmRunning: !!(Runtime.autoFarm && Runtime.autoFarm.running),
+          reloadOnlyWhenAutoFarmRunning: !!(Config.nightMode && Config.nightMode.reloadOnlyWhenAutoFarmRunning !== false),
+          lastReloadAt: nm ? nm.lastReloadAt : null,
+          lastBootAutostartAt: nm ? nm.lastBootAutostartAt : null
+        };
+      },
       createControlPanel: createControlPanel,
       updateControlPanelStatus: updateControlPanelStatus,
       // AI CHANGED: grouped slice 34 — planner localStorage sync from console (panel had no toggles since slice 29).
@@ -237,6 +336,7 @@
       clearSkillsCache: clearSkillsCache,
       applySkillMasterToSlots: applySkillMasterToSlots,
       readActionBarLayoutFingerprint: readActionBarLayoutFingerprint,
+      getActionBarSlotElements: getActionBarSlotElements,
       parseSkillEffects: parseSkillEffects,
       inferSkillConception: inferSkillConception,
       normalizeSkillName: normalizeSkillName,
@@ -305,13 +405,106 @@
       // AI CHANGED: Diagnostics-only threshold suggestion from ranked runtime telemetry (no auto-write to Config).
       plannerBuildRankedTuningHint: plannerBuildRankedTuningHint,
       // AI CHANGED: openerHorizonSim — paper damage window preview for ranked candidates (86-planner.js).
-      previewOpenerHorizonSim: previewOpenerHorizonSim
+      previewOpenerHorizonSim: previewOpenerHorizonSim,
+      // AI CHANGED: Planner rewrite v1 — read-only diagnostics for the new short-sequence planner foundation (86-planner.js).
+      getPlannerCombatState:
+        typeof getPlannerCombatState === "function" ? getPlannerCombatState : null,
+      getPlannerNormalizedSkills:
+        typeof getPlannerNormalizedSkills === "function" ? getPlannerNormalizedSkills : null,
+      previewPlannerSequences:
+        typeof previewPlannerSequences === "function" ? previewPlannerSequences : null,
+      // AI CHANGED: Planner tactical tuning v1.1.2 — expose the per-action semantic explanation helper so a console caller can inspect
+      // WHY a candidate sequence won/lost (per-action reasonTags + scoreContributions in TTK-equivalent seconds).
+      plannerSeqExplainSemantic:
+        typeof plannerSeqExplainSemantic === "function" ? plannerSeqExplainSemantic : null,
+      plannerSelectSequencePick:
+        typeof plannerSelectSequencePick === "function" ? plannerSelectSequencePick : null,
+      plannerAdaptSequencePickToOpenerShape:
+        typeof plannerAdaptSequencePickToOpenerShape === "function" ? plannerAdaptSequencePickToOpenerShape : null,
+      // AI CHANGED: Planner Part 2 — execution-plan API (build / inspect / invalidate / replan-check / adapter).
+      plannerBuildExecutionPlan:
+        typeof plannerBuildExecutionPlan === "function" ? plannerBuildExecutionPlan : null,
+      plannerShouldReplanForExecutionPlan:
+        typeof plannerShouldReplanForExecutionPlan === "function" ? plannerShouldReplanForExecutionPlan : null,
+      plannerInvalidateExecutionPlan:
+        typeof plannerInvalidateExecutionPlan === "function" ? plannerInvalidateExecutionPlan : null,
+      plannerAdvanceExecutionPlanStep:
+        typeof plannerAdvanceExecutionPlanStep === "function" ? plannerAdvanceExecutionPlanStep : null,
+      plannerGetActiveExecutionPlanStep:
+        typeof plannerGetActiveExecutionPlanStep === "function" ? plannerGetActiveExecutionPlanStep : null,
+      plannerAdaptExecutionPlanStepToOpenerShape:
+        typeof plannerAdaptExecutionPlanStepToOpenerShape === "function" ? plannerAdaptExecutionPlanStepToOpenerShape : null,
+      plannerNextCombatQueueAction:
+        typeof plannerNextCombatQueueAction === "function" ? plannerNextCombatQueueAction : null,
+      plannerExecutionPlanStepToQueueAction:
+        typeof plannerExecutionPlanStepToQueueAction === "function" ? plannerExecutionPlanStepToQueueAction : null,
+      // AI CHANGED: Planner Part 2 retarget fix v1.1.3 — lethal guard helper + post-retarget cancel helper exposed for tests
+      // and for live console diagnostics. `plannerWouldCommittedActionAlreadyKillTarget` is the planner-side predictor used by
+      // both the opener queue-arm site and the in-burst chain site to skip overkill follow-ups. `cancelPostRetargetAutoBasic` is
+      // the runtime-side helper that cancels the game's auto-basic immediately after retarget so the planner skill becomes the
+      // real first action.
+      plannerWouldCommittedActionAlreadyKillTarget:
+        typeof plannerWouldCommittedActionAlreadyKillTarget === "function"
+          ? plannerWouldCommittedActionAlreadyKillTarget
+          : null,
+      cancelPostRetargetAutoBasic:
+        typeof cancelPostRetargetAutoBasic === "function" ? cancelPostRetargetAutoBasic : null,
+      getActiveExecutionPlan: function () {
+        return Runtime && Runtime.planner ? Runtime.planner.activeExecutionPlan || null : null;
+      },
+      getCombatExecutionState: function () {
+        return Runtime && Runtime.autoFarm && Runtime.autoFarm.combatExecution
+          ? Runtime.autoFarm.combatExecution
+          : null;
+      },
+      getPlannerLastExecutionPlanInvalidationReason: function () {
+        return Runtime && Runtime.planner ? Runtime.planner.lastExecutionPlanInvalidationReason || null : null;
+      },
+      getPlannerLastShouldReplanReason: function () {
+        return Runtime && Runtime.planner ? Runtime.planner.lastShouldReplanReason || null : null;
+      },
+      // AI CHANGED: Best-effort live readers for active-attacker count + visible target effects (40-state.js).
+      readActiveAttackerCount:
+        typeof readActiveAttackerCount === "function" ? readActiveAttackerCount : null,
+      readTargetVisibleEffects:
+        typeof readTargetVisibleEffects === "function" ? readTargetVisibleEffects : null,
+      getPlannerLastSequencePlan: function () {
+        return Runtime && Runtime.planner ? Runtime.planner.lastSequencePlan || null : null;
+      }
     };
 
     Logger.log("BOOT", "Debug API exposed as window.ligmarBot");
-    // AI CHANGED: Auto-create GUI control panel at startup.
-    createControlPanel();
-    // AI CHANGED: Night resilience — if the previous page refresh was a recovery action, wait for a healthy game surface and resume AUTO.
+    // AI CHANGED: v1.2.0-alpha — DESKTOP APP CONTROL SURFACE. The in-page Tampermonkey control panel is no longer auto-mounted.
+    //   The desktop companion app drives the bot through `window.ligmarBot.*` (start/stop, mode, toggles, chat). Persisted prefs
+    //   are loaded directly so Runtime.autoFarm.combatMode + chat / night-mode prefs are still restored at boot. Operators can
+    //   still mount the legacy in-page panel by calling `ligmarBot.createControlPanel()` manually OR by setting
+    //   `Config.bootGui.autoMountPanel = true` BEFORE the script runs (e.g. via a Tampermonkey storage tweak).
+    if (typeof loadAutoFarmUiPrefs === "function") {
+      try { loadAutoFarmUiPrefs(); } catch (err) { Logger.warn("BOOT", "loadAutoFarmUiPrefs threw at boot", err); }
+    }
+    if (typeof loadPlannerUiPrefs === "function") {
+      try { loadPlannerUiPrefs(); } catch (err) { Logger.warn("BOOT", "loadPlannerUiPrefs threw at boot", err); }
+    }
+    if (typeof loadCombatUiPrefs === "function") {
+      try { loadCombatUiPrefs(); } catch (err) { Logger.warn("BOOT", "loadCombatUiPrefs threw at boot", err); }
+    }
+    if (typeof loadAutoChatPrefsFromStorage === "function") {
+      try { loadAutoChatPrefsFromStorage(); } catch (err) { Logger.warn("BOOT", "loadAutoChatPrefsFromStorage threw at boot", err); }
+    }
+    if (typeof loadBotPreferencesFromStorage === "function") {
+      try { loadBotPreferencesFromStorage(); } catch (err) { Logger.warn("BOOT", "loadBotPreferencesFromStorage threw at boot", err); }
+    }
+    if (Config && Config.bootGui && Config.bootGui.autoMountPanel === true) {
+      Logger.log("BOOT", "In-page control panel mounted (Config.bootGui.autoMountPanel === true)");
+      try { createControlPanel(); } catch (err) { Logger.warn("BOOT", "createControlPanel threw", err); }
+    } else {
+      Logger.log("BOOT", "In-page control panel auto-mount disabled — desktop app drives window.ligmarBot");
+    }
+    // AI CHANGED: Night mode — if persisted ON and no recovery token is pending, write a boot-autostart resume token so the existing health-check path drives AUTO start.
+    if (typeof writeNightModeBootAutostartTokenIfNeeded === "function") {
+      writeNightModeBootAutostartTokenIfNeeded();
+    }
+    // AI CHANGED: Night resilience — if the previous page refresh was a recovery action (or Night Mode boot autostart), wait for a healthy game surface and resume AUTO.
     resumeAutoFarmAfterRecoveryBootIfNeeded();
 
     // AI CHANGED: grouped slice 34 — obvious console hint when ranked planner is on but scanSkills never ran.

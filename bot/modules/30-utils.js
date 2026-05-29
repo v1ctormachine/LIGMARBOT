@@ -75,11 +75,14 @@
     const bypassStop = o.bypassStop === true;
     const total = Math.max(0, Number(ms) || 0);
     const stepMs = 80;
+    // AI CHANGED: Audit fix #1 — even on cooperative-stop or zero-ms sleep, always yield one macro-task so callers in a tight `await sleep(X)` loop cannot spin-freeze the page during the Stop wind-down. Minimum 30 ms keeps the event loop breathing.
+    const MIN_YIELD_MS = 30;
     return new Promise((resolve) => {
       let elapsed = 0;
       const tick = () => {
         if (!bypassStop && Runtime.autoFarm.stopRequested) {
-          resolve();
+          // AI CHANGED: Audit fix #1 — defer resolve so synchronous loops still hit the macro-task queue.
+          setTimeout(resolve, MIN_YIELD_MS);
           return;
         }
         if (elapsed >= total) {
@@ -90,6 +93,11 @@
         elapsed += slice;
         setTimeout(tick, slice);
       };
+      // AI CHANGED: Audit fix #1 — total === 0 callers still get a real tick so they cannot starve the renderer.
+      if (total === 0) {
+        setTimeout(resolve, MIN_YIELD_MS);
+        return;
+      }
       tick();
     });
   }
@@ -119,6 +127,70 @@
     );
   }
 
+  // AI CHANGED: Game stable input path — Angular appsmartclick ignores HTMLElement.click(); dispatch real pointer/mouse events at center.
+  function dispatchUserClickSequence(element, label) {
+    // AI CHANGED: Audit fix #8 — TOCTOU between `isElementVisible` (in `clickElementSafe`) and the dispatch. An animation / popup may have hidden the element in between; re-check just before reading the rect.
+    if (!isElementVisible(element)) {
+      Logger.warn("ACTION", `${label} user-click skipped: element became invisible before dispatch`);
+      return false;
+    }
+    const rect = element.getBoundingClientRect();
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      Logger.warn("ACTION", `${label} user-click skipped: bad element center`);
+      return false;
+    }
+    const base = {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      clientX: x,
+      clientY: y,
+      button: 0
+    };
+    const dispatchPointer = (type, buttons) => {
+      if (typeof PointerEvent !== "function") {
+        return true;
+      }
+      const ev = new PointerEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        clientX: x,
+        clientY: y,
+        button: 0,
+        buttons: buttons,
+        pointerId: 1,
+        pointerType: "mouse",
+        isPrimary: true
+      });
+      return element.dispatchEvent(ev);
+    };
+    const dispatchMouse = (type, buttons) => {
+      const ev = new MouseEvent(type, Object.assign({}, base, { buttons: buttons }));
+      return element.dispatchEvent(ev);
+    };
+    try {
+      if (typeof element.focus === "function") {
+        element.focus({ preventScroll: true });
+      }
+    } catch (focusErr) {
+      // ignore focus failures; the pointer sequence is what matters for appsmartclick.
+    }
+    dispatchPointer("pointerdown", 1);
+    dispatchMouse("mousedown", 1);
+    dispatchPointer("pointerup", 0);
+    dispatchMouse("mouseup", 0);
+    dispatchMouse("click", 0);
+    Logger.log("ACTION", `${label} clicked`, {
+      x: Math.round(x),
+      y: Math.round(y),
+      input: typeof PointerEvent === "function" ? "pointer_mouse_sequence" : "mouse_sequence"
+    });
+    return true;
+  }
+
   // AI CHANGED: Added safe click wrapper with logging and visibility checks.
   function clickElementSafe(element, label) {
     if (!element) {
@@ -129,9 +201,7 @@
       Logger.warn("ACTION", `${label} click skipped: element not visible`);
       return false;
     }
-    element.click();
-    Logger.log("ACTION", `${label} clicked`);
-    return true;
+    return dispatchUserClickSequence(element, label);
   }
 
   // AI CHANGED: Added low-level mouse event dispatcher for canvas click simulation.

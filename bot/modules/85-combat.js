@@ -81,16 +81,187 @@
   }
 
   function pickAutoChatSpammerDelayMs() {
-    const minRaw = Number.isFinite(Config.chat && Config.chat.messageIntervalMinMs)
-      ? Math.max(0, Math.round(Config.chat.messageIntervalMinMs))
-      : 5 * 60 * 1000;
-    const maxRaw = Number.isFinite(Config.chat && Config.chat.messageIntervalMaxMs)
-      ? Math.max(minRaw, Math.round(Config.chat.messageIntervalMaxMs))
-      : 15 * 60 * 1000;
+    // AI CHANGED: v1.2.0-alpha — runtime override range takes precedence over Config defaults.
+    const rt = getAutoChatSpammerRuntime();
+    const override = rt.intervalOverrides;
+    const overrideMin = override && Number.isFinite(override.minMs) ? Math.max(0, Math.round(override.minMs)) : null;
+    const overrideMax = override && Number.isFinite(override.maxMs) ? Math.max(0, Math.round(override.maxMs)) : null;
+    const minRaw = overrideMin != null
+      ? overrideMin
+      : Number.isFinite(Config.chat && Config.chat.messageIntervalMinMs)
+        ? Math.max(0, Math.round(Config.chat.messageIntervalMinMs))
+        : 5 * 60 * 1000;
+    const maxRaw = overrideMax != null
+      ? Math.max(minRaw, overrideMax)
+      : Number.isFinite(Config.chat && Config.chat.messageIntervalMaxMs)
+        ? Math.max(minRaw, Math.round(Config.chat.messageIntervalMaxMs))
+        : 15 * 60 * 1000;
     if (maxRaw <= minRaw) {
       return minRaw;
     }
     return minRaw + Math.floor(Math.random() * (maxRaw - minRaw + 1));
+  }
+
+  // AI CHANGED: v1.2.0-alpha — App-facing manual chat message API.
+  function getAutoChatMessages() {
+    const rt = getAutoChatSpammerRuntime();
+    return Array.isArray(rt.userMessages) ? rt.userMessages.slice() : [];
+  }
+
+  function setAutoChatMessages(messages) {
+    const rt = getAutoChatSpammerRuntime();
+    const norm = [];
+    if (Array.isArray(messages)) {
+      for (let i = 0; i < messages.length; i += 1) {
+        const s = messages[i];
+        if (typeof s === "string" && s.trim()) {
+          norm.push(s.trim());
+        }
+      }
+    }
+    rt.userMessages = norm;
+    if (!Number.isFinite(rt.userMessageCursor) || rt.userMessageCursor >= norm.length) {
+      rt.userMessageCursor = 0;
+    }
+    saveAutoChatPrefsToStorage({ reason: "set_messages" });
+    Logger.log("CHAT", "userMessages updated", { count: norm.length });
+    return { ok: true, count: norm.length, messages: norm.slice() };
+  }
+
+  function addAutoChatMessage(message) {
+    if (typeof message !== "string" || !message.trim()) {
+      return { ok: false, reason: "empty_message" };
+    }
+    const rt = getAutoChatSpammerRuntime();
+    if (!Array.isArray(rt.userMessages)) {
+      rt.userMessages = [];
+    }
+    rt.userMessages.push(message.trim());
+    saveAutoChatPrefsToStorage({ reason: "add_message" });
+    return { ok: true, count: rt.userMessages.length, added: message.trim() };
+  }
+
+  function removeAutoChatMessage(indexOrText) {
+    const rt = getAutoChatSpammerRuntime();
+    if (!Array.isArray(rt.userMessages) || rt.userMessages.length === 0) {
+      return { ok: false, reason: "empty_list" };
+    }
+    let removedIndex = -1;
+    if (Number.isInteger(indexOrText)) {
+      if (indexOrText < 0 || indexOrText >= rt.userMessages.length) {
+        return { ok: false, reason: "index_out_of_range", index: indexOrText };
+      }
+      rt.userMessages.splice(indexOrText, 1);
+      removedIndex = indexOrText;
+    } else if (typeof indexOrText === "string") {
+      const target = indexOrText.trim();
+      const idx = rt.userMessages.indexOf(target);
+      if (idx === -1) {
+        return { ok: false, reason: "not_found", text: target };
+      }
+      rt.userMessages.splice(idx, 1);
+      removedIndex = idx;
+    } else {
+      return { ok: false, reason: "invalid_argument" };
+    }
+    if (rt.userMessageCursor >= rt.userMessages.length) {
+      rt.userMessageCursor = 0;
+    }
+    saveAutoChatPrefsToStorage({ reason: "remove_message" });
+    return { ok: true, removedIndex: removedIndex, count: rt.userMessages.length };
+  }
+
+  function clearAutoChatMessages() {
+    const rt = getAutoChatSpammerRuntime();
+    rt.userMessages = [];
+    rt.userMessageCursor = 0;
+    saveAutoChatPrefsToStorage({ reason: "clear_messages" });
+    return { ok: true, count: 0 };
+  }
+
+  function getAutoChatIntervalRange() {
+    const rt = getAutoChatSpammerRuntime();
+    const override = rt.intervalOverrides;
+    if (override && Number.isFinite(override.minMs) && Number.isFinite(override.maxMs)) {
+      return { source: "override", minMs: override.minMs, maxMs: override.maxMs };
+    }
+    return {
+      source: "config",
+      minMs: Config.chat && Number.isFinite(Config.chat.messageIntervalMinMs) ? Config.chat.messageIntervalMinMs : 5 * 60 * 1000,
+      maxMs: Config.chat && Number.isFinite(Config.chat.messageIntervalMaxMs) ? Config.chat.messageIntervalMaxMs : 15 * 60 * 1000
+    };
+  }
+
+  function setAutoChatIntervalRange(minMs, maxMs) {
+    const rt = getAutoChatSpammerRuntime();
+    const minRaw = Number.isFinite(minMs) ? Math.max(0, Math.round(minMs)) : null;
+    const maxRaw = Number.isFinite(maxMs) ? Math.max(minRaw == null ? 0 : minRaw, Math.round(maxMs)) : null;
+    if (minRaw == null && maxRaw == null) {
+      rt.intervalOverrides = null;
+      saveAutoChatPrefsToStorage({ reason: "clear_interval_override" });
+      return { ok: true, cleared: true };
+    }
+    if (minRaw == null || maxRaw == null) {
+      return { ok: false, reason: "both_required" };
+    }
+    if (maxRaw < minRaw) {
+      return { ok: false, reason: "max_lt_min" };
+    }
+    rt.intervalOverrides = { minMs: minRaw, maxMs: maxRaw };
+    saveAutoChatPrefsToStorage({ reason: "set_interval_override" });
+    return { ok: true, minMs: minRaw, maxMs: maxRaw };
+  }
+
+  function getAutoChatEnabled() {
+    return !!(Config.chat && Config.chat.autoLocalPromocodeSpammerEnabled === true);
+  }
+
+  function setAutoChatEnabled(enabled) {
+    if (!Config.chat) Config.chat = {};
+    Config.chat.autoLocalPromocodeSpammerEnabled = !!enabled;
+    saveAutoChatPrefsToStorage({ reason: "toggle" });
+    return { ok: true, enabled: Config.chat.autoLocalPromocodeSpammerEnabled };
+  }
+
+  // AI CHANGED: v1.2.0-alpha — persist user chat prefs separately from the legacy autoFarmUi blob.
+  function saveAutoChatPrefsToStorage(meta) {
+    try {
+      const rt = getAutoChatSpammerRuntime();
+      const payload = {
+        enabled: !!(Config.chat && Config.chat.autoLocalPromocodeSpammerEnabled === true),
+        useUserMessages: !!(Config.chat && Config.chat.useUserMessages === true),
+        userMessages: Array.isArray(rt.userMessages) ? rt.userMessages.slice() : [],
+        intervalOverrides: rt.intervalOverrides && Number.isFinite(rt.intervalOverrides.minMs) && Number.isFinite(rt.intervalOverrides.maxMs)
+          ? { minMs: rt.intervalOverrides.minMs, maxMs: rt.intervalOverrides.maxMs }
+          : null
+      };
+      window.localStorage.setItem("ligmarbot.autoChat.v1", JSON.stringify(payload));
+      return { ok: true, payload: payload, reason: meta && meta.reason ? meta.reason : null };
+    } catch (err) {
+      return { ok: false, error: String(err && err.message ? err.message : err) };
+    }
+  }
+
+  function loadAutoChatPrefsFromStorage() {
+    try {
+      const raw = window.localStorage.getItem("ligmarbot.autoChat.v1");
+      if (!raw) return { ok: true, fromStorage: false };
+      const p = JSON.parse(raw);
+      if (typeof p.enabled === "boolean") Config.chat.autoLocalPromocodeSpammerEnabled = p.enabled;
+      if (typeof p.useUserMessages === "boolean") Config.chat.useUserMessages = p.useUserMessages;
+      const rt = getAutoChatSpammerRuntime();
+      if (Array.isArray(p.userMessages)) {
+        rt.userMessages = p.userMessages.filter((s) => typeof s === "string" && s.trim()).map((s) => s.trim());
+      }
+      if (p.intervalOverrides && Number.isFinite(p.intervalOverrides.minMs) && Number.isFinite(p.intervalOverrides.maxMs)) {
+        rt.intervalOverrides = { minMs: p.intervalOverrides.minMs, maxMs: p.intervalOverrides.maxMs };
+      } else {
+        rt.intervalOverrides = null;
+      }
+      return { ok: true, fromStorage: true };
+    } catch (err) {
+      return { ok: false, error: String(err && err.message ? err.message : err) };
+    }
   }
 
   function scheduleNextAutoChatSpammer(reason, userOpts) {
@@ -224,8 +395,35 @@
     };
   }
 
-  // AI CHANGED: Each due window rolls uniform 1/6 — smart pair (universal) vs five time-slot bank lines (same odds each).
+  // AI CHANGED: v1.2.0-alpha / v1.2.1-alpha — MANUAL CHAT IS THE PRIMARY RUNTIME MODEL.
+  //   When `Config.chat.useUserMessages === true` (the new permanent default), the dispatcher round-robins over
+  //   `Runtime.autoFarm.chatSpammer.userMessages` — set by the desktop app via `setAutoChatMessages([...])`. With an empty
+  //   user list the dispatcher returns null and `maybeRunAutoChatSpammer` skips with `reason: "no_user_messages"`.
+  //
+  //   The legacy 6-way time-of-day banks + smart-line path is ONLY consulted when an operator explicitly opts back in by
+  //   setting `Config.chat.useUserMessages = false`. It is preserved for backward compatibility with old localStorage
+  //   prefs and console workflows but is NOT part of the documented runtime model anymore. Do not rely on it.
   function pickAutoChatSpammerDispatch() {
+    // PRIMARY RUNTIME MODEL — manual user messages.
+    if (Config.chat && Config.chat.useUserMessages !== false) {
+      const rt = getAutoChatSpammerRuntime();
+      const list = Array.isArray(rt.userMessages) ? rt.userMessages : [];
+      if (list.length === 0) {
+        return null;
+      }
+      const cursor = Number.isFinite(rt.userMessageCursor) ? rt.userMessageCursor : 0;
+      const idx = ((cursor % list.length) + list.length) % list.length;
+      rt.userMessageCursor = (idx + 1) % list.length;
+      return {
+        kind: "user",
+        index: idx,
+        message: list[idx],
+        bankSize: list.length,
+        pickRoll: idx,
+        pickOutcomes: list.length
+      };
+    }
+    // LEGACY-ONLY PATH (operator opted out of user-mode). Time-of-day banks + 6-way roll preserved unchanged.
     const slot = getTimeOfDayChatSlot();
     const rawMessages = getChatSpammerMessagesForSlot(slot);
     const bankFive = normalizeChatBankToFive(rawMessages);
@@ -289,10 +487,22 @@
     }
     const now = Date.now();
     const slotNow = getTimeOfDayChatSlot({ nowMs: now });
-    const messages = getChatSpammerMessagesForSlot(slotNow);
-    const smartConfigured = isChatSmartLineConfigured();
-    if (messages.length <= 0 && !smartConfigured) {
-      return { ok: false, skipped: true, reason: "no_messages" };
+    // AI CHANGED: v1.2.0-alpha / v1.2.1-alpha — PRIMARY RUNTIME MODEL — manual user messages. When the user list is empty
+    //   the spammer is silent (reason: no_user_messages), which is the documented "empty list = no spam" contract.
+    if (Config.chat && Config.chat.useUserMessages !== false) {
+      const userList = Array.isArray((getAutoChatSpammerRuntime()).userMessages)
+        ? getAutoChatSpammerRuntime().userMessages
+        : [];
+      if (userList.length === 0) {
+        return { ok: false, skipped: true, reason: "no_user_messages" };
+      }
+    } else {
+      // LEGACY-ONLY PATH (operator set Config.chat.useUserMessages = false). Time-of-day banks preserved unchanged.
+      const messages = getChatSpammerMessagesForSlot(slotNow);
+      const smartConfigured = isChatSmartLineConfigured();
+      if (messages.length <= 0 && !smartConfigured) {
+        return { ok: false, skipped: true, reason: "no_messages_legacy_mode" };
+      }
     }
     const rt = getAutoChatSpammerRuntime();
     if (!Number.isFinite(rt.nextSendAt)) {
@@ -492,10 +702,10 @@
     if (!picked.message) {
       return { ok: false, skipped: true, reason: "message_pick_failed" };
     }
-    const bankDenom = picked.bankSize || messages.length;
+    const bankDenom = picked.bankSize || (Array.isArray((getAutoChatSpammerRuntime()).userMessages) ? getAutoChatSpammerRuntime().userMessages.length : 0) || 1;
     setBotStatus("waiting", `auto local chat send (msg ${picked.index + 1}/${bankDenom})`);
     Logger.log("CHAT", "Auto local chat send due", {
-      kind: "bank",
+      kind: picked.kind || "bank",
       messageIndex: picked.index,
       messageLength: picked.message.length,
       timeSlot: picked.slot || null,
@@ -1068,6 +1278,155 @@
     return { ok: false, recovered: false, summary: postSummary, soft: soft };
   }
 
+  // AI CHANGED: Night mode — runtime accessors + lifecycle for hourly refresh and boot autostart.
+  function getNightModeRuntime() {
+    if (!Runtime.autoFarm.nightMode || typeof Runtime.autoFarm.nightMode !== "object") {
+      Runtime.autoFarm.nightMode = {
+        enabled: false,
+        hourlyReloadTimer: null,
+        hourlyReloadScheduledAt: null,
+        hourlyReloadDueAt: null,
+        lastReloadAt: null,
+        lastBootAutostartAt: null
+      };
+    }
+    return Runtime.autoFarm.nightMode;
+  }
+
+  function isNightModeEnabled() {
+    return !!getNightModeRuntime().enabled;
+  }
+
+  function setNightModeEnabled(nextEnabled, opts) {
+    const o = opts && typeof opts === "object" ? opts : {};
+    const nm = getNightModeRuntime();
+    const wasEnabled = !!nm.enabled;
+    nm.enabled = !!nextEnabled;
+    Logger.log("NIGHT", "Night mode " + (nm.enabled ? "enabled" : "disabled"), {
+      previous: wasEnabled,
+      autoFarmRunning: !!(Runtime.autoFarm && Runtime.autoFarm.running),
+      source: o.source || "api"
+    });
+    if (nm.enabled) {
+      scheduleNightModeHourlyReloadIfNeeded({ source: "set_enabled" });
+    } else {
+      cancelNightModeHourlyReload({ source: "set_disabled" });
+    }
+    return nm.enabled;
+  }
+
+  function scheduleNightModeHourlyReloadIfNeeded(opts) {
+    const o = opts && typeof opts === "object" ? opts : {};
+    const nm = getNightModeRuntime();
+    if (!nm.enabled) {
+      return { scheduled: false, reason: "night_mode_off" };
+    }
+    const cfg = Config.nightMode || {};
+    if (cfg.reloadOnlyWhenAutoFarmRunning !== false) {
+      if (!(Runtime.autoFarm && Runtime.autoFarm.running)) {
+        return { scheduled: false, reason: "auto_farm_off" };
+      }
+    }
+    const ms = Number.isFinite(cfg.hourlyReloadMs) ? Math.max(60000, cfg.hourlyReloadMs) : 3600000;
+    if (nm.hourlyReloadTimer != null) {
+      return { scheduled: false, reason: "already_scheduled", dueAt: nm.hourlyReloadDueAt };
+    }
+    nm.hourlyReloadScheduledAt = Date.now();
+    nm.hourlyReloadDueAt = nm.hourlyReloadScheduledAt + ms;
+    nm.hourlyReloadTimer = window.setTimeout(function () {
+      try {
+        triggerNightModeHourlyReload({ source: o.source || "timer" });
+      } catch (err) {
+        Logger.warn("NIGHT", "Night mode hourly reload failed", err);
+      }
+    }, ms);
+    Logger.log("NIGHT", "Hourly reload scheduled", {
+      dueInMs: ms,
+      dueAt: new Date(nm.hourlyReloadDueAt).toISOString(),
+      source: o.source || "schedule"
+    });
+    return { scheduled: true, dueAt: nm.hourlyReloadDueAt, dueInMs: ms };
+  }
+
+  function cancelNightModeHourlyReload(opts) {
+    const o = opts && typeof opts === "object" ? opts : {};
+    const nm = getNightModeRuntime();
+    if (nm.hourlyReloadTimer == null) {
+      return { cancelled: false, reason: "no_timer" };
+    }
+    try {
+      window.clearTimeout(nm.hourlyReloadTimer);
+    } catch (err) {
+      Logger.warn("NIGHT", "Failed to clear hourly reload timer", err);
+    }
+    nm.hourlyReloadTimer = null;
+    nm.hourlyReloadDueAt = null;
+    nm.hourlyReloadScheduledAt = null;
+    Logger.log("NIGHT", "Hourly reload cancelled", { source: o.source || "cancel" });
+    return { cancelled: true };
+  }
+
+  // AI CHANGED: Night mode — fire the hourly refresh by reusing the AUTO resume token path so boot restarts AUTO automatically.
+  function triggerNightModeHourlyReload(opts) {
+    const o = opts && typeof opts === "object" ? opts : {};
+    const cfg = Config.nightMode || {};
+    const nm = getNightModeRuntime();
+    nm.hourlyReloadTimer = null;
+    nm.hourlyReloadDueAt = null;
+    if (!nm.enabled) {
+      Logger.warn("NIGHT", "Hourly reload skipped: night mode turned off before firing");
+      return { ok: false, reason: "night_mode_off" };
+    }
+    if (cfg.reloadOnlyWhenAutoFarmRunning !== false && !(Runtime.autoFarm && Runtime.autoFarm.running)) {
+      Logger.warn("NIGHT", "Hourly reload skipped: AUTO not running");
+      return { ok: false, reason: "auto_farm_off" };
+    }
+    const token = {
+      version: BotVersion && BotVersion.version ? BotVersion.version : null,
+      createdAt: new Date().toISOString(),
+      reason: cfg.hourlyReloadReason || "night_mode_hourly_refresh",
+      resumeAutoFarm: true,
+      refreshAttempts: 0,
+      summary: { primaryReason: cfg.hourlyReloadReason || "night_mode_hourly_refresh", source: o.source || "timer" }
+    };
+    writePersistedAutoRecoveryResume(token);
+    nm.lastReloadAt = Date.now();
+    setBotStatus("waiting", "night mode hourly refresh");
+    Logger.warn("NIGHT", "Night mode hourly reload firing", token);
+    window.setTimeout(function () {
+      window.location.reload();
+    }, 60);
+    return { ok: true, refreshing: true, token: token };
+  }
+
+  // AI CHANGED: Night mode — boot autostart writes the same resume token so the existing recovery boot loop drives AUTO start when surface is healthy.
+  function writeNightModeBootAutostartTokenIfNeeded() {
+    const nm = getNightModeRuntime();
+    if (!nm.enabled) {
+      return { ok: false, reason: "night_mode_off" };
+    }
+    if (Runtime.autoFarm && Runtime.autoFarm.running) {
+      return { ok: false, reason: "already_running" };
+    }
+    const existing = readPersistedAutoRecoveryResume();
+    if (existing && existing.resumeAutoFarm === true) {
+      return { ok: false, reason: "recovery_token_already_present", existing: existing };
+    }
+    const cfg = Config.nightMode || {};
+    const token = {
+      version: BotVersion && BotVersion.version ? BotVersion.version : null,
+      createdAt: new Date().toISOString(),
+      reason: cfg.bootAutostartReason || "night_mode_boot_autostart",
+      resumeAutoFarm: true,
+      refreshAttempts: 0,
+      summary: { primaryReason: cfg.bootAutostartReason || "night_mode_boot_autostart" }
+    };
+    writePersistedAutoRecoveryResume(token);
+    nm.lastBootAutostartAt = Date.now();
+    Logger.log("NIGHT", "Night mode boot autostart token written", token);
+    return { ok: true, token: token };
+  }
+
   // AI CHANGED: After an auto-refresh recovery, wait for a healthy game surface and restart AUTO ON automatically.
   function resumeAutoFarmAfterRecoveryBootIfNeeded() {
     const token = readPersistedAutoRecoveryResume();
@@ -1217,6 +1576,14 @@
   function listCombatPotionCandidates(resource, userOpts) {
     const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
     const readyOnly = opts.readyOnly !== false;
+    // AI CHANGED: Audit fix #5 — cross-check the client-side potion cooldown timer (shared cooldown) against the DOM cooldown overlay so we never click a freshly-used potion just because the overlay hasn't appeared yet (network lag).
+    const enforceClientCooldown =
+      readyOnly && !!(Config.combat && Config.combat.combatPotionEnforceClientCooldown !== false);
+    const sustain = enforceClientCooldown ? getCombatSustainRuntime() : null;
+    const nowMsForCooldown = Date.now();
+    const clientCoolingUntil =
+      sustain && Number.isFinite(sustain.potionCooldownUntil) ? sustain.potionCooldownUntil : 0;
+    const clientCooling = enforceClientCooldown && clientCoolingUntil > nowMsForCooldown;
     const slots = Runtime.skills && Array.isArray(Runtime.skills.slots) ? Runtime.skills.slots : [];
     const rows = [];
     for (let i = 0; i < slots.length; i += 1) {
@@ -1233,6 +1600,10 @@
         continue;
       }
       if (readyOnly && typeof isActionBarSlotShowingCooldown === "function" && isActionBarSlotShowingCooldown(slotIdx)) {
+        continue;
+      }
+      // AI CHANGED: Audit fix #5 — shared client cooldown still active = skip even if DOM overlay isn't there yet.
+      if (clientCooling) {
         continue;
       }
       rows.push({
@@ -1347,16 +1718,43 @@
             const lost = sustain.lastHpSampleCur - hpCur;
             const needFrac = Number.isFinite(sCfg.hpDropImmediateMaxFrac) ? sCfg.hpDropImmediateMaxFrac : 0.25;
             if (lost > 0 && lost / hpMax >= needFrac) {
+              // AI CHANGED: Audit fix #9 — require current HP to actually be low. A misread or potion HoT tick can look like a "spike" while player is at full HP; do not waste long-CD defensive on those.
+              const requireBelowFrac = Number.isFinite(Config.combat && Config.combat.safetyHpSpikeRequireHpBelowFrac)
+                ? Math.max(0.1, Math.min(1, Config.combat.safetyHpSpikeRequireHpBelowFrac))
+                : 0.85;
+              const hpFracNow = hpCur / hpMax;
+              const cooldownMs = Number.isFinite(Config.combat && Config.combat.safetyHpSpikeCooldownMs)
+                ? Math.max(500, Config.combat.safetyHpSpikeCooldownMs)
+                : 4000;
               const rt = getSupportBuffLineRuntime();
-              rt.safetyHpSpikePending = true;
-              rt.safetyHpSpikeLost = +lost.toFixed(2);
-              rt.safetyHpSpikeAt = now;
-              Logger.log("COMBAT", "HP spike flagged for safety buff", {
-                lost: +lost.toFixed(2),
-                hpMax: hpMax,
-                frac: +(lost / hpMax).toFixed(4),
-                dtSec: +dtSpike.toFixed(3)
-              });
+              const recentlyFired =
+                Number.isFinite(rt.lastSafetyBuffCastAt) && now - rt.lastSafetyBuffCastAt < cooldownMs;
+              if (hpFracNow > requireBelowFrac) {
+                Logger.log("COMBAT", "HP spike rejected: current HP still high (likely misread or HoT tick)", {
+                  lost: +lost.toFixed(2),
+                  hpCur: hpCur,
+                  hpMax: hpMax,
+                  hpFrac: +hpFracNow.toFixed(3),
+                  requireBelowFrac: requireBelowFrac
+                });
+              } else if (recentlyFired) {
+                Logger.log("COMBAT", "HP spike rejected: safety buff fired recently — within cooldown", {
+                  lost: +lost.toFixed(2),
+                  msSinceLastFire: now - rt.lastSafetyBuffCastAt,
+                  cooldownMs: cooldownMs
+                });
+              } else {
+                rt.safetyHpSpikePending = true;
+                rt.safetyHpSpikeLost = +lost.toFixed(2);
+                rt.safetyHpSpikeAt = now;
+                Logger.log("COMBAT", "HP spike flagged for safety buff", {
+                  lost: +lost.toFixed(2),
+                  hpMax: hpMax,
+                  frac: +(lost / hpMax).toFixed(4),
+                  dtSec: +dtSpike.toFixed(3),
+                  hpFracNow: +hpFracNow.toFixed(3)
+                });
+              }
             }
           }
         }
@@ -1741,6 +2139,7 @@
   }
 
   // AI CHANGED: Runtime slice for support-buff renew / safety / prebuff counters (see `Config.supportBuffs`).
+  // Buff system v1.0.5-alpha: `prebuff` is tile-keyed (`tileKey`/`tileAt`), `longbuff` is per-session state for the OOC long-buff maintenance pass, `longSelfTracked` still stores the timer map shared by long-buff renew.
   function getSupportBuffLineRuntime() {
     if (!Runtime.autoFarm.supportBuffLine || typeof Runtime.autoFarm.supportBuffLine !== "object") {
       Runtime.autoFarm.supportBuffLine = {
@@ -1768,7 +2167,64 @@
     if (!Object.prototype.hasOwnProperty.call(rt, "safetyHpSpikeAt")) {
       rt.safetyHpSpikeAt = null;
     }
+    // AI CHANGED: Buff system v1.0.5-alpha — tile-based prebuff gate (NOT duration-tracking-based).
+    if (!rt.prebuff || typeof rt.prebuff !== "object") {
+      rt.prebuff = { tileKey: null, tileAt: null, lastResult: null };
+    } else {
+      if (!Object.prototype.hasOwnProperty.call(rt.prebuff, "tileKey")) {
+        rt.prebuff.tileKey = null;
+      }
+      if (!Object.prototype.hasOwnProperty.call(rt.prebuff, "tileAt")) {
+        rt.prebuff.tileAt = null;
+      }
+      if (!Object.prototype.hasOwnProperty.call(rt.prebuff, "lastResult")) {
+        rt.prebuff.lastResult = null;
+      }
+    }
+    // AI CHANGED: Buff system v1.0.5-alpha — first OOC long-buff maintenance pass per AUTO session.
+    if (!rt.longbuff || typeof rt.longbuff !== "object") {
+      rt.longbuff = { initialPassDone: false, lastPassAt: null, lastResult: null };
+    } else {
+      if (!Object.prototype.hasOwnProperty.call(rt.longbuff, "initialPassDone")) {
+        rt.longbuff.initialPassDone = false;
+      }
+      if (!Object.prototype.hasOwnProperty.call(rt.longbuff, "lastPassAt")) {
+        rt.longbuff.lastPassAt = null;
+      }
+      if (!Object.prototype.hasOwnProperty.call(rt.longbuff, "lastResult")) {
+        rt.longbuff.lastResult = null;
+      }
+    }
     return rt;
+  }
+
+  // AI CHANGED: Buff system v1.0.5-alpha — derive a tile identity string for the per-tile prebuff gate. Prefers `Runtime.exploration.lastKnownCoords`; falls back to `"unknown_tile"` so retries do NOT re-trigger prebuff on the same tile.
+  function getSupportBuffCurrentTileKey() {
+    const c = Runtime.exploration && Runtime.exploration.lastKnownCoords;
+    if (c && Number.isFinite(c.x) && Number.isFinite(c.y)) {
+      return c.x + ";" + c.y;
+    }
+    return "unknown_tile";
+  }
+
+  function resetSupportBuffPrebuffTileGate(reason) {
+    const rt = getSupportBuffLineRuntime();
+    rt.prebuff.tileKey = null;
+    rt.prebuff.tileAt = null;
+    rt.prebuff.lastResult = null;
+    if (reason) {
+      Logger.log("COMBAT", "Prebuff tile gate reset", { reason: reason });
+    }
+  }
+
+  function resetSupportBuffLongbuffSessionState(reason) {
+    const rt = getSupportBuffLineRuntime();
+    rt.longbuff.initialPassDone = false;
+    rt.longbuff.lastPassAt = null;
+    rt.longbuff.lastResult = null;
+    if (reason) {
+      Logger.log("COMBAT", "Longbuff session state reset", { reason: reason });
+    }
   }
 
   function getSupportBuffDescriptionForRow(row, classKey) {
@@ -2035,6 +2491,7 @@
   }
 
   // AI CHANGED: Long self support (≥ longDurationMinSec, default 60s) — OOC renew + pre-combat refresh; never new-tile prebuff.
+  // NOTE (v1.0.5-alpha buff rewrite): this helper is retained for backward compatibility only. The active policy is now `classifySupportBuffPolicyForRow` which classifies purely by duration (>=60 = longbuff, <60 = prebuff). New call sites must use the policy helper.
   function skillRowIsPermanentOocSelfLongBuff(row, classKey) {
     if (!row || row.kind !== "skill" || row.isAttack) {
       return false;
@@ -2067,6 +2524,169 @@
       return lu.permanentSelfOoc === true;
     }
     return true;
+  }
+
+  // AI CHANGED: Buff system v1.0.5-alpha — single source of truth for buff policy.
+  //   Policy is determined by duration ONLY (after the safety/attack/no-name filters):
+  //     - duration <  longDurationMinSec (default 60s)  → policy = "prebuff"
+  //     - duration >= longDurationMinSec                → policy = "longbuff"
+  //     - safety/emergency buffs (Windy Dome + matched heuristics) → policy = "excluded_safety"
+  //     - non-buff slots / parseFailed / no duration                 → policy = "not_buff"
+  //   The classification is reused everywhere: prebuff target list, longbuff maintenance, console snapshot, TEST.
+  function classifySupportBuffPolicyForRow(row, classKeyOpt) {
+    const classKey =
+      typeof classKeyOpt === "string" && classKeyOpt.trim()
+        ? classKeyOpt.trim()
+        : typeof Config.skills.masterClassKey === "string"
+          ? Config.skills.masterClassKey.trim()
+          : "";
+    const out = {
+      policy: "not_buff",
+      durationSec: null,
+      durationSource: null,
+      slot: null,
+      name: row && typeof row.name === "string" ? row.name : "",
+      classKey: classKey || null,
+      reason: null
+    };
+    if (!row || row.kind !== "skill") {
+      out.reason = "not_a_skill";
+      return out;
+    }
+    if (row.parseFailed) {
+      out.reason = "parse_failed";
+      return out;
+    }
+    const slotIdx = typeof row.slot === "number" ? row.slot : null;
+    out.slot = slotIdx;
+    const root = Config.supportBuffs;
+    const pb = root && root.prebuff;
+    const treatAttackSubs = Array.isArray(pb && pb.treatAsBuffDespiteAttackNameSubstrings)
+      ? pb.treatAsBuffDespiteAttackNameSubstrings
+      : ["enchanted arrow", "hunters tread", "hunter's tread"];
+    const forceLongSubs = Array.isArray(pb && pb.forceLongDurationIfUnknownNameSubstrings)
+      ? pb.forceLongDurationIfUnknownNameSubstrings
+      : ["enchanted arrow", "hunters tread", "hunter's tread"];
+    const unknownLongSec = Number.isFinite(pb && pb.unknownLongDefaultDurationSec)
+      ? pb.unknownLongDefaultDurationSec
+      : 900;
+    // Safety/emergency barriers are never normal buffs.
+    if (isSupportSkillExcludedFromPrebuffSafetyPolicy(row, classKey)) {
+      out.policy = "excluded_safety";
+      out.reason = "safety_reserved";
+      return out;
+    }
+    // Eligibility: support tag, or DB/scan party-support-without-attack, or explicit attack-named buff override.
+    const masterEnt =
+      typeof getSkillMasterEntry === "function" && classKey ? getSkillMasterEntry(classKey, row.name) : null;
+    const fromDbParty = skillMasterEntryIsPartySupportNonAttackFromDb(masterEnt);
+    const fromScanParty = skillRowScanTagsPartySupportNonAttack(row);
+    const namedAttackBuff = skillNameMatchesAnySubstring(row.name, treatAttackSubs);
+    const eligibleBuff = !!row.isSupport || namedAttackBuff || fromDbParty || fromScanParty;
+    if (!eligibleBuff) {
+      out.reason = "not_eligible_buff";
+      return out;
+    }
+    if (row.isAttack && !namedAttackBuff) {
+      out.reason = "attack_skill_not_named_buff";
+      return out;
+    }
+    // Resolve duration via existing DB/parser path; named overrides use the "unknown long" default.
+    let dur = resolveSupportBuffDurationSecPreferDb(row, classKey);
+    let durSource = "db_or_parsed";
+    if (!Number.isFinite(dur) && skillNameMatchesAnySubstring(row.name, forceLongSubs)) {
+      dur = unknownLongSec;
+      durSource = "force_long_unknown_default";
+    }
+    if (!Number.isFinite(dur) || dur <= 0) {
+      out.reason = "no_known_duration";
+      return out;
+    }
+    out.durationSec = dur;
+    out.durationSource = durSource;
+    const longMin = Number.isFinite(root && root.longDurationMinSec) ? root.longDurationMinSec : 60;
+    out.policy = dur >= longMin ? "longbuff" : "prebuff";
+    return out;
+  }
+
+  // AI CHANGED: Buff system v1.0.5-alpha — read-only snapshot of policy classification across scanned bar slots (console + TEST).
+  function getSupportBuffPolicySnapshot() {
+    const classKey =
+      typeof Config.skills.masterClassKey === "string" ? Config.skills.masterClassKey.trim() : "";
+    const slots = Runtime.skills && Array.isArray(Runtime.skills.slots) ? Runtime.skills.slots : [];
+    const rows = [];
+    let prebuffCount = 0;
+    let longbuffCount = 0;
+    let excludedSafetyCount = 0;
+    for (let i = 0; i < slots.length; i++) {
+      const row = slots[i];
+      const slotIdx = typeof row && row.slot === "number" ? row.slot : i;
+      const c = classifySupportBuffPolicyForRow(row, classKey);
+      if (c.policy === "prebuff") prebuffCount++;
+      if (c.policy === "longbuff") longbuffCount++;
+      if (c.policy === "excluded_safety") excludedSafetyCount++;
+      if (c.policy === "not_buff") continue;
+      rows.push({
+        slot: slotIdx,
+        name: c.name,
+        policy: c.policy,
+        durationSec: c.durationSec,
+        durationSource: c.durationSource,
+        reason: c.reason
+      });
+    }
+    const rt = getSupportBuffLineRuntime();
+    return {
+      classKey: classKey || null,
+      longDurationMinSec: Number.isFinite(Config.supportBuffs && Config.supportBuffs.longDurationMinSec)
+        ? Config.supportBuffs.longDurationMinSec
+        : 60,
+      counts: {
+        prebuff: prebuffCount,
+        longbuff: longbuffCount,
+        excludedSafety: excludedSafetyCount
+      },
+      rows: rows,
+      prebuffTile: {
+        currentTileKey: getSupportBuffCurrentTileKey(),
+        lastPrebuffTileKey: rt.prebuff.tileKey,
+        lastPrebuffTileAt: rt.prebuff.tileAt
+      },
+      longbuff: {
+        initialPassDone: !!rt.longbuff.initialPassDone,
+        lastPassAt: rt.longbuff.lastPassAt
+      },
+      easyMode: isAutoFarmEasyMode()
+    };
+  }
+
+  // AI CHANGED: Buff system v1.0.5-alpha — collect target meta lists from policy classification.
+  function buildSupportBuffMetaListForPolicy(policyWanted) {
+    const classKey =
+      typeof Config.skills.masterClassKey === "string" ? Config.skills.masterClassKey.trim() : "";
+    const slots = Runtime.skills && Array.isArray(Runtime.skills.slots) ? Runtime.skills.slots : [];
+    const out = [];
+    for (let i = 0; i < slots.length; i++) {
+      const row = slots[i];
+      if (!row || row.kind !== "skill") {
+        continue;
+      }
+      const c = classifySupportBuffPolicyForRow(row, classKey);
+      if (c.policy !== policyWanted) {
+        continue;
+      }
+      const slotIdx = typeof row.slot === "number" ? row.slot : i;
+      out.push({
+        slot: slotIdx,
+        name: row.name,
+        dur: c.durationSec,
+        row: row
+      });
+    }
+    out.sort(function (a, b) {
+      return b.dur - a.dur;
+    });
+    return out;
   }
 
   // AI CHANGED: Idle empty tile — drink MP pots when mana below idleMpPotionUseBelowPct (toward idleMpPotionTopOffTargetPct).
@@ -2145,11 +2765,26 @@
   }
 
   // AI CHANGED: Sync safety fire — HP spike flag from sustain observations; cancel+Windy Dome when available.
+  // AI CHANGED: Single source of truth for "is AUTO running in Easy mode" — used by Easy-mode buff suppression + ensureSkills skip.
+  function isAutoFarmEasyMode() {
+    if (!Runtime.autoFarm) return false;
+    return normalizeCombatModeName(Runtime.autoFarm.combatMode) === "easy";
+  }
+
   function processCombatSafetyHpSpikeIfNeeded(liveState) {
     const root = Config.supportBuffs;
     const cfg = root && root.safety;
     const rt = getSupportBuffLineRuntime();
     if (!root || root.enabled === false || !cfg || cfg.enabled === false) {
+      return false;
+    }
+    // AI CHANGED: Easy mode disables all buff usage — safety HP-spike Windy Dome included. HP/MP potions still fire from `maybeUseCombatSustain`.
+    if (isAutoFarmEasyMode()) {
+      if (rt.safetyHpSpikePending) {
+        rt.safetyHpSpikePending = false;
+        rt.safetyHpSpikeLost = null;
+        rt.safetyHpSpikeAt = null;
+      }
       return false;
     }
     if (!rt.safetyHpSpikePending) {
@@ -2192,6 +2827,10 @@
     const cfg = root && root.safety;
     if (!root || root.enabled === false || !cfg || cfg.enabled === false) {
       return { fired: false, skipped: true, reason: "disabled" };
+    }
+    // AI CHANGED: Easy mode disables all buff usage — safety interrupt included.
+    if (isAutoFarmEasyMode()) {
+      return { fired: false, skipped: true, reason: "easy_mode" };
     }
     updateCombatSustainObservations(liveState);
     const fired = processCombatSafetyHpSpikeIfNeeded(liveState);
@@ -2281,76 +2920,235 @@
     return out;
   }
 
+  // AI CHANGED: Buff system v1.0.5-alpha — legacy target builder retained as deprecated stub. The active prebuff pipeline (`maybeApplyPrebuffsForNewMobTile`) uses `buildSupportBuffMetaListForPolicy("prebuff")` directly. This wrapper exists ONLY to keep external diagnostics that hard-code the old name working without dragging mixed-policy logic back in. It returns the same shape (`prebuff` policy only — i.e. duration < longDurationMinSec). Longbuffs are NEVER included here anymore.
   function buildOrderedNewTilePrebuffTargets() {
-    const root = Config.supportBuffs;
-    const pb = root && root.prebuff;
-    const longs = buildPrebuffRowMetaListForPolicy("long");
-    const shorts = buildPrebuffRowMetaListForPolicy("short");
+    const targets = buildSupportBuffMetaListForPolicy("prebuff");
+    const pb = Config.supportBuffs && Config.supportBuffs.prebuff;
     const maxTotal = Number.isFinite(pb && pb.maxSkillsTotal) ? Math.max(0, Math.floor(pb.maxSkillsTotal)) : 10;
-    const merged = longs.concat(shorts);
-    if (merged.length <= maxTotal) {
-      return merged;
+    if (targets.length <= maxTotal) {
+      return targets;
     }
-    return merged.slice(0, maxTotal);
+    return targets.slice(0, maxTotal);
   }
 
-  // AI CHANGED: Poll action-bar cooldown after support buff click so find-enemy / next skill does not clip the cast.
-  async function waitForSupportBuffSlotCooldownAfterClick(slotIdx, meta) {
+  // AI CHANGED: Buff system v1.0.5-alpha — STRONG cast-resolution wait.
+  // Background: previous helper `waitForSupportBuffSlotCooldownAfterClick` only watched the action bar slot cooldown overlay. Cooldown-visible does NOT reliably mean the cast actually finished — the game can show the CD overlay while the cast bar is still mid-animation, so the next movement / find-enemy click cancels the buff. This new helper waits for the cast bar to appear and clear (or, when no cast bar appears for an instant-cast buff, sleeps the parsed cast time + small safety buffer) before returning.
+  // Phases:
+  //   A) minSettleMs — let DOM react to the click
+  //   B) APPEAR phase — wait briefly for either cast bar (matched by name if possible, else any non-fraction bar text) OR slot cooldown overlay
+  //   C) FINISH phase — wait for cast bar to clear, or for the cast-time-based fallback when no bar appeared
+  //   D) postSettleMs — small settle so the next action does not clip the resolved cast
+  async function waitForSupportCastResolved(slotIdx, row, meta) {
     const root = Config.supportBuffs;
     const w = root && root.postBuffCastCooldownWait;
     if (!root || root.enabled === false || !w || w.enabled === false) {
       const settle = Number.isFinite(Config.combat && Config.combat.postRankedSkillClickSettleMs)
         ? Math.max(80, Config.combat.postRankedSkillClickSettleMs * 3)
         : 120;
-      await sleep(settle);
+      await sleep(settle, { bypassStop: true });
       return { ok: true, skipped: true, reason: "post_buff_wait_disabled" };
     }
     const minSettle = Number.isFinite(w.minSettleMs) ? Math.max(0, w.minSettleMs) : 100;
     const maxWait = Number.isFinite(w.maxWaitMs) ? Math.max(150, w.maxWaitMs) : 4500;
     const poll = Number.isFinite(w.pollMs) ? Math.max(40, w.pollMs) : 80;
+    const castAppearTimeoutMs = Number.isFinite(w.castAppearTimeoutMs)
+      ? Math.max(200, w.castAppearTimeoutMs)
+      : 900;
+    const postSettleMs = Number.isFinite(w.postSettleMs) ? Math.max(40, w.postSettleMs) : 140;
+    const safetyBufferMs = Number.isFinite(w.safetyBufferMs) ? Math.max(150, w.safetyBufferMs) : 350;
+    const instantFallbackMs = Number.isFinite(w.instantFallbackMs)
+      ? Math.max(120, w.instantFallbackMs)
+      : 350;
+    const rawName = row && typeof row.name === "string" ? row.name : "";
+    const expectedKey =
+      rawName && typeof normalizeChargeCancelSkillMatchKey === "function"
+        ? normalizeChargeCancelSkillMatchKey(rawName)
+        : "";
+    const castTimeSec = row && Number.isFinite(row.castTimeSec) ? Math.max(0, row.castTimeSec) : null;
+    const castTimeMs = Number.isFinite(castTimeSec) ? Math.round(castTimeSec * 1000) : null;
     if (minSettle > 0) {
       await sleep(minSettle, { bypassStop: true });
     }
-    const t0 = Date.now();
-    while (Date.now() - t0 < maxWait) {
+    const isMatchedLabel = function (label) {
+      if (!label) return false;
+      if (!expectedKey) return true;
+      const labelKey =
+        typeof normalizeChargeCancelSkillMatchKey === "function"
+          ? normalizeChargeCancelSkillMatchKey(label)
+          : String(label).toLowerCase();
+      if (!labelKey) return false;
+      if (labelKey === expectedKey) return true;
+      const shortKey = labelKey.length <= expectedKey.length ? labelKey : expectedKey;
+      const longKey = labelKey.length <= expectedKey.length ? expectedKey : labelKey;
+      if (shortKey.length >= 4 && longKey.indexOf(shortKey) !== -1) return true;
+      return false;
+    };
+    const labelMatchesNow = function () {
+      if (typeof readVisibleCombatCastBarTexts !== "function") return false;
+      const labels = readVisibleCombatCastBarTexts();
+      for (let i = 0; i < labels.length; i++) {
+        if (isMatchedLabel(labels[i])) return true;
+      }
+      return false;
+    };
+    const anyBarVisibleNow = function () {
+      if (typeof readVisibleCombatCastBarTexts !== "function") return false;
+      const labels = readVisibleCombatCastBarTexts();
+      return labels.length > 0;
+    };
+    const slotCdNow = function () {
+      return typeof isActionBarSlotShowingCooldown === "function" && isActionBarSlotShowingCooldown(slotIdx);
+    };
+    // ---- Phase B: APPEAR ---------------------------------------------------
+    const appearStart = Date.now();
+    let appearedAs = null; // "cast_bar_match" | "cast_bar_any" | "slot_cd" | null
+    while (Date.now() - appearStart < castAppearTimeoutMs) {
       if (Runtime.autoFarm && Runtime.autoFarm.stopRequested) {
-        return { ok: false, reason: "stop_requested" };
+        return { ok: false, reason: "stop_requested", phase: "appear" };
       }
-      if (typeof isActionBarSlotShowingCooldown === "function" && isActionBarSlotShowingCooldown(slotIdx)) {
-        Logger.log("COMBAT", "support buff slot cooldown visible", Object.assign({ slot: slotIdx, waitedMs: Date.now() - t0 }, meta || {}));
-        return { ok: true, waitedMs: Date.now() - t0 };
-      }
+      if (labelMatchesNow()) { appearedAs = "cast_bar_match"; break; }
+      if (anyBarVisibleNow()) { appearedAs = "cast_bar_any"; break; }
+      if (slotCdNow()) { appearedAs = "slot_cd"; break; }
       await sleep(poll, { bypassStop: true });
     }
-    Logger.warn("COMBAT", "support buff cooldown wait timed out (continuing)", Object.assign({ slot: slotIdx, maxWaitMs: maxWait }, meta || {}));
-    return { ok: false, reason: "cooldown_visible_timeout" };
+    // ---- Phase C: FINISH ---------------------------------------------------
+    const finishBudget = Math.max(
+      maxWait,
+      Number.isFinite(castTimeMs) ? castTimeMs + safetyBufferMs : 0
+    );
+    const finishStart = Date.now();
+    let finishedReason = null;
+    if (appearedAs === "cast_bar_match" || appearedAs === "cast_bar_any") {
+      // Wait for the matching label (or any bar) to clear, OR for the budget.
+      while (Date.now() - finishStart < finishBudget) {
+        if (Runtime.autoFarm && Runtime.autoFarm.stopRequested) {
+          return { ok: false, reason: "stop_requested", phase: "finish" };
+        }
+        const stillMatched = appearedAs === "cast_bar_match" ? labelMatchesNow() : anyBarVisibleNow();
+        if (!stillMatched) { finishedReason = "cast_bar_cleared"; break; }
+        await sleep(poll, { bypassStop: true });
+      }
+      if (!finishedReason) {
+        finishedReason = "cast_bar_timeout";
+      }
+    } else if (appearedAs === "slot_cd") {
+      // No cast bar observed but slot CD overlay appeared. Apply cast-time-based or instant fallback wait so the next action still does not clip a slow finish.
+      const fallback = Number.isFinite(castTimeMs)
+        ? Math.max(instantFallbackMs, castTimeMs + safetyBufferMs)
+        : instantFallbackMs;
+      await sleep(Math.min(fallback, finishBudget), { bypassStop: true });
+      finishedReason = "slot_cd_only_fallback_sleep";
+    } else {
+      // Nothing observed within castAppearTimeoutMs.
+      // For known castTimeSec, still sleep cast-time + safetyBuffer so we don't move/find-enemy too early.
+      const fallback = Number.isFinite(castTimeMs)
+        ? Math.max(instantFallbackMs, castTimeMs + safetyBufferMs)
+        : instantFallbackMs;
+      await sleep(Math.min(fallback, finishBudget), { bypassStop: true });
+      finishedReason = "no_signal_fallback_sleep";
+    }
+    // ---- Phase D: post-cast settle ----------------------------------------
+    if (postSettleMs > 0) {
+      await sleep(postSettleMs, { bypassStop: true });
+    }
+    const out = {
+      ok: true,
+      slot: slotIdx,
+      name: rawName,
+      castTimeSec: castTimeSec,
+      appearedAs: appearedAs,
+      finishedReason: finishedReason,
+      totalMs: Date.now() - appearStart
+    };
+    Logger.log("COMBAT", "Support cast resolution wait done", Object.assign(out, meta || {}));
+    return out;
   }
 
-  async function maybeApplySupportPrebuffsOnNewTile(liveState) {
+  // AI CHANGED: Buff system v1.0.5-alpha — backward compatible alias. Old callers used to await a slot-cooldown check; route them through the stronger cast-resolution helper. The wrapper accepts the previous `(slotIdx, meta)` signature; row is looked up from `Runtime.skills.slots` if available.
+  async function waitForSupportBuffSlotCooldownAfterClick(slotIdx, meta) {
+    let row = null;
+    if (Runtime.skills && Array.isArray(Runtime.skills.slots)) {
+      for (let i = 0; i < Runtime.skills.slots.length; i++) {
+        const r = Runtime.skills.slots[i];
+        if (r && (r.slot === slotIdx || i === slotIdx)) {
+          row = r;
+          break;
+        }
+      }
+    }
+    return waitForSupportCastResolved(slotIdx, row, meta);
+  }
+
+  // AI CHANGED: Buff system v1.0.5-alpha — TILE-BASED prebuff pipeline.
+  //   Trigger: newly entered tile with mobs (enemyCount > 0) AND the current tile key differs from the last prebuffed tile key.
+  //   Easy mode → never fires.
+  //   Fast mode → cast only prebuffs that are ready (slot not showing cooldown).
+  //   Safe mode → first wait until ALL prebuff targets are ready (no slot CD), then cast longest-first.
+  //   Prebuffs are NOT filtered by assumed-duration tracking — that policy is for longbuffs only.
+  async function maybeApplyPrebuffsForNewMobTile(liveState) {
     const root = Config.supportBuffs;
     const pb = root && root.prebuff;
     if (!root || root.enabled === false || !pb || pb.enabled === false) {
-      return { used: 0 };
+      return { used: 0, skipped: true, reason: "disabled" };
+    }
+    if (isAutoFarmEasyMode()) {
+      return { used: 0, skipped: true, reason: "easy_mode" };
     }
     if (!liveState || typeof liveState.combat.enemyCount !== "number" || liveState.combat.enemyCount <= 0) {
       return { used: 0, skipped: true, reason: "no_enemies" };
     }
     const rt = getSupportBuffLineRuntime();
-    rt.prebuffCastCount = 0;
+    const tileKey = getSupportBuffCurrentTileKey();
+    if (tileKey && rt.prebuff.tileKey === tileKey) {
+      Logger.log("COMBAT", "Prebuff skipped — tile already prebuffed", {
+        tileKey: tileKey,
+        lastPrebuffAt: rt.prebuff.tileAt
+      });
+      return { used: 0, skipped: true, reason: "tile_already_prebuffed", tileKey: tileKey };
+    }
     const targets = buildOrderedNewTilePrebuffTargets();
+    if (targets.length === 0) {
+      // Mark tile as evaluated so we don't keep retrying empty target lists each cycle.
+      rt.prebuff.tileKey = tileKey;
+      rt.prebuff.tileAt = Date.now();
+      rt.prebuff.lastResult = { used: 0, planned: 0, reason: "no_prebuff_targets" };
+      return { used: 0, skipped: true, reason: "no_prebuff_targets", tileKey: tileKey };
+    }
+    // AI CHANGED: v1.2.0-alpha — accept canonical "hard" alongside legacy "safe".
+    const mode = normalizeCombatModeName(Runtime.autoFarm && Runtime.autoFarm.combatMode);
+    rt.prebuffCastCount = 0;
+    // Hard mode: wait for all targets ready, longest-first cast order. Bounded by safeModeWaitAllReadyMs.
+    if (mode === "hard") {
+      const waitAllMs = Number.isFinite(pb.safeModeWaitAllReadyMs)
+        ? Math.max(2000, pb.safeModeWaitAllReadyMs)
+        : 60000;
+      const pollMs = Number.isFinite(pb.safeModeWaitPollMs) ? Math.max(120, pb.safeModeWaitPollMs) : 400;
+      const t0 = Date.now();
+      while (Date.now() - t0 < waitAllMs) {
+        if (Runtime.autoFarm.stopRequested) {
+          return { used: 0, skipped: true, reason: "stop_requested", tileKey: tileKey };
+        }
+        let waiting = 0;
+        for (let s = 0; s < targets.length; s++) {
+          if (typeof isActionBarSlotShowingCooldown === "function" && isActionBarSlotShowingCooldown(targets[s].slot)) {
+            waiting += 1;
+          }
+        }
+        if (waiting === 0) {
+          break;
+        }
+        setBotStatus("waiting", `safe mode prebuffs: ${waiting}/${targets.length} on CD`);
+        await sleep(pollMs, { bypassStop: true });
+      }
+    }
     let used = 0;
     for (let t = 0; t < targets.length; t++) {
+      if (Runtime.autoFarm.stopRequested) {
+        return { used: used, skipped: true, reason: "stop_requested", tileKey: tileKey };
+      }
       const one = targets[t];
       if (typeof isActionBarSlotShowingCooldown === "function" && isActionBarSlotShowingCooldown(one.slot)) {
-        continue;
-      }
-      if (supportBuffShouldSkipRecastFromTracking(rt, one.row, one.dur)) {
-        Logger.log("COMBAT", "prebuff skip — assumed buff still above recast window", {
-          name: one.name,
-          assumedDurationSec: one.dur,
-          nameKey: getSupportBuffNameKeyForRow(one.row),
-          recastMinRemainingSec: getSupportBuffRecastMinRemainingSecForTracking()
-        });
+        Logger.log("COMBAT", "Prebuff skip — slot still cooling", { name: one.name, slot: one.slot });
         continue;
       }
       if (!clickActionBarSlot(one.slot)) {
@@ -2360,53 +3158,103 @@
       recordSupportBuffAssumedDurationAfterCast(rt, one.row, one.dur, castAt);
       used += 1;
       rt.prebuffCastCount += 1;
-      Logger.log("COMBAT", "New-tile prebuff cast", { name: one.name, assumedDurationSec: one.dur, slot: one.slot });
-      await waitForSupportBuffSlotCooldownAfterClick(one.slot, { name: one.name, kind: "prebuff_new_tile" });
+      Logger.log("COMBAT", "New-tile prebuff cast", {
+        name: one.name,
+        assumedDurationSec: one.dur,
+        slot: one.slot,
+        mode: mode,
+        tileKey: tileKey
+      });
+      await waitForSupportCastResolved(one.slot, one.row, { name: one.name, kind: "prebuff_new_tile" });
     }
-    return { used: used, planned: targets.length };
+    rt.prebuff.tileKey = tileKey;
+    rt.prebuff.tileAt = Date.now();
+    rt.prebuff.lastResult = { used: used, planned: targets.length, mode: mode };
+    return { used: used, planned: targets.length, tileKey: tileKey, mode: mode };
   }
 
-  async function waitForSafeModeShortPrebuffCooldownsThenCast() {
+  // AI CHANGED: Buff system v1.0.5-alpha — LONGBUFF maintenance (OOC only, all buffs >= longDurationMinSec).
+  //   Generalized from the old "permanent self" subset to ALL longbuffs as classified by `classifySupportBuffPolicyForRow`.
+  //   Easy mode → never fires.
+  //   Combat tile (enemyCount > 0) → skipped.
+  //   Triggers initial pass at first safe OOC moment of an AUTO session, then timer-driven recasts when assumed remaining drops below renewWhenRemainingSec.
+  async function maintainLongbuffsOutOfCombat(liveState) {
     const root = Config.supportBuffs;
-    const pb = root && root.prebuff;
-    if (!root || root.enabled === false || !pb || pb.enabled === false) {
-      return { skipped: true };
+    const perm = root && root.permanentSelf;
+    if (!root || root.enabled === false || !perm || perm.enabled === false) {
+      return { cast: 0, skipped: true, reason: "disabled" };
     }
-    const pollMs = Number.isFinite(Config.combat && Config.combat.safeModeExplorePollMs)
-      ? Math.max(200, Config.combat.safeModeExplorePollMs)
-      : 500;
-    const shorts = buildPrebuffRowMetaListForPolicy("short");
-    if (shorts.length === 0) {
-      return { skipped: true, reason: "no_short_prebuffs" };
+    if (isAutoFarmEasyMode()) {
+      return { cast: 0, skipped: true, reason: "easy_mode" };
     }
-    let guard = 0;
-    while (!Runtime.autoFarm.stopRequested && guard < 600) {
-      guard += 1;
-      let waiting = 0;
-      for (let s = 0; s < shorts.length; s++) {
-        if (typeof isActionBarSlotShowingCooldown === "function" && isActionBarSlotShowingCooldown(shorts[s].slot)) {
-          waiting += 1;
-        }
-      }
-      if (waiting === 0) {
-        break;
-      }
-      setBotStatus("waiting", `safe mode: short prebuffs on CD (${waiting}/${shorts.length})`);
-      await sleep(pollMs, { bypassStop: true });
+    if (!liveState || typeof liveState.combat.enemyCount !== "number") {
+      return { cast: 0, skipped: true, reason: "no_enemy_count" };
     }
+    if (liveState.combat.enemyCount !== 0) {
+      return { cast: 0, skipped: true, reason: "not_clear_tile" };
+    }
+    if (liveState.session && (liveState.session.dead === true || liveState.session.poorConnection === true)) {
+      return { cast: 0, skipped: true, reason: "session_risk" };
+    }
+    const targets = buildSupportBuffMetaListForPolicy("longbuff");
+    if (targets.length === 0) {
+      const rt0 = getSupportBuffLineRuntime();
+      rt0.longbuff.initialPassDone = true;
+      rt0.longbuff.lastPassAt = Date.now();
+      rt0.longbuff.lastResult = { cast: 0, planned: 0, reason: "no_longbuff_targets" };
+      return { cast: 0, skipped: true, reason: "no_longbuff_targets" };
+    }
+    const renewRem = Number.isFinite(perm.renewWhenRemainingSec)
+      ? Math.max(0, perm.renewWhenRemainingSec)
+      : 20;
+    const trackRem = getSupportBuffRecastMinRemainingSecForTracking();
+    const effectiveRenewSec = trackRem !== null && trackRem !== undefined ? trackRem : renewRem;
     const rt = getSupportBuffLineRuntime();
-    let cast = 0;
-    for (let s = 0; s < shorts.length; s++) {
-      const one = shorts[s];
-      if (typeof isActionBarSlotShowingCooldown === "function" && isActionBarSlotShowingCooldown(one.slot)) {
+    const now = Date.now();
+    const initialPass = !rt.longbuff.initialPassDone;
+    const metaList = [];
+    for (let i = 0; i < targets.length; i++) {
+      const one = targets[i];
+      const nameKey =
+        typeof normalizeSkillName === "function"
+          ? normalizeSkillName(String(one.row.name || ""))
+          : String(one.row.name || "");
+      const tracked = rt.longSelfTracked[nameKey];
+      // On initial pass: refresh ALL longbuffs once so the session starts buffed.
+      // On later passes: only refresh those approaching expiry.
+      let need;
+      if (initialPass) {
+        need = true;
+      } else {
+        need =
+          !tracked ||
+          !Number.isFinite(tracked.expectedEndAt) ||
+          now >= tracked.expectedEndAt - effectiveRenewSec * 1000;
+      }
+      if (!need) {
         continue;
       }
-      if (supportBuffShouldSkipRecastFromTracking(rt, one.row, one.dur)) {
-        Logger.log("COMBAT", "Safe mode short prebuff skip — assumed buff still above recast window", {
-          name: one.name,
-          assumedDurationSec: one.dur,
-          nameKey: getSupportBuffNameKeyForRow(one.row)
-        });
+      const urgency = tracked && Number.isFinite(tracked.expectedEndAt) ? tracked.expectedEndAt : now;
+      metaList.push({
+        slot: one.slot,
+        row: one.row,
+        name: one.row.name,
+        dur: one.dur,
+        nameKey: nameKey,
+        urgency: urgency
+      });
+    }
+    metaList.sort(function (a, b) {
+      return a.urgency - b.urgency;
+    });
+    const maxCast = Number.isFinite(perm.maxCastPerPass) ? Math.max(1, Math.floor(perm.maxCastPerPass)) : 6;
+    let cast = 0;
+    for (let m = 0; m < metaList.length && cast < maxCast; m++) {
+      if (Runtime.autoFarm.stopRequested) {
+        break;
+      }
+      const one = metaList[m];
+      if (typeof isActionBarSlotShowingCooldown === "function" && isActionBarSlotShowingCooldown(one.slot)) {
         continue;
       }
       if (!clickActionBarSlot(one.slot)) {
@@ -2415,17 +3263,45 @@
       const castAt = Date.now();
       recordSupportBuffAssumedDurationAfterCast(rt, one.row, one.dur, castAt);
       cast += 1;
-      rt.prebuffCastCount += 1;
-      Logger.log("COMBAT", "Safe mode short prebuff before explore", { name: one.name, dur: one.dur, slot: one.slot });
-      await waitForSupportBuffSlotCooldownAfterClick(one.slot, { name: one.name, kind: "prebuff_safe_explore" });
+      Logger.log("COMBAT", initialPass ? "Longbuff initial pass cast" : "Longbuff renew (OOC)", {
+        name: one.row.name,
+        durSec: one.dur,
+        slot: one.slot
+      });
+      await waitForSupportCastResolved(one.slot, one.row, {
+        name: one.row.name,
+        kind: initialPass ? "longbuff_initial" : "longbuff_renew"
+      });
     }
-    return { cast: cast };
+    rt.longbuff.initialPassDone = true;
+    rt.longbuff.lastPassAt = Date.now();
+    rt.longbuff.lastResult = { cast: cast, planned: metaList.length, initialPass: initialPass };
+    return { cast: cast, planned: metaList.length, initialPass: initialPass };
   }
 
+  // AI CHANGED: Buff system v1.0.5-alpha — back-compat wrapper for the old name. Behavior is now identical to maintainLongbuffsOutOfCombat.
+  async function maybeMaintainLongSelfSupportBuffsOutOfCombat(liveState) {
+    const res = await maintainLongbuffsOutOfCombat(liveState);
+    return { renewed: res.cast || 0, skipped: res.skipped, reason: res.reason };
+  }
+
+  // AI CHANGED: Buff system v1.0.5-alpha — old "permanent self pre-find-enemy" helper REMOVED from active call sites.
+  // Longbuffs are now OOC-only. This stub remains as a no-op for any external code path or test that still references it; it must never cast on mob tiles.
+  async function maybeApplyPermanentSelfLongBuffsBeforeFindEnemy(_liveState) {
+    return { cast: 0, skipped: true, reason: "deprecated_longbuff_on_mob_tile_disallowed" };
+  }
+
+  // AI CHANGED: Buff system v1.0.5-alpha — Safe mode HP/MP idle gate on empty-tile path.
+  //   Short-prebuff casting was REMOVED from this gate (it was running in the wrong place before combat moved to the new tile). HP/MP top-off remains useful while idle.
+  //   Prebuff waiting (Safe mode = wait all ready, longest-first) now happens inside `maybeApplyPrebuffsForNewMobTile` on the new mob tile.
   async function waitForSafeModeExploreResourcesAndShortPrebuffs() {
-    const mode = Runtime.autoFarm && Runtime.autoFarm.combatMode ? String(Runtime.autoFarm.combatMode).toLowerCase() : "fast";
-    if (mode !== "safe") {
-      return { skipped: true, reason: "not_safe_mode" };
+    // AI CHANGED: v1.2.0-alpha — accept canonical "hard" alongside legacy "safe".
+    const mode = normalizeCombatModeName(Runtime.autoFarm && Runtime.autoFarm.combatMode);
+    if (mode !== "hard") {
+      return { skipped: true, reason: "not_hard_mode" };
+    }
+    if (isAutoFarmEasyMode()) {
+      return { skipped: true, reason: "easy_mode" };
     }
     const hpTh = Number.isFinite(Config.combat && Config.combat.safeModeExploreMinHpPct)
       ? Math.max(0.5, Math.min(1, Config.combat.safeModeExploreMinHpPct))
@@ -2476,102 +3352,12 @@
       }
       await sleep(pollMs, { bypassStop: true });
     }
-    const pbCast = await waitForSafeModeShortPrebuffCooldownsThenCast();
-    return { ok: true, hpTh: hpTh, mpTh: mpTh, shortPrebuff: pbCast };
+    return { ok: true, hpTh: hpTh, mpTh: mpTh, shortPrebuffMovedToMobTile: true };
   }
 
-  // AI CHANGED: Shared pass for permanent (≥longDurationMinSec) self support buffs — idle OOC or occupied tile before find-enemy.
-  async function runPermanentSelfLongBuffRefreshPass(liveState, opts) {
-    const o = opts || {};
-    const allowEnemiesOnTile = !!o.allowEnemiesOnTile;
-    const root = Config.supportBuffs;
-    const perm = root && root.permanentSelf;
-    if (!root || root.enabled === false || !perm || perm.enabled === false) {
-      return { cast: 0, skipped: true, reason: "disabled" };
-    }
-    if (!liveState || typeof liveState.combat.enemyCount !== "number") {
-      return { cast: 0, skipped: true, reason: "no_enemy_count" };
-    }
-    const ec = liveState.combat.enemyCount;
-    if (allowEnemiesOnTile) {
-      if (!(ec > 0)) {
-        return { cast: 0, skipped: true, reason: "need_enemies_on_tile" };
-      }
-    } else if (ec !== 0) {
-      return { cast: 0, skipped: true, reason: "not_clear_tile" };
-    }
-    const longMin = Number.isFinite(root.longDurationMinSec) ? root.longDurationMinSec : 60;
-    const trackRem = getSupportBuffRecastMinRemainingSecForTracking();
-    const renewRem =
-      trackRem !== null && trackRem !== undefined
-        ? trackRem
-        : Number.isFinite(perm.renewWhenRemainingSec)
-          ? perm.renewWhenRemainingSec
-          : 20;
-    const classKey = typeof Config.skills.masterClassKey === "string" ? Config.skills.masterClassKey.trim() : "";
-    const slots = Runtime.skills && Array.isArray(Runtime.skills.slots) ? Runtime.skills.slots : [];
-    const rt = getSupportBuffLineRuntime();
-    const now = Date.now();
-    const metaList = [];
-    for (let i = 0; i < slots.length; i++) {
-      const row = slots[i];
-      if (!skillRowIsPermanentOocSelfLongBuff(row, classKey)) {
-        continue;
-      }
-      const dur = resolveSupportBuffDurationSecPreferDb(row, classKey);
-      if (!Number.isFinite(dur) || dur < longMin) {
-        continue;
-      }
-      const nameKey =
-        typeof normalizeSkillName === "function" ? normalizeSkillName(String(row.name || "")) : String(row.name || "");
-      const tracked = rt.longSelfTracked[nameKey];
-      const need =
-        !tracked ||
-        !Number.isFinite(tracked.expectedEndAt) ||
-        now >= tracked.expectedEndAt - renewRem * 1000;
-      if (!need) {
-        continue;
-      }
-      const slotIdx = typeof row.slot === "number" ? row.slot : i;
-      const urgency = tracked && Number.isFinite(tracked.expectedEndAt) ? tracked.expectedEndAt : now + 1e12;
-      metaList.push({ slot: slotIdx, row: row, dur: dur, nameKey: nameKey, urgency: urgency });
-    }
-    metaList.sort(function (a, b) {
-      return a.urgency - b.urgency;
-    });
-    const maxCast = Number.isFinite(perm.maxCastPerPass) ? Math.max(1, Math.floor(perm.maxCastPerPass)) : 6;
-    let cast = 0;
-    for (let m = 0; m < metaList.length && cast < maxCast; m++) {
-      const one = metaList[m];
-      if (typeof isActionBarSlotShowingCooldown === "function" && isActionBarSlotShowingCooldown(one.slot)) {
-        continue;
-      }
-      if (!clickActionBarSlot(one.slot)) {
-        continue;
-      }
-      const castAt = Date.now();
-      recordSupportBuffAssumedDurationAfterCast(rt, one.row, one.dur, castAt);
-      cast += 1;
-      Logger.log("COMBAT", allowEnemiesOnTile ? "Permanent self-buff before combat" : "Long self-buff renew (OOC)", {
-        name: one.row.name,
-        durSec: one.dur,
-        slot: one.slot
-      });
-      await waitForSupportBuffSlotCooldownAfterClick(one.slot, {
-        name: one.row.name,
-        kind: allowEnemiesOnTile ? "permanent_self_pre_combat" : "permanent_self_ooc"
-      });
-    }
-    return { cast: cast, planned: metaList.length };
-  }
-
-  async function maybeMaintainLongSelfSupportBuffsOutOfCombat(liveState) {
-    const res = await runPermanentSelfLongBuffRefreshPass(liveState, { allowEnemiesOnTile: false });
-    return { renewed: res.cast || 0, skipped: res.skipped, reason: res.reason };
-  }
-
-  async function maybeApplyPermanentSelfLongBuffsBeforeFindEnemy(liveState) {
-    return runPermanentSelfLongBuffRefreshPass(liveState, { allowEnemiesOnTile: true });
+  // AI CHANGED: Buff system v1.0.5-alpha — deprecated alias for the old refresh pass; routes to longbuff OOC maintenance with safety checks. Never casts on mob tiles.
+  async function runPermanentSelfLongBuffRefreshPass(liveState, _opts) {
+    return maintainLongbuffsOutOfCombat(liveState);
   }
 
   function listScannedSupportBuffClassifications() {
@@ -3110,10 +3896,19 @@
     if (!Object.prototype.hasOwnProperty.call(queue, "anchorNeedsReset")) {
       queue.anchorNeedsReset = false;
     }
+    // AI CHANGED: Planner Part 2 — track whether the currently queued action came from the active execution plan so the fire
+    // path can advance the plan cursor (and so diagnostics can show plan-driven vs legacy queue advances).
+    if (!Object.prototype.hasOwnProperty.call(queue, "fromExecutionPlan")) {
+      queue.fromExecutionPlan = false;
+    }
+    if (!Object.prototype.hasOwnProperty.call(queue, "planStepIndex")) {
+      queue.planStepIndex = null;
+    }
     return queue;
   }
 
   // AI CHANGED: Combat episode v1 — drop structured burst plan when target/context resets (logged once when something was stored).
+  // AI CHANGED: Planner Part 2 — also invalidate the active execution plan so the next burst rebuilds against the fresh state.
   function clearCombatEpisode(reason) {
     if (!Runtime || !Runtime.autoFarm) {
       return;
@@ -3122,6 +3917,13 @@
       Logger.log("COMBAT", "combatEpisode cleared", { reason: reason || "unspecified" });
     }
     Runtime.autoFarm.combatEpisode = null;
+    if (typeof plannerInvalidateExecutionPlan === "function") {
+      try {
+        plannerInvalidateExecutionPlan(reason || "combat_episode_cleared");
+      } catch (err) {
+        Logger.warn("COMBAT", "plannerInvalidateExecutionPlan failed during clearCombatEpisode", err);
+      }
+    }
   }
 
   function clearCombatActionQueue(reason, detail) {
@@ -3129,6 +3931,8 @@
     queue.active = false;
     queue.clearedAt = Date.now();
     queue.clearReason = reason || null;
+    queue.fromExecutionPlan = false;
+    queue.planStepIndex = null;
     if (detail && typeof detail === "object") {
       if (Object.prototype.hasOwnProperty.call(detail, "mode")) {
         queue.mode = detail.mode;
@@ -3238,6 +4042,9 @@
     queue.slot = Number.isFinite(action.slot) ? action.slot : null;
     queue.name = resolveCombatQueueActionName(action.mode, action.name || "");
     queue.source = action.source || null;
+    // AI CHANGED: Planner Part 2 — propagate plan provenance so `fireCombatActionQueue` can advance the plan cursor on fire.
+    queue.fromExecutionPlan = !!(action && action.fromExecutionPlan);
+    queue.planStepIndex = action && Number.isFinite(action.planStepIndex) ? action.planStepIndex : null;
     queue.anchorMode = meta && meta.anchorMode ? meta.anchorMode : null;
     queue.anchorSlot = meta && Number.isFinite(meta.anchorSlot) ? meta.anchorSlot : null;
     queue.anchorName = meta && meta.anchorName ? resolveCombatQueueActionName(meta.anchorMode, meta.anchorName) : null;
@@ -3436,47 +4243,123 @@
       anchorName: queue.anchorName,
       anchorSource: queue.anchorSource,
       openerSlot: queue.openerSlot,
-      openerName: queue.openerName
+      openerName: queue.openerName,
+      fromExecutionPlan: !!(queue.fromExecutionPlan)
     });
     plannerRecordOpenerRuntimeEvent("queued_action_fired", {
       mode: queuedAction.mode,
       slot: queuedAction.slot,
-      openerSlot: queue.openerSlot
+      openerSlot: queue.openerSlot,
+      fromExecutionPlan: !!(queue.fromExecutionPlan)
     });
+    // AI CHANGED: Planner Part 2 — when the queue just fired a plan-sourced step, advance the active plan's cursor so the
+    // chain continues from step N+1 (which `plannerNextCombatQueueAction` will then fetch below). This is what makes the
+    // executor *follow the plan past step 1* during a single burst.
+    if (queue.fromExecutionPlan && typeof plannerAdvanceExecutionPlanStep === "function") {
+      try {
+        plannerAdvanceExecutionPlanStep({ result: "queue_fired", source: "fireCombatActionQueue" });
+      } catch (err) {
+        Logger.warn("COMBAT", "plannerAdvanceExecutionPlanStep failed after queue fire", err);
+      }
+    }
     queue.anchorMode = queuedAction.mode;
     queue.anchorSlot = queuedAction.slot;
     queue.anchorName = queuedAction.name;
     queue.anchorSource = queuedAction.source;
     queue.anchorNeedsReset = true;
     const postQueueState = readBasicState();
-    const nextQueuedAction =
-      typeof plannerBuildCombatQueueAction === "function"
-        ? plannerBuildCombatQueueAction({
+    // AI CHANGED: Planner Part 2 retarget fix v1.1.3 — LETHAL GUARD on chain continuation. If the action we just fired is, by
+    // itself, predicted to kill the live target, do NOT compute a follow-up `nextQueuedAction`. This is the second line of
+    // defense against the observed Sniper-Shot-after-already-lethal-action overcommit (the first being the opener-time guard
+    // in `attackUntilProgress`). Conservative confidence factor (default 1.3) keeps false positives rare.
+    let chainLethalSkip = false;
+    if (queuedAction.mode === "skill" && typeof plannerWouldCommittedActionAlreadyKillTarget === "function") {
+      try {
+        const livePlanFire =
+          typeof plannerGetActiveExecutionPlan === "function" ? plannerGetActiveExecutionPlan() : null;
+        const chainLethalDecision = plannerWouldCommittedActionAlreadyKillTarget({
+          liveState: postQueueState,
+          plan: livePlanFire,
+          committedStepIndex:
+            livePlanFire && Number.isFinite(queue.planStepIndex) ? queue.planStepIndex : null,
+          committedSlot: Number.isFinite(queuedAction.slot) ? queuedAction.slot : null
+        });
+        if (chainLethalDecision && chainLethalDecision.wouldKill === true) {
+          chainLethalSkip = true;
+          Logger.log("COMBAT", "Lethal guard: queued action already lethal — clearing chain (no overkill follow-up)", chainLethalDecision);
+          plannerRecordOpenerRuntimeEvent("queue_chain_skipped_lethal", {
+            slot: queuedAction.slot,
+            predictedDamage: chainLethalDecision.predictedDamage,
+            targetHpCur: chainLethalDecision.targetHpCur,
+            source: chainLethalDecision.source
+          });
+          if (Runtime.autoFarm && Runtime.autoFarm.combatExecution) {
+            Runtime.autoFarm.combatExecution.lastLethalGuardEvent = {
+              at: Date.now(),
+              site: "fire_chain",
+              wouldKill: true,
+              predictedDamage: chainLethalDecision.predictedDamage,
+              targetHpCur: chainLethalDecision.targetHpCur,
+              confidenceFactor: chainLethalDecision.confidenceFactor,
+              requiredPredicted: chainLethalDecision.requiredPredicted,
+              source: chainLethalDecision.source,
+              reason: chainLethalDecision.reason,
+              committedSlot: Number.isFinite(queuedAction.slot) ? queuedAction.slot : null
+            };
+            Runtime.autoFarm.combatExecution.lethalGuardSkips =
+              (Runtime.autoFarm.combatExecution.lethalGuardSkips || 0) + 1;
+          }
+        }
+      } catch (err) {
+        Logger.warn("COMBAT", "plannerWouldCommittedActionAlreadyKillTarget threw at fire chain", err);
+      }
+    }
+    // AI CHANGED: Planner Part 2 — prefer the active execution plan's next step over the legacy single-step lookahead.
+    // `plannerNextCombatQueueAction` transparently falls back to `plannerBuildCombatQueueAction` when no plan is active.
+    const nextQueuedAction = chainLethalSkip
+      ? null
+      : (typeof plannerNextCombatQueueAction === "function"
+        ? plannerNextCombatQueueAction({
             afterSlot: queuedAction.mode === "skill" ? queuedAction.slot : null,
             liveState: postQueueState,
             disallowChargeSkills: opts.disallowChargeSkills !== false
           })
-        : null;
+        : (typeof plannerBuildCombatQueueAction === "function"
+            ? plannerBuildCombatQueueAction({
+                afterSlot: queuedAction.mode === "skill" ? queuedAction.slot : null,
+                liveState: postQueueState,
+                disallowChargeSkills: opts.disallowChargeSkills !== false
+              })
+            : null));
     if (!nextQueuedAction || !nextQueuedAction.mode) {
-      clearCombatActionQueue("no_followup_after_queue_fire", {
-        anchorMode: queue.anchorMode,
-        anchorSlot: queue.anchorSlot,
-        anchorName: queue.anchorName,
-        anchorSource: queue.anchorSource
-      });
+      queue.fromExecutionPlan = false;
+      queue.planStepIndex = null;
+      clearCombatActionQueue(
+        chainLethalSkip ? "lethal_committed_action_no_chain" : "no_followup_after_queue_fire",
+        {
+          anchorMode: queue.anchorMode,
+          anchorSlot: queue.anchorSlot,
+          anchorName: queue.anchorName,
+          anchorSource: queue.anchorSource
+        }
+      );
       return {
         fired: true,
         mode: queuedAction.mode,
         slot: queuedAction.slot,
         name: queuedAction.name,
         source: queuedAction.source,
-        chainContinues: false
+        chainContinues: false,
+        lethalGuardSkippedChain: chainLethalSkip === true
       };
     }
     queue.mode = nextQueuedAction.mode;
     queue.slot = Number.isFinite(nextQueuedAction.slot) ? nextQueuedAction.slot : null;
     queue.name = resolveCombatQueueActionName(nextQueuedAction.mode, nextQueuedAction.name || "");
     queue.source = nextQueuedAction.source || null;
+    queue.fromExecutionPlan = !!(nextQueuedAction && nextQueuedAction.fromExecutionPlan);
+    queue.planStepIndex =
+      nextQueuedAction && Number.isFinite(nextQueuedAction.planStepIndex) ? nextQueuedAction.planStepIndex : null;
     queue.armedAt = Date.now();
     queue.targetHpMaxAtArm =
       postQueueState &&
@@ -3504,9 +4387,97 @@
     };
   }
 
-  // AI CHANGED: After mid-pull retarget the game winds a default basic — do not click opener or cancel; arm queue on Attack cast (see applyPostRetargetQueueOpenerPick).
+  // AI CHANGED: Planner Part 2 retarget fix v1.1.3 — POST-RETARGET POLICY CHANGED.
+  //   Old policy (deleted): assume the game's auto-basic is the first action of the burst, queue the planner skill onto the
+  //   game-basic cast bar, and let the queue fire when the basic cast registers. That delayed real skill pressure by ~1 basic
+  //   cast and effectively wasted the burst's first action.
+  //   New policy (this version): assume the game starts an auto-basic after retarget, IMMEDIATELY cancel it via the map-toggle/
+  //   canvas gap "empty UI" click (same primitive used to cancel charges), then drive the planner-selected skill as the actual
+  //   first opener click. The plan cursor only advances when a real planned skill commits — a cancel does NOT advance the plan.
+  //   See `cancelPostRetargetAutoBasic()` below and the `firstBurstAfterRetarget` branch of `attackUntilProgress`.
 
-  // AI CHANGED: Post-retarget burst — skip opener bar click; queue planner non-charge opener skill while game basic casts; charge opener falls back to normal tap path.
+  // AI CHANGED: Planner Part 2 retarget fix v1.1.3 — Post-retarget cancel helper. Tries to interrupt the auto-started basic
+  // attack the game schedules immediately after a retarget (Find Enemy / attackers popup). The map-toggle/canvas gap click is
+  // treated as "empty UI" by the game and cancels in-flight charges/basic windups; it works whether the basic was already
+  // mid-cast or just queued. The helper is stop-cooperative, no-op when disabled by config, and returns a structured result so
+  // callers (and tests) can reason about whether a cancel actually went out.
+  //   Returns:
+  //     {
+  //       ok:        boolean   - helper completed without throwing
+  //       cancelled: boolean   - a cancel-equivalent click was dispatched
+  //       reason:    string    - "stop_requested" | "disabled_by_config" | "click_dispatched"
+  //                              | "click_failed" | "no_method_available"
+  //       method:    string?   - "map_toggle_canvas_gap" | null
+  //     }
+  async function cancelPostRetargetAutoBasic(userOpts) {
+    const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
+    const result = { ok: true, cancelled: false, reason: "no_method_available", method: null };
+    if (Runtime.autoFarm.stopRequested) {
+      result.reason = "stop_requested";
+      return result;
+    }
+    if (Config.combat && Config.combat.postRetargetCancelAutoBasic === false) {
+      result.reason = "disabled_by_config";
+      return result;
+    }
+    if (typeof clickChargeCancelViaMapToggleCanvasGap === "function") {
+      let clicked = false;
+      try {
+        clicked = !!clickChargeCancelViaMapToggleCanvasGap();
+      } catch (err) {
+        Logger.warn("COMBAT", "cancelPostRetargetAutoBasic threw on map-gap click", err);
+        result.ok = false;
+        result.reason = "click_threw";
+        result.method = "map_toggle_canvas_gap";
+        return result;
+      }
+      if (clicked) {
+        result.cancelled = true;
+        result.reason = "click_dispatched";
+        result.method = "map_toggle_canvas_gap";
+        const settleMs = Number.isFinite(Config.combat && Config.combat.postRetargetCancelSettleMs)
+          ? Math.max(0, Config.combat.postRetargetCancelSettleMs)
+          : 60;
+        if (settleMs > 0 && !(opts && opts.skipSettle === true)) {
+          await sleep(settleMs);
+        }
+        Logger.log("COMBAT", "Post-retarget auto-basic cancel dispatched", {
+          method: result.method,
+          settleMs: settleMs
+        });
+        plannerRecordOpenerRuntimeEvent("post_retarget_cancel_dispatched", { method: result.method });
+        if (Runtime.autoFarm && Runtime.autoFarm.combatExecution) {
+          Runtime.autoFarm.combatExecution.lastPostRetargetCancel = {
+            at: Date.now(),
+            method: result.method,
+            cancelled: true
+          };
+          Runtime.autoFarm.combatExecution.postRetargetCancelDispatches =
+            (Runtime.autoFarm.combatExecution.postRetargetCancelDispatches || 0) + 1;
+        }
+        return result;
+      }
+      result.reason = "click_failed";
+      result.method = "map_toggle_canvas_gap";
+      Logger.log("COMBAT", "Post-retarget auto-basic cancel: map-gap click failed (UI hidden?)", {});
+      if (Runtime.autoFarm && Runtime.autoFarm.combatExecution) {
+        Runtime.autoFarm.combatExecution.lastPostRetargetCancel = {
+          at: Date.now(),
+          method: result.method,
+          cancelled: false,
+          reason: result.reason
+        };
+      }
+      return result;
+    }
+    return result;
+  }
+
+  // AI CHANGED: Planner Part 2 retarget fix v1.1.3 — `applyPostRetargetQueueOpenerPick` was the OLD post-retarget path that
+  // intentionally preserved the game-basic and queued a planner skill behind it. It is no longer used by `attackUntilProgress`
+  // (which now calls `cancelPostRetargetAutoBasic()` followed by `applyPlannerOpeningPick()`). Function retained as a
+  // last-resort fallback ONLY when the cancel could not be dispatched and config explicitly opts in via
+  // `Config.combat.postRetargetQueueOnGameBasicFallback === true`. Default is to NOT use this path.
   async function applyPostRetargetQueueOpenerPick(pickWrap, opts, excludeSlots) {
     const wrap = pickWrap && typeof pickWrap === "object" ? pickWrap : { useRankedPath: false, opening: null };
     if (wrap.useRankedPath && wrap.opening && wrap.opening.slot != null && wrap.opening.record) {
@@ -3650,6 +4621,29 @@
       if (b && b.valid && t && t.valid && b.max === t.max && t.cur < b.cur) {
         return true;
       }
+      // AI CHANGED: Audit fix #3 — same-maxHP target swap could fool the original same-max gate when a fresh mob spawns with identical max and full HP. If we observe a large upward jump (cur rose by ≥ `targetSwapJumpFrac` of max) while max stayed equal, treat it as a target swap = progress signal so the loop does not stall fighting "the same HP bar" indefinitely.
+      if (b && b.valid && t && t.valid && b.max === t.max && Number.isFinite(b.cur) && Number.isFinite(t.cur)) {
+        const jumpFrac = Number.isFinite(Config.combat && Config.combat.progressTargetSwapJumpFrac)
+          ? Math.max(0.05, Math.min(0.95, Config.combat.progressTargetSwapJumpFrac))
+          : 0.25;
+        if (t.max > 0 && t.cur - b.cur >= t.max * jumpFrac) {
+          Logger.log("COMBAT", "Combat progress: target swap detected (HP jumped up)", {
+            baselineCur: b.cur,
+            liveCur: t.cur,
+            max: t.max,
+            jumpFrac: +(((t.cur - b.cur) / t.max) || 0).toFixed(3)
+          });
+          return true;
+        }
+      }
+      // AI CHANGED: Audit fix #3 — fresh enemy with different max HP after find/re-find = progress.
+      if (b && b.valid && t && t.valid && Number.isFinite(b.max) && Number.isFinite(t.max) && b.max !== t.max) {
+        Logger.log("COMBAT", "Combat progress: target swap detected (different max HP)", {
+          baselineMax: b.max,
+          liveMax: t.max
+        });
+        return true;
+      }
       return false;
     };
   }
@@ -3733,6 +4727,27 @@
     if (chargePlan.strategy === "cancel_release") {
       // AI CHANGED: Log after successful cancel click; distinguish hint-missing vs cast-bar gate / map-gap failure.
       const expectedN = open.skillRecord && open.skillRecord.name ? String(open.skillRecord.name) : "";
+      // AI CHANGED: Audit fix #4 — race: `sleep(releaseMs)` is imprecise (80 ms chunks). If we overshot past full charge the game has already auto-fired and the cancel hint is gone. Re-probe the hint before clicking so we don't dispatch a cancel onto a queued follow-up action.
+      const hintStillVisible = typeof isChargingSkillCancelHintVisible === "function" ? isChargingSkillCancelHintVisible() : true;
+      if (!hintStillVisible) {
+        Logger.log("LOOP", "Charge release: hint already gone (full charge auto-fired or settled) — skipping cancel click", {
+          slot: open.skillSlot,
+          releaseMs: chargePlan.releaseMs
+        });
+        if (settleRanked > 0) {
+          await sleep(settleRanked);
+        }
+        if (Runtime.autoFarm.stopRequested) {
+          return { handled: true, progressed: false };
+        }
+        // Continue into the progress wait below; the shot has likely landed already.
+        const okFired = await waitForCondition(
+          "attack progress (charge auto-fired)",
+          buildAttackProgressOrQueueAdvancePredicate(beforeState, {}),
+          attackProgressWaitOptions(cancelReleaseTimeout, pollMs)
+        );
+        return { handled: true, progressed: !!okFired };
+      }
       const released = clickChargingSkillCancelUi({ expectedSkillName: expectedN });
       if (released) {
         Logger.log("LOOP", "Charge skill release via cancel UI", {
@@ -3842,50 +4857,30 @@
 
     const pickWrap = resolvePlannerOpeningPick(opts, []);
 
+    // AI CHANGED: Planner Part 2 retarget fix v1.1.3 — episode telemetry no longer models a phantom "post_retarget_after_implicit_basic"
+    //   queued action. After retarget the runtime now CANCELS the auto-basic and clicks the planner opener directly, so the episode plan
+    //   matches the normal opener pick (real skill click as step 0).
     let planPickForEpisode = null;
-    // AI CHANGED: Episode telemetry — post-retarget queue-only path shows game basic then first queued skill, not a phantom opener_skill click.
-    if (opts && opts.firstBurstAfterRetarget) {
-      if (pickWrap.useRankedPath && pickWrap.opening && pickWrap.opening.slot != null && pickWrap.opening.record) {
-        const srEp = pickWrap.opening.record;
-        const isChargeEp =
-          srEp && typeof plannerGetChargeSkillEffect === "function" && plannerGetChargeSkillEffect(srEp);
-        if (!isChargeEp) {
-          planPickForEpisode = {
-            slot: null,
-            record: null,
-            chargeReleasePlan: null,
-            queuedAction: {
-              mode: "skill",
-              slot: pickWrap.opening.slot,
-              name: srEp.name || "",
-              source: "post_retarget_after_implicit_basic"
-            }
-          };
-        }
-      }
-    }
-    if (!planPickForEpisode) {
-      if (pickWrap.useRankedPath && pickWrap.opening) {
-        planPickForEpisode = pickWrap.opening;
-      } else {
-        const bq =
-          !(opts && opts.allowCombatQueue === false) &&
-          Config.combat &&
-          Config.combat.combatQueueEnabled !== false &&
-          typeof plannerBuildCombatQueueAction === "function"
-            ? plannerBuildCombatQueueAction({
-                afterSlot: null,
-                liveState: beforeState,
-                disallowChargeSkills: !!(opts && opts.disallowChargeSkills)
-              })
-            : null;
-        planPickForEpisode = {
-          slot: null,
-          record: null,
-          chargeReleasePlan: null,
-          queuedAction: bq
-        };
-      }
+    if (pickWrap.useRankedPath && pickWrap.opening) {
+      planPickForEpisode = pickWrap.opening;
+    } else {
+      const bq =
+        !(opts && opts.allowCombatQueue === false) &&
+        Config.combat &&
+        Config.combat.combatQueueEnabled !== false &&
+        typeof plannerBuildCombatQueueAction === "function"
+          ? plannerBuildCombatQueueAction({
+              afterSlot: null,
+              liveState: beforeState,
+              disallowChargeSkills: !!(opts && opts.disallowChargeSkills)
+            })
+          : null;
+      planPickForEpisode = {
+        slot: null,
+        record: null,
+        chargeReleasePlan: null,
+        queuedAction: bq
+      };
     }
 
     if (typeof plannerBuildCombatEpisodePlan === "function") {
@@ -3904,10 +4899,36 @@
       clearCombatEpisode("planner_build_missing");
     }
 
-    const open =
-      opts && opts.firstBurstAfterRetarget
-        ? await applyPostRetargetQueueOpenerPick(pickWrap, opts, [])
-        : await applyPlannerOpeningPick(pickWrap, opts, []);
+    // AI CHANGED: Planner Part 2 retarget fix v1.1.3 — POST-RETARGET POLICY CHANGED.
+    //   Step 1: best-effort cancel the game's auto-basic via `cancelPostRetargetAutoBasic()` (map-gap click).
+    //   Step 2: drive the planner-selected opener as a real skill click via `applyPlannerOpeningPick()`.
+    //   The cancel itself does NOT advance the plan cursor; only the real skill commit (or the queue firing a planned step)
+    //   advances `plan.currentIndex`. If the cancel fails AND the operator has explicitly opted into the legacy queue-on-game-basic
+    //   fallback via `Config.combat.postRetargetQueueOnGameBasicFallback === true`, we fall back to the old behavior. Default is
+    //   the new cancel-then-skill-click flow.
+    let open;
+    if (opts && opts.firstBurstAfterRetarget) {
+      const cancelOutcome = await cancelPostRetargetAutoBasic({});
+      if (Runtime.autoFarm.stopRequested) {
+        Logger.log("LOOP", "attackUntilProgress: stop requested after post-retarget cancel attempt");
+        return false;
+      }
+      const fallbackToQueueOnGameBasic =
+        !cancelOutcome.cancelled &&
+        Config.combat &&
+        Config.combat.postRetargetQueueOnGameBasicFallback === true;
+      if (fallbackToQueueOnGameBasic) {
+        Logger.log("LOOP", "Post-retarget cancel unavailable; using legacy queue-on-game-basic fallback (config opt-in)", {
+          reason: cancelOutcome.reason,
+          method: cancelOutcome.method
+        });
+        open = await applyPostRetargetQueueOpenerPick(pickWrap, opts, []);
+      } else {
+        open = await applyPlannerOpeningPick(pickWrap, opts, []);
+      }
+    } else {
+      open = await applyPlannerOpeningPick(pickWrap, opts, []);
+    }
     if (!open.ok) {
       Logger.warn("LOOP", "Attack loop aborted: no attack click succeeded");
       return false;
@@ -3957,33 +4978,117 @@
         queuedActionFired = true;
       }
     };
-    if (queueAllowedOpen && open && open.queuedAction) {
-      const queuedState = armCombatActionQueue(open.queuedAction, {
-        anchorMode: open.skillSlot != null ? "skill" : "basic",
-        anchorSlot: open.skillSlot,
-        anchorName: open.skillRecord && open.skillRecord.name ? open.skillRecord.name : "Basic Attack",
-        anchorSource: open.skillSlot != null ? "opening_attack" : "opening_basic",
-        openerSlot: open.skillSlot,
-        openerName: open.skillRecord && open.skillRecord.name ? open.skillRecord.name : (open.skillSlot == null ? "Basic Attack" : null),
-        liveState: readBasicState(),
-        postRetargetGuarded: false
-      });
-      if (queuedState) {
-        Logger.log("COMBAT", "Queued combat action armed", {
-          mode: queuedState.mode,
-          slot: queuedState.slot,
-          name: queuedState.name,
-          source: queuedState.source,
-          anchorMode: queuedState.anchorMode,
-          anchorSlot: queuedState.anchorSlot,
-          anchorName: queuedState.anchorName,
-          openerSlot: queuedState.openerSlot,
-          postRetargetGuarded: queuedState.postRetargetGuarded
+    if (queueAllowedOpen) {
+      // AI CHANGED: Planner Part 2 — opener has fired (step 0 of the execution plan). Advance the plan cursor so the queue arms
+      // against step 1+. Prefer the plan's next non-charge step over the legacy single-step `open.queuedAction` hint, then fall
+      // back to that hint or legacy lookahead if no plan was synced. This is what lets the executor actually FOLLOW the planned
+      // short sequence past the first action.
+      const livePlan =
+        typeof plannerGetActiveExecutionPlan === "function" ? plannerGetActiveExecutionPlan() : null;
+      let advancedPlanForOpener = false;
+      if (livePlan && livePlan.valid) {
+        try {
+          plannerAdvanceExecutionPlanStep({ result: "opener_fired", source: "attackUntilProgress_open" });
+          advancedPlanForOpener = true;
+        } catch (err) {
+          Logger.warn("COMBAT", "plannerAdvanceExecutionPlanStep failed for opener", err);
+        }
+      }
+      // AI CHANGED: Planner Part 2 retarget fix v1.1.3 — LETHAL GUARD before arming queue follow-up.
+      //   If the just-fired opener is, by itself, predicted to kill the live target, do NOT arm a follow-up. This prevents the
+      //   observed bug where Sniper Shot (or any other queued finisher) was armed onto an in-flight already-lethal action and
+      //   wasted mana / cooldown / a full-charge release on overkill. The guard is conservative (`confidenceFactor` default 1.3 =
+      //   require ≥ 30% overkill margin) so false negatives (unnecessary follow-up still queued) are far more likely than false
+      //   positives (a needed follow-up skipped and the target survives).
+      let openerLethalSkip = false;
+      let openerLethalDecision = null;
+      if (typeof plannerWouldCommittedActionAlreadyKillTarget === "function") {
+        try {
+          openerLethalDecision = plannerWouldCommittedActionAlreadyKillTarget({
+            liveState: readBasicState(),
+            plan: livePlan,
+            committedStepIndex:
+              advancedPlanForOpener && livePlan && Number.isFinite(livePlan.currentIndex)
+                ? livePlan.currentIndex - 1
+                : null,
+            committedSlot: open && Number.isFinite(open.skillSlot) ? open.skillSlot : null
+          });
+        } catch (err) {
+          Logger.warn("COMBAT", "plannerWouldCommittedActionAlreadyKillTarget threw at opener", err);
+        }
+        if (openerLethalDecision && openerLethalDecision.wouldKill === true) {
+          openerLethalSkip = true;
+          Logger.log("COMBAT", "Lethal guard: opener already lethal — skipping queue follow-up arm", openerLethalDecision);
+          plannerRecordOpenerRuntimeEvent("queue_skipped_lethal_opener", {
+            slot: open && Number.isFinite(open.skillSlot) ? open.skillSlot : null,
+            predictedDamage: openerLethalDecision.predictedDamage,
+            targetHpCur: openerLethalDecision.targetHpCur,
+            source: openerLethalDecision.source
+          });
+          if (Runtime.autoFarm && Runtime.autoFarm.combatExecution) {
+            Runtime.autoFarm.combatExecution.lastLethalGuardEvent = {
+              at: Date.now(),
+              site: "opener",
+              wouldKill: true,
+              predictedDamage: openerLethalDecision.predictedDamage,
+              targetHpCur: openerLethalDecision.targetHpCur,
+              confidenceFactor: openerLethalDecision.confidenceFactor,
+              requiredPredicted: openerLethalDecision.requiredPredicted,
+              source: openerLethalDecision.source,
+              reason: openerLethalDecision.reason,
+              committedSlot: open && Number.isFinite(open.skillSlot) ? open.skillSlot : null
+            };
+            Runtime.autoFarm.combatExecution.lethalGuardSkips =
+              (Runtime.autoFarm.combatExecution.lethalGuardSkips || 0) + 1;
+          }
+        }
+      }
+      let queuedAction = null;
+      if (!openerLethalSkip && typeof plannerNextCombatQueueAction === "function") {
+        queuedAction = plannerNextCombatQueueAction({
+          afterSlot: open.skillSlot,
+          liveState: readBasicState(),
+          disallowChargeSkills: !!(opts && opts.disallowChargeSkills)
         });
-        plannerRecordOpenerRuntimeEvent("queued_action_armed", {
-          mode: queuedState.mode,
-          slot: queuedState.slot,
-          openerSlot: queuedState.openerSlot
+      }
+      if (!openerLethalSkip && !queuedAction && open && open.queuedAction && open.queuedAction.mode) {
+        queuedAction = open.queuedAction;
+      }
+      if (queuedAction && queuedAction.mode) {
+        const queuedState = armCombatActionQueue(queuedAction, {
+          anchorMode: open.skillSlot != null ? "skill" : "basic",
+          anchorSlot: open.skillSlot,
+          anchorName: open.skillRecord && open.skillRecord.name ? open.skillRecord.name : "Basic Attack",
+          anchorSource: open.skillSlot != null ? "opening_attack" : "opening_basic",
+          openerSlot: open.skillSlot,
+          openerName: open.skillRecord && open.skillRecord.name ? open.skillRecord.name : (open.skillSlot == null ? "Basic Attack" : null),
+          liveState: readBasicState(),
+          postRetargetGuarded: false
+        });
+        if (queuedState) {
+          Logger.log("COMBAT", "Queued combat action armed", {
+            mode: queuedState.mode,
+            slot: queuedState.slot,
+            name: queuedState.name,
+            source: queuedState.source,
+            anchorMode: queuedState.anchorMode,
+            anchorSlot: queuedState.anchorSlot,
+            anchorName: queuedState.anchorName,
+            openerSlot: queuedState.openerSlot,
+            postRetargetGuarded: queuedState.postRetargetGuarded,
+            fromExecutionPlan: queuedState.fromExecutionPlan === true,
+            planStepIndex: queuedState.planStepIndex
+          });
+          plannerRecordOpenerRuntimeEvent("queued_action_armed", {
+            mode: queuedState.mode,
+            slot: queuedState.slot,
+            openerSlot: queuedState.openerSlot,
+            fromExecutionPlan: queuedState.fromExecutionPlan === true
+          });
+        }
+      } else if (advancedPlanForOpener) {
+        Logger.log("COMBAT", "Execution plan exhausted at step 1 — no queue follow-up to arm", {
+          openerSlot: open.skillSlot
         });
       }
     }
@@ -4285,6 +5390,16 @@
 
     Logger.warn("LOOP", "No attack progress detected (enemy count + target HP unchanged for baseline)");
     clearCombatActionQueue("no_progress_detected");
+    if (typeof plannerInvalidateExecutionPlan === "function") {
+      try {
+        plannerInvalidateExecutionPlan("no_progress", {
+          initialSlot: open.skillSlot,
+          triedSlots: triedSlots.slice(0, 8)
+        });
+      } catch (err) {
+        Logger.warn("COMBAT", "plannerInvalidateExecutionPlan failed on no-progress", err);
+      }
+    }
     if (triedSlots.length > 0 || open.skillSlot != null) {
       plannerRecordOpenerRuntimeEvent("ranked_no_progress", {
         initialSlot: open.skillSlot,
@@ -4352,6 +5467,18 @@
       Logger.warn("LOOP", "Cannot start secure loop: enemyCount unavailable");
       return { ok: false, stage: "precheck", reason: "enemy_count_unavailable" };
     }
+    // AI CHANGED: v1.2.1-alpha / v1.2.3-alpha — While inside a basement and OOC, explicitly open the current tile popup
+    //   and refresh the at-end-tile flag. This drives the basement-end champion override in `scoreScannedTile()` AND
+    //   the active-targeting helper. Skipped when the cycle starts in combat (`requireOoc:true`) so the destructive
+    //   popup probe never fires mid-fight. The phase machine's sticky-once-set invariant means a transient probe
+    //   miss never regresses phase. No-op when basement farming is OFF or we are not currently in a basement.
+    if (typeof updateBasementEndTileFlagFromVisibleIcons === "function" && typeof getBasementFarmingEnabled === "function" && getBasementFarmingEnabled() === true) {
+      try {
+        await updateBasementEndTileFlagFromVisibleIcons({ requireOoc: true });
+      } catch (basementEndErr) {
+        Logger.warn("BASEMENT", "updateBasementEndTileFlagFromVisibleIcons threw", basementEndErr);
+      }
+    }
 
     // AI CHANGED: Surface secure-tile preparation as live status.
     setBotStatus("preparing", `secure-tile cycle (enemies=${startState.combat.enemyCount})`);
@@ -4363,11 +5490,9 @@
 
     let current = startState;
     if (typeof startState.combat.enemyCount === "number" && startState.combat.enemyCount > 0) {
-      setBotStatus("preparing", "permanent self-buffs (before prebuff / find-enemy)");
-      await maybeApplyPermanentSelfLongBuffsBeforeFindEnemy(startState);
-      current = readBasicState();
+      // AI CHANGED: Buff system v1.0.5-alpha — longbuffs no longer fire on mob tiles before combat. Only prebuffs (<60s) run here, tile-keyed so retries on the same tile do not re-cast. Safe mode waits for all prebuffs ready inside the pipeline; Fast mode skips any on cooldown.
       setBotStatus("preparing", "new-tile prebuffs (before find-enemy)");
-      await maybeApplySupportPrebuffsOnNewTile(current);
+      await maybeApplyPrebuffsForNewMobTile(startState);
       current = readBasicState();
     }
     let findAttempts = 0;
@@ -4390,6 +5515,19 @@
       // AI CHANGED: Surface find-enemy as live status.
       setBotStatus("finding", `attempt ${findAttempts}/${Config.combat.maxFindEnemyAttempts} (enemies=${current.combat.enemyCount})`);
       Logger.log("LOOP", "Find-enemy attempt", { attempt: findAttempts, enemyCount: current.combat.enemyCount });
+
+      // AI CHANGED: v1.2.0-alpha — If avoidance is OFF for champions or goblins, try to actively target the special icon
+      //   on the current tile before find-enemy. Failures are logged but do not block the standard find-enemy fallback.
+      if (findAttempts === 1) {
+        try {
+          const special = await selectSpecialTileTargetIfDesired();
+          if (special && special.ok && special.clicked) {
+            Logger.log("LOOP", "Active special target selected before find-enemy", { kind: special.kind });
+          }
+        } catch (err) {
+          Logger.warn("LOOP", "selectSpecialTileTargetIfDesired threw", err);
+        }
+      }
 
       const findResult = await clickFindEnemyVerified();
       if (!findResult.ok) {
@@ -4487,6 +5625,36 @@
           `engaging target (remaining=${current.combat.enemyCount}, burst=${attackBursts}/${maxBursts}, find=${findAttempts})`
         );
         const beforeAttack = readBasicState();
+        // AI CHANGED: Planner Part 2.1 — between-burst safe boundary: consult
+        // plannerShouldReplanForExecutionPlan() before committing the next burst.
+        // The previous burst has fully resolved here (await attackUntilProgress
+        // has returned), so this point is NOT mid-cast. If the helper says the
+        // active plan is stale (fingerprint drift, target died, attacker jump,
+        // hp drift, etc.) we invalidate the plan so the next opener pick rebuilds
+        // a fresh sequence rather than continuing a dead plan. Existing retarget
+        // / no-progress invalidation paths still run; this is purely additive.
+        if (typeof plannerGetActiveExecutionPlan === "function") {
+          try {
+            const livePlan = plannerGetActiveExecutionPlan();
+            if (livePlan && livePlan.valid !== false) {
+              const decision = typeof plannerShouldReplanForExecutionPlan === "function"
+                ? plannerShouldReplanForExecutionPlan({ plan: livePlan, liveState: beforeAttack })
+                : null;
+              if (decision && decision.shouldReplan === true && typeof plannerInvalidateExecutionPlan === "function") {
+                Logger.log("LOOP", "Between-burst replan check invalidated active plan", {
+                  reason: decision.reason,
+                  details: decision.details,
+                  planId: livePlan.id,
+                  burst: attackBursts,
+                  findAttempts: findAttempts
+                });
+                plannerInvalidateExecutionPlan(decision.reason, decision.details);
+              }
+            }
+          } catch (replanErr) {
+            Logger.warn("LOOP", "Between-burst plannerShouldReplanForExecutionPlan threw", replanErr);
+          }
+        }
         const attackProgressed = await attackUntilProgress(beforeAttack, {
           useRankedSkillOpener: useRankedBurst,
           firstBurstAfterRetarget: firstBurstAfterRetarget,
@@ -4614,7 +5782,9 @@
               Logger.warn("LOOP", "Target HP not detected after re-find; continuing by enemy-count logic");
             }
           }
-          // AI CHANGED: No post-retarget cancel — game winds default basic; first burst arms queue on Attack cast (applyPostRetargetQueueOpenerPick).
+          // AI CHANGED: Planner Part 2 retarget fix v1.1.3 — Post-retarget policy: the bot will CANCEL the auto-basic and drive the
+          //   planner-selected skill as the real first action of the next burst (see `cancelPostRetargetAutoBasic` in
+          //   `attackUntilProgress` first-burst-after-retarget branch). No more "queue onto game basic" by default.
           current = readBasicState();
           if (typeof current.combat.enemyCount === "number" && current.combat.enemyCount <= 0) {
             Logger.log("LOOP", "Enemies cleared during re-find after kill");
@@ -4654,7 +5824,12 @@
 
     // AI CHANGED: Surface loot as live status (clickLootOrActivateVerified internally handles "no loot" no-op).
     setBotStatus("looting", "collecting loot / activating event");
-    const lootResult = await clickLootOrActivateVerified();
+    // AI CHANGED: v1.2.1-alpha — Real basement automation. The basement collect button looks like a normal
+    //   highlighted loot button (`div.battle-event-button.highlight`) but its text/aria-label matches the
+    //   basement substrings. `maybeApplyBasementTransitionAroundLoot()` snapshots that detection BEFORE the
+    //   click and flips `Runtime.basement.active` AFTER a successful click. When basement farming is OFF this
+    //   is a transparent pass-through — non-basement tiles see exactly the legacy behavior.
+    const lootResult = await maybeApplyBasementTransitionAroundLoot(() => clickLootOrActivateVerified());
     if (!lootResult.ok) {
       Logger.warn("LOOP", "Loot verification failed", lootResult);
       return { ok: false, stage: "loot", result: lootResult };
@@ -4720,11 +5895,26 @@
     };
   }
 
-  // AI CHANGED: AUTO panel combat mode — Fast and Safe both run the full planner (horizon, ranked openers, buffs, queue, episode); Safe adds OOC tile-to-tile HP/MP + short prebuff gates only. Easy = basics only (ranked off).
+  // AI CHANGED: v1.2.0-alpha — Combat mode aliases. Canonical names are "normal" / "hard" / "easy". Legacy "fast"/"safe"
+  //   accepted everywhere so old persisted prefs and old-style API calls still work; they normalize to the canonical name
+  //   on assignment. Mapping: fast → normal, safe → hard.
+  function normalizeCombatModeName(rawValue) {
+    const raw = (rawValue == null ? "normal" : String(rawValue)).toLowerCase().trim();
+    if (raw === "easy") return "easy";
+    if (raw === "fast" || raw === "normal") return "normal";
+    if (raw === "safe" || raw === "hard") return "hard";
+    return "normal";
+  }
+
+  function isCombatModeAlias(rawValue) {
+    const raw = (rawValue == null ? "" : String(rawValue)).toLowerCase().trim();
+    return raw === "fast" || raw === "safe";
+  }
+
+  // AI CHANGED: AUTO combat mode — Normal (formerly Fast) and Hard (formerly Safe) both run the full planner (horizon, ranked
+  // openers, buffs, queue, episode); Hard adds OOC tile-to-tile HP/MP + short prebuff gates only. Easy = basics only (ranked off).
   function applyAutoFarmCombatMode() {
-    const raw =
-      Runtime.autoFarm && Runtime.autoFarm.combatMode ? String(Runtime.autoFarm.combatMode).toLowerCase() : "fast";
-    const mode = raw === "easy" || raw === "safe" || raw === "fast" ? raw : "fast";
+    const mode = normalizeCombatModeName(Runtime.autoFarm && Runtime.autoFarm.combatMode);
     Runtime.autoFarm.combatMode = mode;
     if (mode === "easy") {
       Config.planner.useRankedAttackSkillsInCombat = false;
@@ -4732,25 +5922,35 @@
       return;
     }
     Config.planner.useRankedAttackSkillsInCombat = true;
-    // AI CHANGED: Safe used to throttle ranked to first burst + skillMpReserve 5 — that hid horizon/openers for most bursts; Safe now matches Fast in-fight and differs only on idle explore (see startAutoFarmLoop).
+    // AI CHANGED: Hard used to throttle ranked to first burst + skillMpReserve 5 — that hid horizon/openers for most bursts; Hard now matches Normal in-fight and differs only on idle explore (see startAutoFarmLoop).
     Config.planner.useRankedSkillOnlyFirstBurstAfterFind = false;
     Config.planner.skillMpReserve = 0;
-    if (mode === "fast") {
-      Logger.log("AUTO", "combat mode fast: full planner pipeline every burst; minimal idle gating between tiles");
+    if (mode === "normal") {
+      Logger.log("AUTO", "combat mode normal: full planner pipeline every burst; minimal idle gating between tiles");
     } else {
       Logger.log(
         "AUTO",
-        "combat mode safe: same ranked/horizon/openers as Fast; idle explore still waits HP/MP (combat.safeModeExplore*) + short prebuffs before next tile"
+        "combat mode hard: same ranked/horizon/openers as Normal; idle explore still waits HP/MP (combat.safeModeExplore*) + short prebuffs before next tile"
       );
     }
   }
 
   function setAutoFarmCombatMode(mode) {
-    const raw = String(mode || "fast").toLowerCase();
-    const norm = raw === "easy" || raw === "safe" || raw === "fast" ? raw : "fast";
+    const norm = normalizeCombatModeName(mode);
     Runtime.autoFarm.combatMode = norm;
     applyAutoFarmCombatMode();
-    return { ok: true, combatMode: norm };
+    return { ok: true, combatMode: norm, alias: isCombatModeAlias(mode) ? String(mode).toLowerCase() : null };
+  }
+
+  // AI CHANGED: v1.2.0-alpha — explicit getter for app-facing API. Returns canonical mode + a boolean `easyMode` shortcut.
+  function getAutoFarmCombatMode() {
+    const mode = normalizeCombatModeName(Runtime.autoFarm && Runtime.autoFarm.combatMode);
+    return {
+      mode: mode,
+      isEasy: mode === "easy",
+      isNormal: mode === "normal",
+      isHard: mode === "hard"
+    };
   }
 
   function restorePlannerAfterAutoFarmLoop() {
@@ -4774,14 +5974,19 @@
   function stopAutoFarmLoop() {
     if (!Runtime.autoFarm.running) {
       Logger.log("AUTO", "Auto-farm loop already stopped");
+      // AI CHANGED: v1.2.1-alpha — clear lens latch so the next session re-probes (matches 80-map auto-detect contract).
+      Runtime.autoFarm.lensAutoDetectDone = false;
       return { ok: true, running: false, message: "already_stopped" };
     }
     Runtime.autoFarm.stopRequested = true;
+    Runtime.autoFarm.lensAutoDetectDone = false;
     Logger.log("AUTO", "Stop requested for auto-farm loop");
+    // AI CHANGED: Night mode — cancel pending hourly reload when user stops AUTO so the page does not refresh during manual play.
+    cancelNightModeHourlyReload({ source: "auto_loop_stop" });
     return { ok: true, running: true, message: "stop_requested" };
   }
 
-  // AI CHANGED: AUTO — reload skill cache / DOM-scan bar + hero stats when OOC so ranked planner sees real slots (scanSkills normally blocks while AUTO runs).
+  // AI CHANGED: AUTO — reload skill cache / DOM-scan bar + hero stats when OOC so ranked planner sees real slots (scanSkills normally blocks while AUTO runs). Now latches once per AUTO session (`Runtime.autoFarm.skillEnsureDone`) and is skipped entirely in Easy mode (no ranked planner = no need to read the bar).
   async function ensureSkillsAndHeroDataForAutoFarm(preState, meta) {
     const cfg = Config.farmLoop && Config.farmLoop.ensureSkills;
     if (!cfg || cfg.enabled === false) {
@@ -4792,6 +5997,30 @@
     }
     if (Runtime.autoFarm.stopRequested) {
       return { skipped: true, reason: "stop_requested" };
+    }
+    // AI CHANGED: Easy mode short-circuit — no ranked picks happen, so cache reload + scan provide no value.
+    if (cfg.skipInEasyMode !== false && isAutoFarmEasyMode()) {
+      return { skipped: true, reason: "easy_mode" };
+    }
+    // AI CHANGED: Once-per-session latch — after the first successful run that lands usable skills, skip subsequent cycles. The latch resets in `startAutoFarmLoop`.
+    if (cfg.runOncePerAutoSession !== false && Runtime.autoFarm.skillEnsureDone === true) {
+      const slots0 = Runtime.skills && Array.isArray(Runtime.skills.slots) ? Runtime.skills.slots : [];
+      let usable0 = 0;
+      for (let i0 = 0; i0 < slots0.length; i0++) {
+        const r0 = slots0[i0];
+        if (r0 && r0.kind === "skill" && typeof r0.name === "string" && r0.name.trim() && !r0.parseFailed) {
+          usable0++;
+        }
+      }
+      if (usable0 > 0) {
+        return {
+          skipped: true,
+          reason: "already_ensured",
+          usableSkillRows: usable0,
+          meta: meta || null
+        };
+      }
+      Runtime.autoFarm.skillEnsureDone = false;
     }
     const st =
       preState && preState.combat && typeof preState.combat.enemyCount === "number"
@@ -4843,6 +6072,10 @@
       heroRes = await readHeroCombatStats();
     }
     if (!needDomScan) {
+      // AI CHANGED: Latch the once-per-session flag when the cache reload already produced usable skills — later cycles short-circuit early.
+      if (cfg.runOncePerAutoSession !== false && usableSkills > 0 && Runtime.autoFarm) {
+        Runtime.autoFarm.skillEnsureDone = true;
+      }
       return {
         skipped: false,
         cacheLoaded: cacheLoaded,
@@ -4882,10 +6115,15 @@
         }
       }
     }
+    // AI CHANGED: Latch the once-per-session flag when the DOM scan produced usable skills — later cycles short-circuit early.
+    if (cfg.runOncePerAutoSession !== false && usableAfter > 0 && Runtime.autoFarm) {
+      Runtime.autoFarm.skillEnsureDone = true;
+    }
     Logger.log("AUTO", "ensureSkillsAndHeroDataForAutoFarm", {
       scanned: scannedOk,
       usableAfter: usableAfter,
       lastError: Runtime.skills ? Runtime.skills.lastError : null,
+      ensureDoneLatched: !!(Runtime.autoFarm && Runtime.autoFarm.skillEnsureDone),
       meta: meta || null
     });
     return {
@@ -5023,6 +6261,13 @@
     Runtime.autoFarm.startedAt = Date.now();
     // AI CHANGED: Fresh AUTO session — allow one TEST-like OOC prep pass when `Config.farmLoop.autoLikeTest` is enabled.
     Runtime.autoFarm.autoLikeTestPrepDone = false;
+    // AI CHANGED: Fresh AUTO session — clear the ensure-skills latch so the first OOC cycle revalidates cache/hero, then later cycles skip.
+    Runtime.autoFarm.skillEnsureDone = false;
+    // AI CHANGED: v1.2.1-alpha — Fresh AUTO session — clear lens auto-detect latch so the first SAFE OOC cycle probes once.
+    Runtime.autoFarm.lensAutoDetectDone = false;
+    // AI CHANGED: Buff system v1.0.5-alpha — fresh session resets per-tile prebuff gate and the first-OOC-pass flag for longbuffs. `longSelfTracked` (assumed expiry map) is intentionally NOT cleared — buffs from before AUTO OFF are still likely active and we should not force redundant immediate recasts.
+    resetSupportBuffPrebuffTileGate("auto_session_start");
+    resetSupportBuffLongbuffSessionState("auto_session_start");
     Runtime.autoFarm.reliability.noProgressStreak = 0;
     // AI CHANGED: Apply Fast/Safe/Easy before snapshot — planner localStorage can leave useRankedAttackSkillsInCombat false while combat mode is Fast/Safe; old order restored that false after every AUTO OFF and looked like "ON skips ranked until TEST".
     applyAutoFarmCombatMode();
@@ -5035,6 +6280,8 @@
     resetAutoFarmHealthRuntime(Runtime.autoFarm.startedAt);
     resetAutoFarmRecoveryRuntime();
     clearPersistedAutoRecoveryResume();
+    // AI CHANGED: Night mode — arm the hourly reload as soon as AUTO is up so unattended sessions self-refresh.
+    scheduleNightModeHourlyReloadIfNeeded({ source: "auto_loop_start" });
     scheduleNextAutoChatSpammer("auto_loop_start", { nowMs: Runtime.autoFarm.startedAt });
     let exitReason = "unknown";
 
@@ -5101,6 +6348,17 @@
       if (Runtime.autoFarm.stopRequested) {
         exitReason = "user_stop";
         break;
+      }
+      // AI CHANGED: v1.2.1-alpha — Auto lens detection. Runs at MOST once per AUTO session on a SAFE OOC boundary
+      //   (no enemies, healthy session, not moving). Self-gates internally — calling it every cycle is cheap and the
+      //   helper short-circuits when the latch is already set. The destructive probe is bypassed when manual override
+      //   is set (`setLensStateOverride`).
+      if (typeof maybeAutoDetectLensIfNeeded === "function" && Runtime.autoFarm.lensAutoDetectDone === false) {
+        try {
+          await maybeAutoDetectLensIfNeeded({ reason: "auto_loop_pre_cycle" });
+        } catch (lensErr) {
+          Logger.warn("LENS", "maybeAutoDetectLensIfNeeded threw", lensErr);
+        }
       }
       const cycleResult = await runPreparedSecureCycle();
       Runtime.autoFarm.lastResult = cycleResult;
@@ -5222,12 +6480,11 @@
           // AI CHANGED: Renew long self-support buffs on empty tiles before heal gate / explore (OOC only).
           await maybeMaintainLongSelfSupportBuffsOutOfCombat(readBasicState());
           await tryUseOutOfCombatIdleLowManaPotion(readBasicState());
-          const modeIdle =
-            Runtime.autoFarm && Runtime.autoFarm.combatMode ? String(Runtime.autoFarm.combatMode).toLowerCase() : "fast";
-          if (modeIdle === "safe") {
+          const modeIdle = normalizeCombatModeName(Runtime.autoFarm && Runtime.autoFarm.combatMode);
+          if (modeIdle === "hard") {
             const safeGate = await waitForSafeModeExploreResourcesAndShortPrebuffs();
             if (safeGate && safeGate.ok === false && safeGate.reason === "safe_mode_gate_timeout") {
-              Logger.warn("AUTO", "Safe mode tile gate timed out — continuing toward explore", safeGate);
+              Logger.warn("AUTO", "Hard mode tile gate timed out — continuing toward explore", safeGate);
             }
           }
           // AI CHANGED: enemyCount===0 — top off to outOfCombatHealWaitHpPct with HP potions + passive regen before exploreByScan.

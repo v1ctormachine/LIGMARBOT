@@ -5,11 +5,67 @@
     boot: {
       warnNonUnityDevicePixelRatio: true
     },
+    // AI CHANGED: v1.2.0-alpha — DESKTOP APP CONTROL SURFACE.
+    //   The legacy Tampermonkey in-page control panel is OFF by default — the desktop companion app drives the bot through
+    //   `window.ligmarBot.*`. Operators can still mount the legacy panel by setting `Config.bootGui.autoMountPanel = true`
+    //   BEFORE the script runs, or by calling `ligmarBot.createControlPanel()` manually from the console.
+    bootGui: {
+      autoMountPanel: false
+    },
+    // AI CHANGED: v1.2.0-alpha — Toggleable exploration policy. Avoidance defaults preserve previous behavior
+    //   (champions hard-avoided, goblins allowed). When `avoidChampions === false` the bot ACTIVELY targets champions on
+    //   the current tile (see `selectSpecialTileTargetIfDesired` in 85-combat.js + ranked-up scoring in 80-map.js).
+    exploration: {
+      avoidChampions: true,
+      avoidGoblins: false,
+      // Score boost given to a tile that contains a non-avoided champion (overrides loot-tier base when present).
+      championTargetScoreBase: 950000,
+      // Score boost given to a tile that contains a non-avoided goblin event (above current 350000 default to make the
+      //  bot prefer goblins when they aren't avoided AND no higher-tier loot is on the same ring).
+      goblinTargetScoreBase: 850000
+    },
+    // AI CHANGED: v1.2.0-alpha — Vision / lens detection. Lens is an item that adds +1 vision range so the second ring
+    //   becomes click-scannable and we can pixel-scan the third ring for yellow/champion-red. Detection is best-effort and
+    //   tries one second-ring tile click; if the game accepts the move (coords change to a 2-step delta) we treat the lens
+    //   as equipped. The runtime-side override `setLensStateOverride(true|false|null)` lets operators force the assumption.
+    vision: {
+      lensProbeEnabled: true,
+      lensProbeMaxAttempts: 1,
+      lensProbeSettleMs: 240,
+      // Number of CSS pixels we expect coords delta to register before the game accepts a 2-step move. Pure heuristic;
+      //  the actual signal is `Runtime.exploration.lastKnownCoords` changing across the probe.
+      lensProbeCoordsCheckSettleMs: 600
+    },
+    // AI CHANGED: v1.2.0-alpha — Basement farming. Toggleable forward-objective dungeon mode. When the bot is inside a
+    //   basement, the previous tile direction is heavily penalized so the bot moves forward toward the end. The end-tile
+    //   champion override allows the bot to engage a champion at the basement end EVEN WHEN `avoidChampions === true`
+    //   globally (basement-end-specific, not a global avoidance bypass).
+    basement: {
+      enabled: false,
+      // Backtrack penalty applied during scoreScannedTile to the direction matching the last entry/move-from direction.
+      backtrackPenalty: 800000,
+      // Selectors reused for entrance/exit collect-button click. The current loot/activate button highlight pattern (battle-event-button.highlight)
+      //  is sufficient for both "enter basement via collect" AND "exit via the same ladder".
+      collectButtonSelector: "div.battle-event-button.highlight",
+      endChampionOverride: true,
+      // Heuristic: a basement is detected when a battle-event-button.highlight exists AND its accessible name includes one of these substrings.
+      entryDetectSubstrings: ["basement", "ladder", "stairs", "stair", "cellar", "underground", "подвал", "лестница"],
+      // AI CHANGED: v1.2.2-alpha — Phase state machine knobs.
+      // After the bot transitions to phase "atEnd" (champion icon seen on current tile), the loot wrapper SUPPRESSES
+      //   ladder/exit clicks until the basement objective is complete. Completion is signaled by a successful non-ladder
+      //   loot (knowledge crystal) at the end tile. Some basements may not have a separate knowledge button — they may
+      //   only have the ladder. To avoid getting stuck, the wrapper falls through to phase "complete" after this many
+      //   suppressed ladder cycles at atEnd. Default 2 (one suppressed cycle to confirm combat is fully cleared, then
+      //   on the next cycle promote to complete and click the ladder = exit).
+      exitSuppressedAtEndPromoteThreshold: 2
+    },
     // AI CHANGED: Added action verification timing config for click+confirm flows.
     verification: {
       // AI CHANGED: Tighter generic verify polling (retarget / target-acquired / find-enemy caps).
       pollMs: 25,
       timeoutMs: 1250,
+      // AI CHANGED: Audit fix #11 — throttle the per-poll health re-evaluation so 25 ms polls don't burn CPU on `readBasicState` + ~15 selectors every tick. Predicate itself still runs every `pollMs`.
+      healthEvalThrottleMs: 250,
       // AI CHANGED: Loot/shrine completion — require this long with no highlight loot button and no busy battle-status text.
       lootSettleStableMs: 400,
       // AI CHANGED: Longer cap than generic verify; altar/shrine animations can run several seconds.
@@ -80,6 +136,20 @@
       chargingCancelHintScanRoot: "app-game",
       // AI CHANGED: Legacy-named retarget guard — after a successful re-target in a surviving pull, skip charge skills until the first verified progress on that new target.
       disallowChargeSkillFirstBurstAfterRetarget: true,
+      // AI CHANGED: Planner Part 2 retarget fix v1.1.3 — POST-RETARGET POLICY KNOBS.
+      //   `postRetargetCancelAutoBasic`             : when true (default), cancel the game's auto-started basic immediately after a
+      //                                                successful retarget (Find Enemy / attackers popup) via the map-toggle/canvas
+      //                                                gap "empty UI" click, then drive the planner-selected skill as the real first
+      //                                                opener. Set to false to disable the cancel and revert to whatever applies for
+      //                                                the first burst (the legacy queue-on-game-basic path is OPT-IN via the next
+      //                                                knob below).
+      //   `postRetargetCancelSettleMs`              : tiny settle after the cancel click so the game absorbs the cancel before the
+      //                                                planner opener click registers (60ms default; below 0 is treated as 0).
+      //   `postRetargetQueueOnGameBasicFallback`    : OPT-IN. When true AND the cancel could not be dispatched, fall back to the
+      //                                                legacy "queue planner skill onto game basic cast bar" path. Default false.
+      postRetargetCancelAutoBasic: true,
+      postRetargetCancelSettleMs: 60,
+      postRetargetQueueOnGameBasicFallback: false,
       // AI CHANGED: Runtime queue v1 — pre-click one non-charge/basic follow-up action when safe.
       combatQueueEnabled: true,
       // AI CHANGED: Legacy delay knob kept at 0 — queue trigger is now progress-bar-name driven instead of time driven.
@@ -97,6 +167,14 @@
       useCombatPotions: true,
       // AI CHANGED: Potion cooldown reported by the user; used as a safety mirror on top of DOM cooldown hints.
       combatPotionCooldownMs: 15000,
+      // AI CHANGED: Audit fix #5 — when client-side cooldown timer still says "cooling", skip the candidate even if the bar slot CD overlay is not visible (DOM lag / brief overlay flicker).
+      combatPotionEnforceClientCooldown: true,
+      // AI CHANGED: Audit fix #3 — fraction of max HP a target's `cur` must jump up by to count as "fresh target = progress" in `hasCombatProgressSince` (catches same-maxHP target swap that previously stalled the loop).
+      progressTargetSwapJumpFrac: 0.25,
+      // AI CHANGED: Audit fix #9 — only flag HP-spike safety buff when player is already below this fraction of max HP at the spike sample (rejects false spikes from misreads or potion HoT ticks while the player is near full).
+      safetyHpSpikeRequireHpBelowFrac: 0.85,
+      // AI CHANGED: Audit fix #9 — minimum gap between consecutive HP-spike safety buff fires; rejects rapid re-flagging when one cast is already on cooldown / settling.
+      safetyHpSpikeCooldownMs: 4000,
       // AI CHANGED: Treat HP/MP potion cooldown as shared unless proven otherwise, so the bot does not chain impossible consumables.
       combatPotionSharedCooldown: true,
       // AI CHANGED: Heal-over-time potions in the current build run for 10s; used as a fallback when the tooltip omits duration.
@@ -159,10 +237,11 @@
       },
       prebuff: {
         enabled: true,
-        // AI CHANGED: Long buffs (e.g. 900s) on new tile before find-enemy; then shorter buffs, longest-short first.
+        // AI CHANGED: Buff system v1.0.5-alpha — `prebuff` now means buffs with duration < `longDurationMinSec` (default <60s); cast tile-keyed on a newly entered mob tile.
         maxSkillsTotal: 10,
-        prebuffLongDurationMinSec: 120,
-        shortDurationMaxSec: 120,
+        // AI CHANGED: Safe mode — bounded wait for ALL prebuff slots to come off cooldown before casting longest-first on the new mob tile.
+        safeModeWaitAllReadyMs: 60000,
+        safeModeWaitPollMs: 400,
         // AI CHANGED: Substring blocklist; Windy Dome and other emergency barriers also excluded via safety.skillNames + DB/heuristic (see 85-combat).
         reserveSafetyNameSubstrings: ["windy dome"],
         treatAsBuffDespiteAttackNameSubstrings: ["enchanted arrow", "hunters tread", "hunter's tread"],
@@ -179,12 +258,22 @@
         spikeSampleMaxDtSec: 1.5,
         minSpacingMs: 45000
       },
-      // AI CHANGED: After prebuff/permanent-buff bar clicks, wait until cooldown UI appears (or timeout) so the next action does not cancel the cast.
+      // AI CHANGED: Buff system v1.0.5-alpha — strong support-cast resolution wait.
+      // Phases: minSettleMs → APPEAR (cast bar by name match / any non-fraction bar text / slot CD overlay; capped by castAppearTimeoutMs) → FINISH (wait for cast bar to clear up to max(maxWaitMs, castTimeMs+safetyBufferMs)) → postSettleMs.
+      // If no cast bar appears at all but castTimeSec is known, fall back to sleeping castTimeMs+safetyBufferMs (clamped). The previous "cooldown-visible only" check was unreliable and let next actions cancel casts.
       postBuffCastCooldownWait: {
         enabled: true,
         maxWaitMs: 4500,
         pollMs: 80,
-        minSettleMs: 100
+        minSettleMs: 100,
+        // AI CHANGED: Phase B — how long to wait for the cast bar or slot CD overlay to first appear after the click.
+        castAppearTimeoutMs: 900,
+        // AI CHANGED: Phase D — small post-cast settle before allowing movement/find-enemy/next click.
+        postSettleMs: 140,
+        // AI CHANGED: Extra wait time on top of parsed castTimeSec for cast-time-based fallback (network jitter + animation tail).
+        safetyBufferMs: 350,
+        // AI CHANGED: Floor wait when castTimeSec is missing / zero ("instant" buffs still need a small settle before the next click).
+        instantFallbackMs: 350
       },
       // AI CHANGED: After a support buff click, remember parsed/DB duration; skip re-casts until assumed remaining ≤ recastMinRemainingSec (e.g. 900s buff → renew only in last 30s). Applies to new-tile prebuff, Safe short prebuff, and permanent self when enabled. Set enabled:false to restore old prebuff behavior (bar CD only). Early dispel: `ligmarBot.clearSupportBuffAssumedDurationTracking()`.
       buffDurationTracking: {
@@ -193,8 +282,13 @@
       }
     },
     chat: {
-      // AI CHANGED: AUTO ON mode — periodically send one random local promocode line when the loop is at a safe boundary.
-      autoLocalPromocodeSpammerEnabled: true,
+      // AI CHANGED: v1.2.0-alpha — Auto-spammer is OFF by default. The desktop app must explicitly enable it with
+      //   `setAutoChatEnabled(true)` after populating user messages via `setAutoChatMessages([...])`. The old built-in
+      //   message pool is no longer the runtime model: when `useUserMessages === true` (the new default) the spammer
+      //   only sends from `Runtime.autoFarm.chatSpammer.userMessages`. If the user list is empty the spammer skips with
+      //   `reason: "no_user_messages"`. Set `useUserMessages = false` to revert to the legacy time-of-day banks below.
+      autoLocalPromocodeSpammerEnabled: false,
+      useUserMessages: true,
       // AI CHANGED: Randomized delay window between local chat sends (5–15 minutes local clock).
       messageIntervalMinMs: 5 * 60 * 1000,
       messageIntervalMaxMs: 15 * 60 * 1000,
@@ -267,6 +361,17 @@
       // AI CHANGED: Persist refresh-resume intent across page reloads.
       resumeStorageKey: "ligmarbot.autoRecoveryResume.v1"
     },
+    // AI CHANGED: Night mode — unattended long-run reliability. Hourly hard-refresh + auto-start AUTO on boot.
+    nightMode: {
+      // AI CHANGED: Page is reloaded this often when night mode is on AND AUTO is running.
+      hourlyReloadMs: 3600000,
+      // AI CHANGED: Refuse to reload mid-session if AUTO was stopped manually; reload only protects long unattended farms.
+      reloadOnlyWhenAutoFarmRunning: true,
+      // AI CHANGED: Storage key for the night-mode preference (separate from autoFarmUi blob is unnecessary — kept inside ligmarbot.autoFarmUi.v1).
+      // Boot autostart reuses the recovery resume token shape with a distinct reason for logs.
+      bootAutostartReason: "night_mode_boot_autostart",
+      hourlyReloadReason: "night_mode_hourly_refresh"
+    },
     // AI CHANGED: Phase C4 -- paper DPS (hero sheet); verify against Phase C2 observer on real targets.
     planner: {
       // When crit damage % is missing from hero stats, use this crit vs non-crit damage ratio (2 = double).
@@ -278,6 +383,14 @@
       logPlannerAfterSecureTile: false,
       // AI CHANGED: Combat readiness pack — ranked combat is now the default production path for the current build.
       useRankedAttackSkillsInCombat: true,
+      // AI CHANGED: Planner Part 2 retarget fix v1.1.3 — LETHAL GUARD CONFIDENCE FACTOR.
+      //   Multiplier applied to current target HP when deciding whether the just-fired action will, by itself, kill the target.
+      //   The action is considered "already lethal" only when predictedDamage >= targetHpCur * lethalGuardConfidenceFactor.
+      //   A factor > 1 introduces an overkill margin so we strongly prefer FALSE NEGATIVES (still queue the follow-up "just in
+      //   case") over FALSE POSITIVES (skip a needed follow-up and the target survives). 1.3 (≈ require 30% headroom) is the
+      //   conservative production default. Lower this only if you observe lots of unnecessary Sniper-Shot-after-already-lethal
+      //   queueings; raise it if you ever observe missed kills due to a skipped follow-up.
+      lethalGuardConfidenceFactor: 1.3,
       // AI CHANGED: Absolute MP floor: cast only if curMp >= manaCost + skillMpReserve (skip skill if MP unread).
       skillMpReserve: 5,
       // AI CHANGED: Phase C4 slice 9 — only first attack burst after each find-enemy uses ranked skill; later bursts basic-only (saves MP/CD on multi-mob pulls).
@@ -423,6 +536,123 @@
       chargeSkillHoldIncomingPressureEnabled: true,
       // AI CHANGED: Basic-DPS units per second of hold per unit incomingPressure (0.07 ≈ mild nudge when bleeding; 0 to disable math while keeping enable flag).
       chargeSkillHoldIncomingPressurePenaltyInBasicDps: 0.07,
+      // AI CHANGED: Planner rewrite v1 — short-sequence planner foundation (TTK-first, debuff/active-attacker aware). When enabled,
+      // plannerPickSkillOpeningPick first compares 2–5-action sequences via a bounded beam search; falls back to legacy openerHorizonSim if
+      // the new planner cannot produce a usable plan (e.g. no skills, missing paper DPS, sequence search empty).
+      useSequencePlannerFoundation: true,
+      sequencePlanner: {
+        enabled: true,
+        // AI CHANGED: Max actions in a planned short sequence (basic + skills). 1 = opener only; 5 = setup → burst → finisher window.
+        maxActions: 5,
+        // AI CHANGED: Max simulated time in seconds before sequence search stops expanding.
+        maxHorizonSec: 6,
+        // AI CHANGED: Beam width — top-K sequences kept at each expansion depth (higher = more thorough, slower).
+        beamWidth: 12,
+        // AI CHANGED: Stop sequence expansion when simulator predicts target HP <= 0.
+        pruneIfTargetDead: true,
+        // AI CHANGED: Assumed basic-swing interval (ms) when hero attackSpeed is unknown (paper estimateBasicAttackDps fallback).
+        basicSwingIntervalMsFallback: 1000,
+        // AI CHANGED: When true, simulator includes interleaved basic swings between skill casts (only between actions, never DURING a cast).
+        simBasicSwingsBetweenActions: true,
+        // AI CHANGED: When true, charge skills also generate a partial-release candidate at this fraction (Sniper Shot partial release).
+        chargePartialReleaseFraction: 0.55,
+        // AI CHANGED: Survival floor — if simulated player HP/maxHp ratio drops below this during sequence, line is heavily penalized.
+        survivalMinHpRatio: 0.18,
+        // AI CHANGED: Penalty (in TTK-equivalent seconds) added per breach of survival floor.
+        survivalBreachPenaltySec: 8,
+        // AI CHANGED: Tie-break weights (smaller = less influence). Used only when TTK is comparable across candidate sequences.
+        tieBreakHpLossPerHpMaxSec: 1.5,
+        tieBreakMpWasteCoefSec: 0.0008,
+        tieBreakTempoCoefSec: 0.05,
+        // AI CHANGED: Set true to log planner sequence search summary at debug level (no-op for combat behavior).
+        debugLog: false,
+        // AI CHANGED: Generic role nudges in TTK-equivalent seconds. Class-agnostic: these encode skill-own semantics that the simulator cannot
+        // see from the parsed effects alone (e.g. "magic resist shred raises damage of follow-up magic skills inside its debuff window").
+        // They are NOT combo recipes — they are intrinsic skill semantics.
+        archerSemantics: {
+          // role: finisher (charge skill — penalize full-charge under pressure, prefer partial release; reward use when target near death)
+          sniperShot: {
+            role: "finisher",
+            chargeFullPressurePenaltySec: 1.6,
+            partialReleasePreferredUnderPressure: true,
+            finisherTargetHpPctMax: 0.45,
+            finisherBonusSec: 0.8,
+            // AI CHANGED: Planner tactical tuning v1.1.2 — extra finisher bonus when target HP is *very* low (lethal window).
+            //   When pre-snapshot target HP fraction is below `finisherLowHpPctMax`, add `finisherLowHpExtraBonusSec` on top of the base
+            //   finisher bonus so a near-death partial-release Sniper Shot wins over a slower follow-up line.
+            finisherLowHpPctMax: 0.25,
+            finisherLowHpExtraBonusSec: 0.4,
+            // AI CHANGED: Planner tactical tuning v1.1.2 — penalize Sniper Shot full-charge OPENER when target is full HP (>=80%) regardless
+            //   of pressure. The legacy `chargeFullPressurePenaltySec` only fires under pressure; this knob targets the second observed bad
+            //   pattern: full-charge as a calm opener that wastes its finisher value and lengthens TTK vs a normal skill rotation.
+            fullChargeFullHpOpenerPenaltySec: 1.0,
+            fullChargeFullHpOpenerThreshold: 0.8
+          },
+          // role: shred_magic_resist (debuff that buffs follow-up magic damage during its window)
+          piercingStrike: {
+            role: "shred_magic_resist",
+            debuffDurationSec: 15,
+            // AI CHANGED: simulator multiplies magic skill damage by 1+followUpMagicDamageBoost while shred is active.
+            followUpMagicDamageBoost: 0.2,
+            // AI CHANGED: Planner tactical tuning v1.1.2 — sequence-level setup valuation. When a Piercing Strike step is FOLLOWED by a
+            //   magic-typed skill within the shred window (15s by default), give a small setup bonus on top of the natural damage boost
+            //   (the shred bonus already lowers TTK; this extra nudge values the *intent* of setup play). When NO magic follow-up appears
+            //   in the same sequence within the shred window, apply a small "wasted setup" penalty so the planner does not pick Piercing
+            //   Strike just to fill a slot when nothing later capitalizes on the magic-resist debuff.
+            setupBonusWithMagicFollowUpSec: 0.6,
+            wastedSetupPenaltySec: 0.5
+          },
+          // role: tempo (slow buys time and reduces incoming damage)
+          iceShard: {
+            role: "tempo_slow",
+            slowDurationSec: 5,
+            // AI CHANGED: simulator reduces incoming HP loss by this fraction while slow is active on target.
+            incomingDamageReductionFraction: 0.3,
+            // AI CHANGED: Planner tactical tuning v1.1.2 — scoring nudge so Ice Shard wins as opener when tempo/danger reduction matters.
+            //   Triggered when the simulated effective active-attacker count >= `tempoBonusAttackerThreshold` OR pressure >= 1 at the moment
+            //   of cast. No calm penalty — Ice Shard is a real damage skill, so it should not be punished for being chosen when calm; it just
+            //   doesn't get the tempo bonus there.
+            tempoBonusUnderPressureSec: 0.9,
+            tempoBonusAttackerThreshold: 2
+          },
+          // role: survival_tempo (target loses focus, cannot attack hero)
+          distractingShot: {
+            role: "survival_tempo_distract",
+            distractDurationSec: 6,
+            calmOpenerPenaltySec: 1.4,
+            pressureReliefBonusSec: 1.2,
+            // AI CHANGED: simulator removes one active attacker from the pressure model while distract is active on the targeted attacker.
+            activeAttackerReliefCount: 1,
+            // AI CHANGED: Planner tactical tuning v1.1.2 — extra penalty when Distracting Shot is picked but ALL of the following hold:
+            //   calm opener moment (elapsedSec === 0, single attacker, low pressure) AND target HP is full / fresh. This sharpens the
+            //   existing calmOpenerPenaltySec without affecting mid-sequence distract picks under pressure.
+            calmOpenerFullTargetExtraPenaltySec: 0.6,
+            calmOpenerFullTargetHpPctMin: 0.85
+          },
+          // role: aoe (true cleave, mana-heavy)
+          fanVolley: {
+            role: "aoe",
+            aoeFactor: 2,
+            mpHeavyPenaltySec: 0.4,
+            singleTargetMisusePenaltySec: 1.8,
+            // AI CHANGED: Planner tactical tuning v1.1.2 — scale mp-heavy penalty by the fraction of current MP that the cast actually
+            //   commits. When `skill.manaCost / pre.mpMax >= mpFractionPenaltyThreshold` we add `mpFractionHighPenaltySec`. This makes Fan
+            //   Volley meaningfully *worse* when it eats a big chunk of the mana pool with no real multi-threat justification.
+            mpFractionPenaltyThreshold: 0.4,
+            mpFractionHighPenaltySec: 0.7,
+            // AI CHANGED: Planner tactical tuning v1.1.2 — bonus when Fan Volley fires into genuine multi-threat (>=2 enemies AND >=2 active
+            //   attackers at moment of cast). Counterweights the existing penalties so Fan Volley wins in true cleave situations.
+            trueMultiThreatBonusSec: 1.0,
+            trueMultiThreatAttackerThreshold: 2,
+            trueMultiThreatEnemyThreshold: 2
+          },
+          // role: defensive_utility (absorb shield — not generic damage)
+          windyDome: {
+            role: "defensive_utility",
+            preferUnderPressure: true
+          }
+        }
+      },
       // AI CHANGED: When true, attack-skill rank order uses conception first (master/scanned role model) instead of parsed effect magnitudes.
       skillRankUseConception: true,
       // AI CHANGED: Conception-first opener gate — allow horizon tie-break only within this score distance from best conception score.
@@ -501,9 +731,13 @@
       // AI CHANGED: Reliability hardening — if repeated combat no-progress failures happen, pause before next cycle.
       noProgressCooldownThreshold: 2,
       noProgressCooldownMs: 5000,
-      // AI CHANGED: AUTO — each OOC cycle reloads skill cache; DOM scanSkills when bar empty / cache invalid so planner sees skills without manual TEST.
+      // AI CHANGED: AUTO — first OOC cycles try to land usable skills (cache reload + scan when blind); once landed, `Runtime.autoFarm.skillEnsureDone` latches and later cycles skip the helper. Easy mode skips it entirely (no ranked planner = no need to read the bar).
       ensureSkills: {
         enabled: true,
+        // AI CHANGED: When true, the helper short-circuits after the first successful run per AUTO session (set on usable skills > 0). Set to false for old "every-cycle" behavior.
+        runOncePerAutoSession: true,
+        // AI CHANGED: Easy mode has no ranked planner picks — there is nothing for ensureSkills to feed; skip the helper entirely.
+        skipInEasyMode: true,
         loadCacheEveryCycle: true,
         loadHeroStatsCacheEveryCycle: true,
         scanWhenLikelyBlind: true,
@@ -565,7 +799,19 @@
         // Keeping 0.005 (0.5%) -- with looser tolerance + hex mask, real-die ratios should rise
         // comfortably above this. False-positive risk stays low because reaching 0.5% needs ~4-5
         // yellow-ish pixels clustered in the hex (random terrain almost never does that).
-        minMatchRatio: 0.005
+        minMatchRatio: 0.005,
+        // AI CHANGED: v1.2.0-alpha — champion red marker (#aa4040). Used by `scanSecondRingForChampion()` ONLY when
+        //  `Config.exploration.avoidChampions === false`. Tolerance defaults to the same 75 used by yellow.
+        championRedColor: { r: 0xaa, g: 0x40, b: 0x40 },
+        championRedTolerance: 75,
+        championRedMinMatchRatio: 0.005
+      },
+      // AI CHANGED: v1.2.0-alpha — third-ring pixel scan offsets + colors. Only consulted when `Runtime.vision.hasLens === true`
+      //   (lens equipped → +1 vision range → 2-ring becomes click-scannable AND 3-ring becomes pixel-scannable).
+      thirdRing: {
+        sampleHalfSizePx: 16,
+        useHexMask: true,
+        minMatchRatio: 0.004
       }
     },
     // AI CHANGED: Phase C1 -- hero profile / combat stats overlay (console API opens UI and parses rows).
@@ -653,6 +899,13 @@
       attackersPopupList: "div.member-list",
       attackersPopupCard: "app-battle-member-card.battle-member",
       attackersPopupCardName: ".info-top",
+      // AI CHANGED: Planner rewrite — active-attacker counter is the red badge inside the attackers button (closed popup) or member-list card count (open popup).
+      attackersBadgeValue: "app-button-icon.button-attackers .counter, app-button-icon.button-attackers .badge-value, app-button-icon.button-attackers span",
+      // AI CHANGED: Planner rewrite — best-effort visible target effects: profile-effects > app-effect-card with .effect-time and inner icon.
+      targetEffectsRoot: ".profile-effects",
+      targetEffectCard: "app-effect-card",
+      targetEffectTime: ".effect-time",
+      targetEffectIcon: "app-icon, img",
       // AI CHANGED: AUTO chat spammer — open battle log chat, type into the chat input, switch to Local, send, then close dialog.
       chatOpenButton: "div.battle-logs",
       chatInput: "app-input input[placeholder='Message...']",
@@ -693,6 +946,8 @@
       poorConnection: '[data-test="poor-connection"]',
       // AI CHANGED: Phase C0 -- action-bar / skill description popup selectors.
       actionBar: "app-battle-action-bar",
+      // AI CHANGED: Game stable bar — skills are app-skill-button siblings of app-action-button (attack/potions/empty).
+      actionBarSlot: "app-action-button, app-skill-button",
       actionButton: "app-battle-action-bar app-action-button",
       // The popup root that appears after a long-press on a skill / potion / basic-attack slot.
       skillPopup: "app-action-info",

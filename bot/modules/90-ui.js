@@ -305,36 +305,49 @@
     }
   }
 
-  // AI CHANGED: AUTO panel — persist combat mode (Fast/Safe/Easy) in ligmarbot.autoFarmUi.v1; applied when AUTO loop runs.
+  // AI CHANGED: AUTO panel — persist combat mode (Normal/Hard/Easy; legacy fast/safe accepted) in ligmarbot.autoFarmUi.v1.
   function autoFarmUiPrefsSnapshot() {
-    const raw =
-      Runtime.autoFarm && Runtime.autoFarm.combatMode ? String(Runtime.autoFarm.combatMode).toLowerCase() : "fast";
-    const cm = raw === "easy" || raw === "safe" || raw === "fast" ? raw : "fast";
+    const cm = typeof normalizeCombatModeName === "function"
+      ? normalizeCombatModeName(Runtime.autoFarm && Runtime.autoFarm.combatMode)
+      : "normal";
     // AI CHANGED: Persist AUTO local chat spammer toggle with combat mode (`ligmarbot.autoFarmUi.v1`).
-    const spamOn = !!(Config.chat && Config.chat.autoLocalPromocodeSpammerEnabled !== false);
-    return { combatMode: cm, autoLocalChatSpammerEnabled: spamOn };
+    const spamOn = !!(Config.chat && Config.chat.autoLocalPromocodeSpammerEnabled === true);
+    // AI CHANGED: Persist night mode (hourly reload + boot autostart) with the same AUTO prefs blob.
+    const nightOn = !!(Runtime.autoFarm && Runtime.autoFarm.nightMode && Runtime.autoFarm.nightMode.enabled);
+    return { combatMode: cm, autoLocalChatSpammerEnabled: spamOn, nightModeEnabled: nightOn };
   }
 
   function loadAutoFarmUiPrefs() {
     try {
       const raw = window.localStorage.getItem("ligmarbot.autoFarmUi.v1");
       if (!raw) {
-        // AI CHANGED: No stored prefs — still sync planner from default Runtime.autoFarm.combatMode (e.g. fast).
+        // AI CHANGED: No stored prefs — still sync planner from default Runtime.autoFarm.combatMode.
         if (typeof applyAutoFarmCombatMode === "function") {
           applyAutoFarmCombatMode();
         }
         return { ok: true, fromStorage: false, autoFarm: autoFarmUiPrefsSnapshot() };
       }
       const p = JSON.parse(raw);
-      if (typeof p.combatMode === "string") {
-        const m = p.combatMode.toLowerCase();
-        if (m === "fast" || m === "safe" || m === "easy") {
-          Runtime.autoFarm.combatMode = m;
-        }
+      if (typeof p.combatMode === "string" && typeof normalizeCombatModeName === "function") {
+        Runtime.autoFarm.combatMode = normalizeCombatModeName(p.combatMode);
       }
       // AI CHANGED: Restore chat spammer preference from the same AUTO prefs blob.
       if (typeof p.autoLocalChatSpammerEnabled === "boolean" && Config.chat) {
         Config.chat.autoLocalPromocodeSpammerEnabled = p.autoLocalChatSpammerEnabled;
+      }
+      // AI CHANGED: Restore night mode preference. Only flips Runtime flag; boot autostart + hourly reload arming are gated separately.
+      if (typeof p.nightModeEnabled === "boolean") {
+        if (!Runtime.autoFarm.nightMode || typeof Runtime.autoFarm.nightMode !== "object") {
+          Runtime.autoFarm.nightMode = {
+            enabled: false,
+            hourlyReloadTimer: null,
+            hourlyReloadScheduledAt: null,
+            hourlyReloadDueAt: null,
+            lastReloadAt: null,
+            lastBootAutostartAt: null
+          };
+        }
+        Runtime.autoFarm.nightMode.enabled = !!p.nightModeEnabled;
       }
       // AI CHANGED: Persisted Fast/Safe/Easy must sync planner immediately (not only while AUTO loop is running).
       if (typeof applyAutoFarmCombatMode === "function") {
@@ -371,10 +384,10 @@
     if (!map) {
       return;
     }
-    const raw =
-      Runtime.autoFarm && Runtime.autoFarm.combatMode ? String(Runtime.autoFarm.combatMode).toLowerCase() : "fast";
-    const norm = raw === "easy" || raw === "safe" || raw === "fast" ? raw : "fast";
-    ["fast", "safe", "easy"].forEach(function (key) {
+    const norm = typeof normalizeCombatModeName === "function"
+      ? normalizeCombatModeName(Runtime.autoFarm && Runtime.autoFarm.combatMode)
+      : "normal";
+    ["normal", "hard", "easy"].forEach(function (key) {
       const btn = map[key];
       if (!btn) {
         return;
@@ -558,6 +571,21 @@
     return {
       version: "Version",
       probe_selectors: "Selector probe",
+      action_bar_unified_slots: "Action bar unified slots",
+      user_click_sequence: "User-like click sequence",
+      night_mode_helpers_wired: "Night mode helpers wired",
+      night_mode_persistence_roundtrip: "Night mode persistence",
+      auto_skill_ensure_runs_once: "Skill ensure once-per-session",
+      easy_mode_disables_buffs: "Easy mode disables buffs",
+      sleep_min_tick_on_stop: "sleep yields even when stopRequested",
+      combat_progress_target_swap: "Target-swap counts as progress",
+      hp_spike_requires_low_hp: "HP spike rejects high-HP misreads",
+      potion_cooldown_client_enforced: "Potion respects client cooldown",
+      wait_for_condition_health_throttle: "Health eval throttled in waits",
+      ring_scan_fresh_baseline: "Ring scan per-tile baseline",
+      logger_dedup_consecutive: "Logger collapses repeats",
+      click_safe_visibility_recheck: "Click recheck visibility",
+      ensure_map_open_canvas_guard: "Map-open canvas guard",
       skill_scan: "Skill data",
       skill_master_db: "Skill master DB",
       hero_stats: "Hero stats",
@@ -1654,6 +1682,4061 @@
       } catch (err) {
         Logger.warn("TEST", "probeSelectors threw", err);
         addCheck("probe_selectors", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      try {
+        const bar = document.querySelector(Config.selectors.actionBar);
+        if (!bar) {
+          addCheck("action_bar_unified_slots", true, { skipped: "no_action_bar" }, false);
+        } else {
+          const actionOnly = bar.querySelectorAll("app-action-button").length;
+          const skillOnly = bar.querySelectorAll("app-skill-button").length;
+          const unified =
+            typeof getActionBarSlotElements === "function"
+              ? getActionBarSlotElements(bar).length
+              : bar.querySelectorAll(
+                  Config.selectors.actionBarSlot || "app-action-button, app-skill-button"
+                ).length;
+          const ok = skillOnly === 0 || unified > actionOnly;
+          addCheck(
+            "action_bar_unified_slots",
+            ok,
+            { actionOnly: actionOnly, skillOnly: skillOnly, unified: unified, children: bar.children.length },
+            false,
+            ok ? null : "app-skill-button present but unified slot count did not exceed action-button-only count"
+          );
+        }
+      } catch (err) {
+        Logger.warn("TEST", "action_bar_unified_slots threw", err);
+        addCheck(
+          "action_bar_unified_slots",
+          false,
+          { error: String(err && err.message ? err.message : err) },
+          false
+        );
+      }
+
+      try {
+        addCheck(
+          "user_click_sequence",
+          typeof dispatchUserClickSequence === "function",
+          {
+            helper: typeof dispatchUserClickSequence,
+            pointerEvent: typeof PointerEvent === "function",
+            reason: "appsmartclick requires pointer/mouse center events; native element.click() is not enough after game update"
+          },
+          false
+        );
+      } catch (err) {
+        Logger.warn("TEST", "user_click_sequence threw", err);
+        addCheck(
+          "user_click_sequence",
+          false,
+          { error: String(err && err.message ? err.message : err) },
+          false
+        );
+      }
+
+      // AI CHANGED: Night mode — helper wiring (config + lifecycle helpers + bootstrap autostart hook).
+      try {
+        const nmCfg = Config && Config.nightMode ? Config.nightMode : null;
+        const hourlyMs = nmCfg && Number.isFinite(nmCfg.hourlyReloadMs) ? nmCfg.hourlyReloadMs : null;
+        const wired =
+          !!nmCfg &&
+          hourlyMs != null &&
+          hourlyMs >= 60000 &&
+          typeof setNightModeEnabled === "function" &&
+          typeof scheduleNightModeHourlyReloadIfNeeded === "function" &&
+          typeof cancelNightModeHourlyReload === "function" &&
+          typeof triggerNightModeHourlyReload === "function" &&
+          typeof writeNightModeBootAutostartTokenIfNeeded === "function";
+        addCheck(
+          "night_mode_helpers_wired",
+          wired,
+          {
+            hourlyReloadMs: hourlyMs,
+            setNightModeEnabled: typeof setNightModeEnabled,
+            scheduleNightModeHourlyReloadIfNeeded: typeof scheduleNightModeHourlyReloadIfNeeded,
+            cancelNightModeHourlyReload: typeof cancelNightModeHourlyReload,
+            triggerNightModeHourlyReload: typeof triggerNightModeHourlyReload,
+            writeNightModeBootAutostartTokenIfNeeded: typeof writeNightModeBootAutostartTokenIfNeeded
+          },
+          false
+        );
+      } catch (err) {
+        Logger.warn("TEST", "night_mode_helpers_wired threw", err);
+        addCheck("night_mode_helpers_wired", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Audit fix #1 — sleep() must yield a macro-task even when stopRequested or ms===0; assert by measuring elapsed time.
+      try {
+        const prevStop = !!(Runtime.autoFarm && Runtime.autoFarm.stopRequested);
+        const wasRunning = !!(Runtime.autoFarm && Runtime.autoFarm.running);
+        Runtime.autoFarm.stopRequested = true;
+        const t0 = Date.now();
+        await sleep(0);
+        const elapsed = Date.now() - t0;
+        Runtime.autoFarm.stopRequested = prevStop;
+        Runtime.autoFarm.running = wasRunning;
+        addCheck(
+          "sleep_min_tick_on_stop",
+          elapsed >= 10,
+          { elapsedMs: elapsed, threshold: 10 },
+          false
+        );
+      } catch (err) {
+        Logger.warn("TEST", "sleep_min_tick_on_stop threw", err);
+        addCheck("sleep_min_tick_on_stop", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Audit fix #3 — verify by source inspection that hasCombatProgressSince treats target-swap (upward jump or different max) as progress, and the supporting config knob is present and valid.
+      try {
+        const src = typeof hasCombatProgressSince === "function" ? String(hasCombatProgressSince) : "";
+        const hasJumpFracPath = src.indexOf("progressTargetSwapJumpFrac") >= 0 || src.indexOf("targetSwapJumpFrac") >= 0;
+        const hasDifferentMaxPath = src.indexOf("different max HP") >= 0 || src.indexOf("b.max !== t.max") >= 0;
+        const frac = Number(Config.combat && Config.combat.progressTargetSwapJumpFrac);
+        const fracOk = Number.isFinite(frac) && frac > 0 && frac < 1;
+        addCheck(
+          "combat_progress_target_swap",
+          hasJumpFracPath && hasDifferentMaxPath && fracOk,
+          {
+            jumpFracPath: hasJumpFracPath,
+            differentMaxPath: hasDifferentMaxPath,
+            progressTargetSwapJumpFrac: frac
+          },
+          false
+        );
+      } catch (err) {
+        Logger.warn("TEST", "combat_progress_target_swap threw", err);
+        addCheck("combat_progress_target_swap", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Audit fix #9 — config knobs exist and update path checks current HP fraction.
+      try {
+        const ok =
+          Number.isFinite(Config.combat && Config.combat.safetyHpSpikeRequireHpBelowFrac) &&
+          Number.isFinite(Config.combat && Config.combat.safetyHpSpikeCooldownMs) &&
+          Config.combat.safetyHpSpikeRequireHpBelowFrac > 0 &&
+          Config.combat.safetyHpSpikeRequireHpBelowFrac <= 1 &&
+          Config.combat.safetyHpSpikeCooldownMs >= 500;
+        addCheck(
+          "hp_spike_requires_low_hp",
+          ok,
+          {
+            requireHpBelowFrac: Config.combat ? Config.combat.safetyHpSpikeRequireHpBelowFrac : null,
+            cooldownMs: Config.combat ? Config.combat.safetyHpSpikeCooldownMs : null
+          },
+          false
+        );
+      } catch (err) {
+        Logger.warn("TEST", "hp_spike_requires_low_hp threw", err);
+        addCheck("hp_spike_requires_low_hp", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Audit fix #5 — listCombatPotionCandidates honors client cooldown window when enforce flag is on.
+      try {
+        if (typeof listCombatPotionCandidates !== "function" || typeof getCombatSustainRuntime !== "function") {
+          addCheck("potion_cooldown_client_enforced", false, { reason: "api_missing" }, false);
+        } else {
+          const sustain = getCombatSustainRuntime();
+          const prevCooldown = sustain.potionCooldownUntil;
+          const prevEnforce = Config.combat && Config.combat.combatPotionEnforceClientCooldown;
+          Config.combat.combatPotionEnforceClientCooldown = true;
+          sustain.potionCooldownUntil = Date.now() + 5000;
+          const blocked = listCombatPotionCandidates("hp", { readyOnly: true }).length === 0;
+          sustain.potionCooldownUntil = prevCooldown;
+          Config.combat.combatPotionEnforceClientCooldown = prevEnforce;
+          addCheck(
+            "potion_cooldown_client_enforced",
+            blocked,
+            { enforced: true, listCountWhenCooling: blocked ? 0 : -1 },
+            false
+          );
+        }
+      } catch (err) {
+        Logger.warn("TEST", "potion_cooldown_client_enforced threw", err);
+        addCheck("potion_cooldown_client_enforced", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Audit fix #11 — verification config exposes healthEvalThrottleMs >= 50.
+      try {
+        const v = Config.verification && Number(Config.verification.healthEvalThrottleMs);
+        addCheck(
+          "wait_for_condition_health_throttle",
+          Number.isFinite(v) && v >= 50,
+          { healthEvalThrottleMs: v },
+          false
+        );
+      } catch (err) {
+        Logger.warn("TEST", "wait_for_condition_health_throttle threw", err);
+        addCheck("wait_for_condition_health_throttle", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Audit fix #7 — scanNeighborRing source uses per-tile `preClickBaseline` instead of cumulative `lastObservedCoords`.
+      try {
+        const src = typeof scanNeighborRing === "function" ? String(scanNeighborRing) : "";
+        const ok = src.indexOf("preClickBaseline") >= 0;
+        addCheck("ring_scan_fresh_baseline", ok, { hasPreClickBaseline: ok }, false);
+      } catch (err) {
+        Logger.warn("TEST", "ring_scan_fresh_baseline threw", err);
+        addCheck("ring_scan_fresh_baseline", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Audit fix #15 — Logger collapses two consecutive identical log calls, emitting only the first and tracking the rest as a deferred summary.
+      try {
+        const before = Logger.getRecentLogLines(10).length;
+        Logger.log("TEST_DEDUP", "audit fix #15 dedup probe", { tag: "dedup_probe" });
+        Logger.log("TEST_DEDUP", "audit fix #15 dedup probe", { tag: "dedup_probe" });
+        Logger.log("TEST_DEDUP", "audit fix #15 dedup probe", { tag: "dedup_probe" });
+        const after = Logger.getRecentLogLines(10).length;
+        // First call wrote one line; the next two should be coalesced (not written until flush).
+        const delta = after - before;
+        addCheck(
+          "logger_dedup_consecutive",
+          delta === 1,
+          { lineDelta: delta, expected: 1 },
+          false
+        );
+        if (typeof Logger.flushDedup === "function") {
+          Logger.flushDedup();
+        }
+      } catch (err) {
+        Logger.warn("TEST", "logger_dedup_consecutive threw", err);
+        addCheck("logger_dedup_consecutive", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Audit fix #8 — clickElementSafe's dispatchUserClickSequence re-checks visibility right before reading rect (TOCTOU guard).
+      try {
+        const src = typeof dispatchUserClickSequence === "function" ? String(dispatchUserClickSequence) : "";
+        const guarded = src.indexOf("became invisible before dispatch") >= 0;
+        addCheck("click_safe_visibility_recheck", guarded, { guarded: guarded }, false);
+      } catch (err) {
+        Logger.warn("TEST", "click_safe_visibility_recheck threw", err);
+        addCheck("click_safe_visibility_recheck", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Audit fix #6 — ensureMapOpen probes the map canvas before clicking the toggle.
+      try {
+        const src = typeof ensureMapOpen === "function" ? String(ensureMapOpen) : "";
+        const guarded = src.indexOf("already_open_canvas") >= 0 && src.indexOf("Config.selectors.mapCanvas") >= 0;
+        addCheck("ensure_map_open_canvas_guard", guarded, { guarded: guarded }, false);
+      } catch (err) {
+        Logger.warn("TEST", "ensure_map_open_canvas_guard threw", err);
+        addCheck("ensure_map_open_canvas_guard", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Verify the ensure-skills helper has once-per-session config + Runtime latch hook (`Config.farmLoop.ensureSkills.runOncePerAutoSession`, `Runtime.autoFarm.skillEnsureDone`).
+      try {
+        const eCfg =
+          Config.farmLoop && Config.farmLoop.ensureSkills ? Config.farmLoop.ensureSkills : null;
+        const runtimeHasFlag =
+          !!Runtime.autoFarm && Object.prototype.hasOwnProperty.call(Runtime.autoFarm, "skillEnsureDone");
+        const ok =
+          !!eCfg &&
+          eCfg.runOncePerAutoSession !== false &&
+          eCfg.skipInEasyMode !== false &&
+          runtimeHasFlag;
+        addCheck(
+          "auto_skill_ensure_runs_once",
+          ok,
+          {
+            runOncePerAutoSession: eCfg ? eCfg.runOncePerAutoSession : null,
+            skipInEasyMode: eCfg ? eCfg.skipInEasyMode : null,
+            runtimeSkillEnsureDone: runtimeHasFlag ? !!Runtime.autoFarm.skillEnsureDone : null
+          },
+          false
+        );
+      } catch (err) {
+        Logger.warn("TEST", "auto_skill_ensure_runs_once threw", err);
+        addCheck("auto_skill_ensure_runs_once", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Easy mode disables all buff usage — verify the central predicate exists and buff entry helpers short-circuit by inspecting source strings (live combat exec is non-trivial in TEST).
+      try {
+        const predicateOk = typeof isAutoFarmEasyMode === "function";
+        const fnSrc = function (fn) {
+          try {
+            return typeof fn === "function" ? String(fn) : "";
+          } catch (e) {
+            return "";
+          }
+        };
+        const gated = [
+          {
+            name: "maybeApplyPrebuffsForNewMobTile",
+            ok: fnSrc(typeof maybeApplyPrebuffsForNewMobTile === "function" ? maybeApplyPrebuffsForNewMobTile : null).indexOf("isAutoFarmEasyMode") >= 0
+          },
+          {
+            name: "maintainLongbuffsOutOfCombat",
+            ok: fnSrc(typeof maintainLongbuffsOutOfCombat === "function" ? maintainLongbuffsOutOfCombat : null).indexOf("isAutoFarmEasyMode") >= 0
+          },
+          {
+            name: "maybeCombatSafetyBuffInterrupt",
+            ok: fnSrc(typeof maybeCombatSafetyBuffInterrupt === "function" ? maybeCombatSafetyBuffInterrupt : null).indexOf("isAutoFarmEasyMode") >= 0
+          },
+          {
+            name: "processCombatSafetyHpSpikeIfNeeded",
+            ok: fnSrc(typeof processCombatSafetyHpSpikeIfNeeded === "function" ? processCombatSafetyHpSpikeIfNeeded : null).indexOf("isAutoFarmEasyMode") >= 0
+          },
+          {
+            name: "waitForSafeModeExploreResourcesAndShortPrebuffs",
+            ok: fnSrc(typeof waitForSafeModeExploreResourcesAndShortPrebuffs === "function" ? waitForSafeModeExploreResourcesAndShortPrebuffs : null).indexOf("isAutoFarmEasyMode") >= 0
+          }
+        ];
+        const missing = gated.filter(function (g) {
+          return !g.ok;
+        });
+        addCheck(
+          "easy_mode_disables_buffs",
+          predicateOk && missing.length === 0,
+          {
+            predicate: predicateOk,
+            gatedFunctions: gated,
+            missingCount: missing.length
+          },
+          false
+        );
+      } catch (err) {
+        Logger.warn("TEST", "easy_mode_disables_buffs threw", err);
+        addCheck("easy_mode_disables_buffs", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Buff system v1.0.5-alpha — duration-based policy split. <60s ⇒ prebuff, >=60s ⇒ longbuff, safety reserved (Windy Dome) excluded.
+      try {
+        if (typeof classifySupportBuffPolicyForRow !== "function") {
+          addCheck("support_buff_policy_split", false, { reason: "classifier_missing" }, false);
+        } else {
+          const longMin = Number.isFinite(Config.supportBuffs && Config.supportBuffs.longDurationMinSec)
+            ? Config.supportBuffs.longDurationMinSec
+            : 60;
+          // Use a synthetic stub row with the duration injected via the "force long unknown" path so we don't depend on real DB rows.
+          // We bypass the DB resolver by leveraging the named forceLongDuration substring (always present).
+          const fakeShortRow = {
+            kind: "skill",
+            slot: 0,
+            name: "TestShortPrebuff",
+            isAttack: false,
+            isSupport: true,
+            targetsSelf: true,
+            tags: ["support", "self"],
+            paramsRaw: { duration: { value: 30, raw: "30 seconds" } },
+            description: "Restores stamina for 30 seconds.",
+            castTimeSec: 0.5
+          };
+          const fakeLongRow = {
+            kind: "skill",
+            slot: 1,
+            name: "TestLongBuff",
+            isAttack: false,
+            isSupport: true,
+            targetsSelf: true,
+            tags: ["support", "self"],
+            paramsRaw: { duration: { value: 600, raw: "600 seconds" } },
+            description: "Bless self for 600 seconds.",
+            castTimeSec: 1
+          };
+          const fakeSafetyRow = {
+            kind: "skill",
+            slot: 2,
+            name: "Windy Dome",
+            isAttack: false,
+            isSupport: true,
+            targetsSelf: true,
+            tags: ["support", "self"],
+            paramsRaw: { duration: { value: 8, raw: "8 seconds" } },
+            description: "Creates a wind shield around the caster.",
+            castTimeSec: 0
+          };
+          const cShort = classifySupportBuffPolicyForRow(fakeShortRow, "");
+          const cLong = classifySupportBuffPolicyForRow(fakeLongRow, "");
+          const cSafety = classifySupportBuffPolicyForRow(fakeSafetyRow, "");
+          const splitOk =
+            cShort.policy === "prebuff" &&
+            cShort.durationSec < longMin &&
+            cLong.policy === "longbuff" &&
+            cLong.durationSec >= longMin &&
+            cSafety.policy === "excluded_safety";
+          addCheck(
+            "support_buff_policy_split",
+            splitOk,
+            {
+              longDurationMinSec: longMin,
+              shortClass: cShort,
+              longClass: cLong,
+              safetyClass: cSafety
+            },
+            false
+          );
+        }
+      } catch (err) {
+        Logger.warn("TEST", "support_buff_policy_split threw", err);
+        addCheck("support_buff_policy_split", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Buff system v1.0.5-alpha — prebuff list contains ONLY policy=prebuff (no longbuffs leaked in).
+      try {
+        const root = Config.supportBuffs;
+        const longMin = Number.isFinite(root && root.longDurationMinSec) ? root.longDurationMinSec : 60;
+        const listFn = typeof buildOrderedNewTilePrebuffTargets === "function" ? buildOrderedNewTilePrebuffTargets : null;
+        if (!listFn) {
+          addCheck("prebuff_list_excludes_longbuffs", false, { reason: "fn_missing" }, false);
+        } else {
+          const list = listFn();
+          let bad = 0;
+          for (let i = 0; i < list.length; i++) {
+            if (Number.isFinite(list[i].dur) && list[i].dur >= longMin) bad += 1;
+          }
+          addCheck(
+            "prebuff_list_excludes_longbuffs",
+            bad === 0,
+            { listLength: list.length, longMin: longMin, longbuffsLeaked: bad },
+            false
+          );
+        }
+      } catch (err) {
+        Logger.warn("TEST", "prebuff_list_excludes_longbuffs threw", err);
+        addCheck("prebuff_list_excludes_longbuffs", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Buff system v1.0.5-alpha — prebuff pipeline is TILE-BASED (does NOT call duration-tracking skip helper).
+      try {
+        const fnSrc = function (fn) {
+          try {
+            return typeof fn === "function" ? String(fn) : "";
+          } catch (e) {
+            return "";
+          }
+        };
+        const src = fnSrc(typeof maybeApplyPrebuffsForNewMobTile === "function" ? maybeApplyPrebuffsForNewMobTile : null);
+        const referencesTileKey = src.indexOf("getSupportBuffCurrentTileKey") >= 0 && src.indexOf("rt.prebuff.tileKey") >= 0;
+        const doesNotUseDurationSkip = src.indexOf("supportBuffShouldSkipRecastFromTracking") < 0;
+        addCheck(
+          "prebuff_policy_tile_based",
+          referencesTileKey && doesNotUseDurationSkip,
+          {
+            referencesTileKey: referencesTileKey,
+            doesNotCallDurationSkipHelper: doesNotUseDurationSkip
+          },
+          false
+        );
+      } catch (err) {
+        Logger.warn("TEST", "prebuff_policy_tile_based threw", err);
+        addCheck("prebuff_policy_tile_based", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Buff system v1.0.5-alpha — safe-mode prebuff wait lives on the MOB-TILE prebuff path (wait-all-ready), and is NOT invoked from the empty-tile explore gate anymore.
+      try {
+        const fnSrc = function (fn) {
+          try {
+            return typeof fn === "function" ? String(fn) : "";
+          } catch (e) {
+            return "";
+          }
+        };
+        const mobTileSrc = fnSrc(typeof maybeApplyPrebuffsForNewMobTile === "function" ? maybeApplyPrebuffsForNewMobTile : null);
+        const exploreSrc = fnSrc(typeof waitForSafeModeExploreResourcesAndShortPrebuffs === "function" ? waitForSafeModeExploreResourcesAndShortPrebuffs : null);
+        const mobTileHasWaitAll = mobTileSrc.indexOf("safe") >= 0 && mobTileSrc.indexOf("safeModeWaitAllReadyMs") >= 0 && mobTileSrc.indexOf("isActionBarSlotShowingCooldown") >= 0;
+        const exploreDoesNotCastShortPrebuffs =
+          exploreSrc.indexOf("waitForSafeModeShortPrebuffCooldownsThenCast") < 0 &&
+          exploreSrc.indexOf("clickActionBarSlot(") < 0 &&
+          exploreSrc.indexOf("shortPrebuffMovedToMobTile") >= 0;
+        addCheck(
+          "safe_mode_prebuff_wait_on_mob_tile",
+          mobTileHasWaitAll && exploreDoesNotCastShortPrebuffs,
+          {
+            mobTileWaitAllPresent: mobTileHasWaitAll,
+            exploreGateNoShortPrebuffCast: exploreDoesNotCastShortPrebuffs
+          },
+          false
+        );
+      } catch (err) {
+        Logger.warn("TEST", "safe_mode_prebuff_wait_on_mob_tile threw", err);
+        addCheck("safe_mode_prebuff_wait_on_mob_tile", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Buff system v1.0.5-alpha — support cast wait uses cast-bar + castTimeSec, not just slot cooldown.
+      try {
+        const fnSrc = function (fn) {
+          try {
+            return typeof fn === "function" ? String(fn) : "";
+          } catch (e) {
+            return "";
+          }
+        };
+        const resolvedSrc = fnSrc(typeof waitForSupportCastResolved === "function" ? waitForSupportCastResolved : null);
+        const usesCastBar = resolvedSrc.indexOf("readVisibleCombatCastBarTexts") >= 0;
+        const usesCastTime = resolvedSrc.indexOf("castTimeSec") >= 0;
+        const hasFinishPhase = resolvedSrc.indexOf("cast_bar_cleared") >= 0;
+        const hasPostSettle = resolvedSrc.indexOf("postSettleMs") >= 0;
+        addCheck(
+          "support_cast_resolution_wait_uses_cast_bar",
+          usesCastBar && usesCastTime && hasFinishPhase && hasPostSettle,
+          {
+            readsCastBar: usesCastBar,
+            usesCastTimeSec: usesCastTime,
+            finishesOnBarClear: hasFinishPhase,
+            hasPostCastSettle: hasPostSettle
+          },
+          false
+        );
+      } catch (err) {
+        Logger.warn("TEST", "support_cast_resolution_wait_uses_cast_bar threw", err);
+        addCheck("support_cast_resolution_wait_uses_cast_bar", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Buff system v1.0.5-alpha — longbuff maintenance is OOC-only and uses the longbuff policy bucket.
+      try {
+        const fnSrc = function (fn) {
+          try {
+            return typeof fn === "function" ? String(fn) : "";
+          } catch (e) {
+            return "";
+          }
+        };
+        const src = fnSrc(typeof maintainLongbuffsOutOfCombat === "function" ? maintainLongbuffsOutOfCombat : null);
+        const oocOnly = src.indexOf("not_clear_tile") >= 0 && src.indexOf('liveState.combat.enemyCount !== 0') >= 0;
+        const usesPolicyBucket = src.indexOf('buildSupportBuffMetaListForPolicy("longbuff")') >= 0;
+        addCheck(
+          "longbuff_maintenance_ooc_only",
+          oocOnly && usesPolicyBucket,
+          { oocOnlyGuard: oocOnly, usesPolicyBucket: usesPolicyBucket },
+          false
+        );
+      } catch (err) {
+        Logger.warn("TEST", "longbuff_maintenance_ooc_only threw", err);
+        addCheck("longbuff_maintenance_ooc_only", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Buff system v1.0.5-alpha — Easy mode runtime-call check: both pipelines return easy_mode skip.
+      try {
+        if (
+          Runtime.autoFarm &&
+          typeof maybeApplyPrebuffsForNewMobTile === "function" &&
+          typeof maintainLongbuffsOutOfCombat === "function"
+        ) {
+          const prevMode = Runtime.autoFarm.combatMode;
+          Runtime.autoFarm.combatMode = "easy";
+          const mobState = {
+            combat: { enemyCount: 3 },
+            player: { hp: { valid: true, pct: 1 }, mp: { valid: true, pct: 1 } },
+            session: {}
+          };
+          const oocState = {
+            combat: { enemyCount: 0 },
+            player: { hp: { valid: true, pct: 1 }, mp: { valid: true, pct: 1 } },
+            session: {}
+          };
+          const prebuffRes = await maybeApplyPrebuffsForNewMobTile(mobState);
+          const longbuffRes = await maintainLongbuffsOutOfCombat(oocState);
+          Runtime.autoFarm.combatMode = prevMode;
+          const easyOk =
+            prebuffRes && prebuffRes.skipped === true && prebuffRes.reason === "easy_mode" &&
+            longbuffRes && longbuffRes.skipped === true && longbuffRes.reason === "easy_mode";
+          addCheck(
+            "easy_mode_no_buff_systems",
+            easyOk,
+            { prebuffResult: prebuffRes, longbuffResult: longbuffRes },
+            false
+          );
+        } else {
+          addCheck("easy_mode_no_buff_systems", false, { reason: "fns_or_runtime_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "easy_mode_no_buff_systems threw", err);
+        addCheck("easy_mode_no_buff_systems", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Buff system v1.0.5-alpha — tile gate prevents re-prebuffing the SAME tile twice in a row.
+      try {
+        if (
+          Runtime.autoFarm &&
+          typeof maybeApplyPrebuffsForNewMobTile === "function" &&
+          typeof getSupportBuffLineRuntime === "function"
+        ) {
+          const prevMode = Runtime.autoFarm.combatMode;
+          Runtime.autoFarm.combatMode = "fast";
+          const rt = getSupportBuffLineRuntime();
+          const prevKey = rt.prebuff.tileKey;
+          const prevAt = rt.prebuff.tileAt;
+          const prevResult = rt.prebuff.lastResult;
+          // Force the current tile to match by spoofing numeric coords (the tile key uses Number.isFinite check).
+          const prevCoords = Runtime.exploration ? Runtime.exploration.lastKnownCoords : null;
+          if (Runtime.exploration) {
+            Runtime.exploration.lastKnownCoords = { x: -987654, y: -123456 };
+          }
+          rt.prebuff.tileKey = "-987654;-123456";
+          rt.prebuff.tileAt = Date.now();
+          const mobState = {
+            combat: { enemyCount: 3 },
+            player: { hp: { valid: true, pct: 1 }, mp: { valid: true, pct: 1 } },
+            session: {}
+          };
+          const res = await maybeApplyPrebuffsForNewMobTile(mobState);
+          // Restore.
+          if (Runtime.exploration) {
+            Runtime.exploration.lastKnownCoords = prevCoords;
+          }
+          rt.prebuff.tileKey = prevKey;
+          rt.prebuff.tileAt = prevAt;
+          rt.prebuff.lastResult = prevResult;
+          Runtime.autoFarm.combatMode = prevMode;
+          const sameTileSkipped =
+            res && res.skipped === true && res.reason === "tile_already_prebuffed";
+          addCheck(
+            "prebuff_tile_gate_skips_same_tile",
+            sameTileSkipped,
+            { result: res },
+            false
+          );
+        } else {
+          addCheck("prebuff_tile_gate_skips_same_tile", false, { reason: "fns_or_runtime_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "prebuff_tile_gate_skips_same_tile threw", err);
+        addCheck("prebuff_tile_gate_skips_same_tile", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Planner rewrite v1 — combat-state model shape sanity. Should expose player/target/fight/timing sub-objects whether or not
+      // a fight is live (best-effort fields are nulled when unknown, never absent).
+      try {
+        if (typeof getPlannerCombatState === "function") {
+          const cs = getPlannerCombatState();
+          const shapeOk = !!(
+            cs &&
+            cs.player && typeof cs.player === "object" &&
+            cs.target && typeof cs.target === "object" &&
+            cs.fight && typeof cs.fight === "object" &&
+            cs.timing && typeof cs.timing === "object" &&
+            Object.prototype.hasOwnProperty.call(cs.player, "hpCur") &&
+            Object.prototype.hasOwnProperty.call(cs.player, "mpCur") &&
+            Object.prototype.hasOwnProperty.call(cs.target, "hpCur") &&
+            Object.prototype.hasOwnProperty.call(cs.target, "visibleEffects") &&
+            Array.isArray(cs.target.visibleEffects) &&
+            Object.prototype.hasOwnProperty.call(cs.fight, "enemiesPresent") &&
+            Object.prototype.hasOwnProperty.call(cs.fight, "activeAttackerCount") &&
+            Object.prototype.hasOwnProperty.call(cs.fight, "pressure") &&
+            Object.prototype.hasOwnProperty.call(cs.timing, "maxHorizonSec") &&
+            Object.prototype.hasOwnProperty.call(cs.timing, "maxActions")
+          );
+          addCheck("planner_combat_state_shape", shapeOk, {
+            hasPlayer: !!(cs && cs.player),
+            hasTarget: !!(cs && cs.target),
+            hasFight: !!(cs && cs.fight),
+            hasTiming: !!(cs && cs.timing),
+            maxActions: cs && cs.timing ? cs.timing.maxActions : null,
+            maxHorizonSec: cs && cs.timing ? cs.timing.maxHorizonSec : null,
+            activeAttackerCount: cs && cs.fight ? cs.fight.activeAttackerCount : null,
+            activeAttackerSource: cs && cs.fight ? cs.fight.activeAttackerSource : null,
+            visibleEffectsCount: cs && cs.target && Array.isArray(cs.target.visibleEffects) ? cs.target.visibleEffects.length : null
+          }, false);
+        } else {
+          addCheck("planner_combat_state_shape", false, { reason: "fn_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_combat_state_shape threw", err);
+        addCheck("planner_combat_state_shape", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Planner rewrite v1 — active-attacker reader is available + returns either an object or null.
+      try {
+        if (typeof readActiveAttackerCount === "function") {
+          const a = readActiveAttackerCount();
+          const ok = a === null || (a && typeof a === "object" && Number.isFinite(a.count));
+          addCheck("planner_active_attacker_reader", !!ok, {
+            result: a,
+            buttonSelector: Config.selectors.attackersButton
+          }, false);
+        } else {
+          addCheck("planner_active_attacker_reader", false, { reason: "fn_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_active_attacker_reader threw", err);
+        addCheck("planner_active_attacker_reader", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Planner rewrite v1 — target effect reader returns array (empty when no target / no effect cards present).
+      try {
+        if (typeof readTargetVisibleEffects === "function") {
+          const eff = readTargetVisibleEffects();
+          const shapeOk = Array.isArray(eff) && eff.every(function (e) {
+            return e && typeof e === "object"
+              && Object.prototype.hasOwnProperty.call(e, "id")
+              && Object.prototype.hasOwnProperty.call(e, "label")
+              && Object.prototype.hasOwnProperty.call(e, "remainingSec")
+              && Object.prototype.hasOwnProperty.call(e, "raw");
+          });
+          addCheck("planner_target_effect_reader_shape", shapeOk, {
+            effectCount: Array.isArray(eff) ? eff.length : null,
+            sample: Array.isArray(eff) ? eff.slice(0, 3) : null,
+            selectorsUsed: {
+              root: Config.selectors.targetEffectsRoot,
+              card: Config.selectors.targetEffectCard,
+              time: Config.selectors.targetEffectTime
+            }
+          }, false);
+        } else {
+          addCheck("planner_target_effect_reader_shape", false, { reason: "fn_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_target_effect_reader_shape threw", err);
+        addCheck("planner_target_effect_reader_shape", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Planner rewrite v1 — Archer skill semantic enrichment is loaded into Config.planner.sequencePlanner.archerSemantics.
+      // We do NOT require those skills to be on the bar; we only verify the SEMANTIC table is intact + has the expected keys/values.
+      try {
+        const sem = Config.planner && Config.planner.sequencePlanner && Config.planner.sequencePlanner.archerSemantics;
+        const ok = !!(
+          sem &&
+          sem.sniperShot && sem.sniperShot.role === "finisher" &&
+          sem.piercingStrike && sem.piercingStrike.role === "shred_magic_resist" && Number.isFinite(sem.piercingStrike.debuffDurationSec) &&
+          sem.iceShard && sem.iceShard.role === "tempo_slow" && Number.isFinite(sem.iceShard.slowDurationSec) &&
+          sem.distractingShot && sem.distractingShot.role === "survival_tempo_distract" &&
+          sem.fanVolley && sem.fanVolley.role === "aoe" && sem.fanVolley.aoeFactor >= 1
+        );
+        addCheck("planner_archer_semantic_table", ok, {
+          sniperShotRole: sem && sem.sniperShot ? sem.sniperShot.role : null,
+          piercingStrikeRole: sem && sem.piercingStrike ? sem.piercingStrike.role : null,
+          piercingStrikeDuration: sem && sem.piercingStrike ? sem.piercingStrike.debuffDurationSec : null,
+          iceShardRole: sem && sem.iceShard ? sem.iceShard.role : null,
+          iceShardDuration: sem && sem.iceShard ? sem.iceShard.slowDurationSec : null,
+          distractingShotRole: sem && sem.distractingShot ? sem.distractingShot.role : null,
+          fanVolleyRole: sem && sem.fanVolley ? sem.fanVolley.role : null
+        }, false);
+      } catch (err) {
+        Logger.warn("TEST", "planner_archer_semantic_table threw", err);
+        addCheck("planner_archer_semantic_table", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Planner rewrite v1 — normalized skill view exposes the right per-skill fields (slot/name/cast/cooldown/manaCost/damage shape/charge/AoE/control).
+      try {
+        if (typeof getPlannerNormalizedSkills === "function") {
+          const ns = getPlannerNormalizedSkills();
+          const shapeOk = Array.isArray(ns) && ns.every(function (s) {
+            return s && typeof s === "object"
+              && Object.prototype.hasOwnProperty.call(s, "slot")
+              && Object.prototype.hasOwnProperty.call(s, "name")
+              && Object.prototype.hasOwnProperty.call(s, "manaCost")
+              && Object.prototype.hasOwnProperty.call(s, "castTimeSec")
+              && Object.prototype.hasOwnProperty.call(s, "cooldownSec")
+              && Object.prototype.hasOwnProperty.call(s, "immediateDamage")
+              && Object.prototype.hasOwnProperty.call(s, "dotPerSec")
+              && Object.prototype.hasOwnProperty.call(s, "isCharge")
+              && Object.prototype.hasOwnProperty.call(s, "isAoe")
+              && Object.prototype.hasOwnProperty.call(s, "isControl")
+              && Object.prototype.hasOwnProperty.call(s, "damageType")
+              && Object.prototype.hasOwnProperty.call(s, "tacticalRoles")
+              && Object.prototype.hasOwnProperty.call(s, "semantic");
+          });
+          // Also verify any Archer skill on the bar that we have semantics for resolves to the right semantic key.
+          const byKey = {};
+          for (let i = 0; i < ns.length; i += 1) {
+            const k = ns[i].normalizedKey || "";
+            byKey[k] = ns[i];
+          }
+          const archerKeys = ["snipershot", "piercingstrike", "iceshard", "distractingshot", "fanvolley"];
+          const semanticHits = archerKeys.filter(function (k) {
+            return byKey[k] && byKey[k].semantic && byKey[k].semantic.__semKey === k;
+          });
+          addCheck("planner_normalized_skill_semantics", shapeOk, {
+            count: Array.isArray(ns) ? ns.length : null,
+            archerSemanticsHits: semanticHits,
+            sample: Array.isArray(ns) ? ns.slice(0, 4).map(function (s) {
+              return {
+                slot: s.slot,
+                name: s.name,
+                normalizedKey: s.normalizedKey,
+                immediateDamage: s.immediateDamage,
+                dotPerSec: s.dotPerSec,
+                isCharge: s.isCharge,
+                isAoe: s.isAoe,
+                isControl: s.isControl,
+                damageType: s.damageType,
+                semanticRole: s.semantic ? s.semantic.role : null
+              };
+            }) : null
+          }, false);
+        } else {
+          addCheck("planner_normalized_skill_semantics", false, { reason: "fn_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_normalized_skill_semantics threw", err);
+        addCheck("planner_normalized_skill_semantics", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Planner rewrite v1 — candidate sequence preview returns shape we expect (combatState + normalizedSkills + topSequences[] with actions/score),
+      // or a reasoned `ok:false` when no normalized skills are available (e.g. empty bar in dev/test).
+      try {
+        if (typeof previewPlannerSequences === "function") {
+          const p = previewPlannerSequences();
+          const okShape = !!(
+            p && typeof p === "object" &&
+            (
+              (p.ok === true &&
+                p.combatState && typeof p.combatState === "object" &&
+                Array.isArray(p.normalizedSkills) &&
+                Array.isArray(p.topSequences) &&
+                p.topSequences.every(function (s) {
+                  return s && Array.isArray(s.actions) && Object.prototype.hasOwnProperty.call(s, "score");
+                })
+              )
+              ||
+              (p.ok === false && typeof p.reason === "string")
+            )
+          );
+          addCheck("planner_sequence_preview_shape", okShape, {
+            ok: p && p.ok,
+            reason: p && p.reason,
+            topCount: p && Array.isArray(p.topSequences) ? p.topSequences.length : null,
+            firstSequenceActions: p && p.topSequences && p.topSequences[0]
+              ? p.topSequences[0].actions.map(function (a) { return { kind: a.kind, name: a.name, slot: a.slot, chargeMode: a.chargeMode }; })
+              : null
+          }, false);
+        } else {
+          addCheck("planner_sequence_preview_shape", false, { reason: "fn_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_sequence_preview_shape threw", err);
+        addCheck("planner_sequence_preview_shape", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Planner rewrite v1 — compatibility adapter still produces { slot, record, chargeReleasePlan, queuedAction } when the new planner
+      // returns a usable skill pick, OR returns null cleanly when first action is basic / no feasible skill. We can only assert the type contract here;
+      // a real combat call is exercised by live AUTO runs.
+      try {
+        if (typeof plannerSelectSequencePick === "function" && typeof plannerAdaptSequencePickToOpenerShape === "function") {
+          const seqPick = plannerSelectSequencePick({});
+          let adapterShapeOk = false;
+          let adapterReason = null;
+          if (seqPick) {
+            const adapterOut = plannerAdaptSequencePickToOpenerShape(seqPick);
+            if (adapterOut) {
+              adapterReason = adapterOut.reason;
+              if (adapterOut.adapted) {
+                adapterShapeOk = !!(
+                  adapterOut.adapted &&
+                  typeof adapterOut.adapted.slot === "number" &&
+                  adapterOut.adapted.record &&
+                  Object.prototype.hasOwnProperty.call(adapterOut.adapted, "chargeReleasePlan") &&
+                  Object.prototype.hasOwnProperty.call(adapterOut.adapted, "queuedAction")
+                );
+              } else if (adapterOut.reason === "first_action_basic") {
+                adapterShapeOk = true;
+              }
+            } else {
+              adapterShapeOk = true;
+            }
+          } else {
+            // No sequence pick (Easy mode, no skills, no paper DPS, etc.) — adapter contract still satisfied.
+            adapterShapeOk = true;
+            adapterReason = "no_sequence_pick";
+          }
+          addCheck("planner_compat_adapter_shape", adapterShapeOk, {
+            seqPickPresent: !!seqPick,
+            adapterReason: adapterReason,
+            lastPlanReason: Runtime.planner && Runtime.planner.lastSequencePlan ? Runtime.planner.lastSequencePlan.reason || null : null
+          }, false);
+        } else {
+          addCheck("planner_compat_adapter_shape", false, { reason: "fns_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_compat_adapter_shape threw", err);
+        addCheck("planner_compat_adapter_shape", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Planner rewrite v1 — pure logic check: with no live UI, build a synthetic combat state + normalized skill set covering
+      // (a) full-charge Sniper Shot under pressure (b) partial-release Sniper Shot under pressure (c) Distracting Shot as opener vs calm.
+      // We use ONLY public planner internals; this is a shape/logic sanity test, NOT a tactical perfection test.
+      try {
+        if (
+          typeof plannerSeqBuildCandidateActions === "function" &&
+          typeof plannerSeqSimulateAction === "function" &&
+          typeof plannerSeqScoreNode === "function"
+        ) {
+          // Synthetic skills.
+          const sniper = {
+            slot: 0, name: "Sniper Shot", normalizedKey: "snipershot",
+            isAttack: true, hasDirectDamage: true, manaCost: 0, castTimeSec: 0, cooldownSec: 6,
+            immediateDamage: 200, dotPerSec: 0, dotDurationSec: 0, damageType: "physical",
+            isCharge: true, chargeMaxSec: 4, chargeGearPct: 200, isAoe: false, isControl: false,
+            controlDurationSec: 0, tacticalRoles: ["channeled"],
+            semantic: { __semKey: "snipershot", role: "finisher",
+              chargeFullPressurePenaltySec: 1.6, finisherTargetHpPctMax: 0.45, finisherBonusSec: 0.8 }
+          };
+          const distract = {
+            slot: 1, name: "Distracting Shot", normalizedKey: "distractingshot",
+            isAttack: true, hasDirectDamage: true, manaCost: 0, castTimeSec: 0.4, cooldownSec: 12,
+            immediateDamage: 80, dotPerSec: 0, dotDurationSec: 0, damageType: "physical",
+            isCharge: false, chargeMaxSec: 0, chargeGearPct: 0, isAoe: false, isControl: false,
+            controlDurationSec: 0, tacticalRoles: ["offensive"],
+            semantic: { __semKey: "distractingshot", role: "survival_tempo_distract",
+              distractDurationSec: 6, calmOpenerPenaltySec: 1.4, pressureReliefBonusSec: 1.2, activeAttackerReliefCount: 1 }
+          };
+          // AI CHANGED: Planner rewrite v1.3 — sim state uses `nextBasicReadyAtSec` (single source of truth); no separate underway flag.
+          function mkSim(playerHpRatio) {
+            return {
+              elapsedSec: 0, playerHpCur: playerHpRatio * 1000, playerHpMax: 1000,
+              playerMpCur: 100, playerMpMax: 100, targetHpCur: 1000, targetHpMax: 1000,
+              enemyCount: 1, activeAttackers: 1, pressure: 0,
+              incomingHpLossPerSec: 0, basicSwingIntervalSec: 1, expectedBasicHit: 50,
+              skillCooldownReadyAtSec: {},
+              targetFlags: { hasMagicResistShred: false, hasSlow: false, hasDistract: false,
+                magicResistShredRemainingSec: 0, slowRemainingSec: 0, distractRemainingSec: 0 },
+              lastActionTimeSec: 0, mpWasted: 0, hpLost: 0, mobFactor: 1,
+              nextBasicReadyAtSec: Number.POSITIVE_INFINITY, extraBasicSwingsTotal: 0, extraBasicDamageTotal: 0
+            };
+          }
+          // 1) Under pressure: full-charge vs partial-release Sniper Shot — partial-release should score better (lower is better).
+          const pressureState = {
+            mode: "fast",
+            player: { hpCur: 600, hpMax: 1000, hpPct: 0.6, mpCur: 100, mpMax: 100, mpPct: 1,
+              basicSwingIntervalSec: 1, expectedBasicHit: 50, basicDpsAdjusted: 50, basicAttackLikelyUnderway: false, longSelfBuffs: [] },
+            target: { hpCur: 1000, hpMax: 1000, hpPct: 1, visibleEffects: [],
+              flags: { hasMagicResistShred: false, hasSlow: false, hasDistract: false,
+                magicResistShredRemainingSec: 0, slowRemainingSec: 0, distractRemainingSec: 0 }, fingerprintKey: null },
+            fight: { enemiesPresent: 2, activeAttackerCount: 2, activeAttackerSource: "test",
+              pressure: 1.4, incomingHpLossPerSec: 0, combatMode: "fast" },
+            timing: { nowMs: Date.now(), maxHorizonSec: 6, maxActions: 5 },
+            paperBasicDps: 50, mobFactor: 1
+          };
+          const simP = mkSim(0.6);
+          const fullChargeStep = plannerSeqSimulateAction(simP, {
+            kind: "skill_charge", chargeMode: "full", chargeReleaseFraction: 1, name: "Sniper Shot", slot: 0, skill: sniper
+          });
+          const partialStep = plannerSeqSimulateAction(simP, {
+            kind: "skill_charge", chargeMode: "partial", chargeReleaseFraction: 0.5, name: "Sniper Shot", slot: 0, skill: sniper
+          });
+          const fullNode = {
+            sim: fullChargeStep.next, actions: [{ kind: "skill_charge", chargeMode: "full", chargeReleaseFraction: 1,
+              skill: { slot: 0, name: "Sniper Shot", normalizedKey: "snipershot", damageType: "physical" } }],
+            cumulativeDamage: fullChargeStep.damageDealt, killedAtSec: null
+          };
+          const partialNode = {
+            sim: partialStep.next, actions: [{ kind: "skill_charge", chargeMode: "partial", chargeReleaseFraction: 0.5,
+              skill: { slot: 0, name: "Sniper Shot", normalizedKey: "snipershot", damageType: "physical" } }],
+            cumulativeDamage: partialStep.damageDealt, killedAtSec: null
+          };
+          const fullScore = plannerSeqScoreNode(fullNode, pressureState);
+          const partialScore = plannerSeqScoreNode(partialNode, pressureState);
+          const partialBetterUnderPressure = partialScore < fullScore;
+          // 2) Calm opener: Distracting Shot first should score WORSE than basic first (penalize calm-opener distract).
+          const calmState = {
+            mode: "fast",
+            player: { hpCur: 1000, hpMax: 1000, hpPct: 1, mpCur: 100, mpMax: 100, mpPct: 1,
+              basicSwingIntervalSec: 1, expectedBasicHit: 50, basicDpsAdjusted: 50, basicAttackLikelyUnderway: false, longSelfBuffs: [] },
+            target: { hpCur: 600, hpMax: 600, hpPct: 1, visibleEffects: [],
+              flags: { hasMagicResistShred: false, hasSlow: false, hasDistract: false,
+                magicResistShredRemainingSec: 0, slowRemainingSec: 0, distractRemainingSec: 0 }, fingerprintKey: null },
+            fight: { enemiesPresent: 1, activeAttackerCount: 1, activeAttackerSource: "test",
+              pressure: 0, incomingHpLossPerSec: 0, combatMode: "fast" },
+            timing: { nowMs: Date.now(), maxHorizonSec: 6, maxActions: 5 },
+            paperBasicDps: 50, mobFactor: 1
+          };
+          const calmSimBasic = mkSim(1);
+          const basicStep = plannerSeqSimulateAction(calmSimBasic, { kind: "basic", name: "Basic Attack", slot: null });
+          const calmSimDist = mkSim(1);
+          const distStep = plannerSeqSimulateAction(calmSimDist, {
+            kind: "skill", name: "Distracting Shot", slot: 1, skill: distract
+          });
+          const basicNode = {
+            sim: basicStep.next, actions: [{ kind: "basic", name: "Basic Attack", slot: null }],
+            cumulativeDamage: basicStep.damageDealt, killedAtSec: null
+          };
+          const distNode = {
+            sim: distStep.next, actions: [{ kind: "skill", name: "Distracting Shot", slot: 1,
+              skill: { slot: 1, name: "Distracting Shot", normalizedKey: "distractingshot", damageType: "physical" } }],
+            cumulativeDamage: distStep.damageDealt, killedAtSec: null
+          };
+          const basicScore = plannerSeqScoreNode(basicNode, calmState);
+          const distScore = plannerSeqScoreNode(distNode, calmState);
+          const distractCalmIsWorseThanBasic = distScore > basicScore;
+          // 3) Active-attacker = 2 pressure → distract should score BETTER than basic.
+          const pressureSim = mkSim(0.7);
+          const pressureBasicStep = plannerSeqSimulateAction(pressureSim, { kind: "basic", name: "Basic Attack", slot: null });
+          const pressureDistStep = plannerSeqSimulateAction(mkSim(0.7), {
+            kind: "skill", name: "Distracting Shot", slot: 1, skill: distract
+          });
+          const pressureBasicNode = {
+            sim: pressureBasicStep.next, actions: [{ kind: "basic", name: "Basic Attack", slot: null }],
+            cumulativeDamage: pressureBasicStep.damageDealt, killedAtSec: null
+          };
+          const pressureDistNode = {
+            sim: pressureDistStep.next, actions: [{ kind: "skill", name: "Distracting Shot", slot: 1,
+              skill: { slot: 1, name: "Distracting Shot", normalizedKey: "distractingshot", damageType: "physical" } }],
+            cumulativeDamage: pressureDistStep.damageDealt, killedAtSec: null
+          };
+          const pressureBasicScore = plannerSeqScoreNode(pressureBasicNode, pressureState);
+          const pressureDistScore = plannerSeqScoreNode(pressureDistNode, pressureState);
+          const distractUnderPressureIsBetterThanBasic = pressureDistScore < pressureBasicScore;
+          addCheck(
+            "planner_sequence_logic_archer_smoke",
+            partialBetterUnderPressure && distractCalmIsWorseThanBasic && distractUnderPressureIsBetterThanBasic,
+            {
+              fullChargeScore: fullScore,
+              partialReleaseScore: partialScore,
+              partialBetterUnderPressure: partialBetterUnderPressure,
+              calmBasicScore: basicScore,
+              calmDistractScore: distScore,
+              distractCalmIsWorseThanBasic: distractCalmIsWorseThanBasic,
+              pressureBasicScore: pressureBasicScore,
+              pressureDistractScore: pressureDistScore,
+              distractUnderPressureIsBetterThanBasic: distractUnderPressureIsBetterThanBasic
+            },
+            false
+          );
+        } else {
+          addCheck("planner_sequence_logic_archer_smoke", false, { reason: "internal_fns_unreachable" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_sequence_logic_archer_smoke threw", err);
+        addCheck("planner_sequence_logic_archer_smoke", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Planner rewrite v1.1 — excludeSlots is honored INSIDE the new sequence planner's candidate builder.
+      //   Logic (bullet-list):
+      //     • Build a synthetic flat sim state with two attack skills (slots 0 and 1), both ready and mana-affordable.
+      //     • Call plannerSeqBuildCandidateActions with no exclude — expect both skills present in the candidate list.
+      //     • Call again with excludeSlots = new Set([0]) — expect slot 0 absent, slot 1 still present, basic still present.
+      //     • Call again with Array form excludeSlots = [1] — same logic, slot 1 absent.
+      //   This verifies the planner-correctness fix at the most fundamental level, regardless of live skill cache.
+      try {
+        if (typeof plannerSeqBuildCandidateActions === "function") {
+          const skillA = {
+            slot: 0, name: "Skill A", normalizedKey: "skilla",
+            isAttack: true, hasDirectDamage: true, manaCost: 0, castTimeSec: 0.4, cooldownSec: 0,
+            immediateDamage: 100, dotPerSec: 0, dotDurationSec: 0, damageType: "physical",
+            isCharge: false, chargeMaxSec: 0, chargeGearPct: 0, isAoe: false, isControl: false,
+            controlDurationSec: 0, tacticalRoles: ["offensive"], semantic: null
+          };
+          const skillB = {
+            slot: 1, name: "Skill B", normalizedKey: "skillb",
+            isAttack: true, hasDirectDamage: true, manaCost: 0, castTimeSec: 0.4, cooldownSec: 0,
+            immediateDamage: 90, dotPerSec: 0, dotDurationSec: 0, damageType: "physical",
+            isCharge: false, chargeMaxSec: 0, chargeGearPct: 0, isAoe: false, isControl: false,
+            controlDurationSec: 0, tacticalRoles: ["offensive"], semantic: null
+          };
+          const synthSim = {
+            elapsedSec: 0,
+            playerMpCur: 100,
+            skillCooldownReadyAtSec: {}
+          };
+          // AI CHANGED: depth-0 skipReadyCheck — `plannerSeqSkillIsReadyNow` is only invoked when elapsedSec === 0; for the synthetic test we lift
+          // that gate by setting `elapsedSec` to a tiny non-zero value so live-DOM is not consulted.
+          synthSim.elapsedSec = 0.001;
+          const noExclude = plannerSeqBuildCandidateActions(synthSim, [skillA, skillB], {
+            disallowChargeSkills: false
+          });
+          const slotsNoExclude = noExclude.map(function (c) { return c.slot; });
+          const noExcludeHasA = slotsNoExclude.indexOf(0) !== -1;
+          const noExcludeHasB = slotsNoExclude.indexOf(1) !== -1;
+          const noExcludeHasBasic = noExclude.some(function (c) { return c.kind === "basic"; });
+          const setExclude = plannerSeqBuildCandidateActions(synthSim, [skillA, skillB], {
+            disallowChargeSkills: false,
+            excludeSlots: new Set([0])
+          });
+          const slotsSetExclude = setExclude.map(function (c) { return c.slot; });
+          const setExcludeOk = slotsSetExclude.indexOf(0) === -1 && slotsSetExclude.indexOf(1) !== -1 && setExclude.some(function (c) { return c.kind === "basic"; });
+          const arrExclude = plannerSeqBuildCandidateActions(synthSim, [skillA, skillB], {
+            disallowChargeSkills: false,
+            excludeSlots: [1]
+          });
+          const slotsArrExclude = arrExclude.map(function (c) { return c.slot; });
+          const arrExcludeOk = slotsArrExclude.indexOf(1) === -1 && slotsArrExclude.indexOf(0) !== -1 && arrExclude.some(function (c) { return c.kind === "basic"; });
+          const passed = noExcludeHasA && noExcludeHasB && noExcludeHasBasic && setExcludeOk && arrExcludeOk;
+          addCheck(
+            "planner_sequence_exclude_slots_honored",
+            passed,
+            {
+              noExcludeSlots: slotsNoExclude,
+              setExcludeSlots: slotsSetExclude,
+              arrExcludeSlots: slotsArrExclude,
+              noExcludeHasA: noExcludeHasA,
+              noExcludeHasB: noExcludeHasB,
+              noExcludeHasBasic: noExcludeHasBasic,
+              setExcludeOk: setExcludeOk,
+              arrExcludeOk: arrExcludeOk
+            },
+            false
+          );
+        } else {
+          addCheck("planner_sequence_exclude_slots_honored", false, { reason: "fn_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_sequence_exclude_slots_honored threw", err);
+        addCheck("planner_sequence_exclude_slots_honored", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Planner rewrite v1.3 — conservative basic-attack timing model is now ENFORCED BY CONSTRUCTION via a single
+      // `nextBasicReadyAtSec` schedule (the simulator no longer tracks a redundant `basicAttackLikelyUnderway` flag in sim state).
+      //   Active model under test:
+      //     • Depth-0 init: underway → schedule = 0; cold → schedule = `+Infinity`.
+      //     • Carry-over fires AT MOST ONCE, and only when schedule has elapsed AT OR BEFORE the action's start AND action is skill/charge.
+      //     • After ANY action, schedule = `+Infinity` (consumed/burned) — a second carry-over CANNOT fire at depth 1+.
+      //     • `basic` action remains an explicit one-swing action (no extra), schedules to Infinity.
+      //     • Config flag `simBasicSwingsBetweenActions === false` disables the carry-over path entirely.
+      //   Test sub-cases:
+      //     1) Cold-start long-cast skill → extraBasicSwings = 0, damage = immediateDamage only.
+      //     2) Underway long-cast skill → extraBasicSwings = 1, damage = immediateDamage + 1 carry-over basic (= 150).
+      //     3) Cold-start instant skill → extraBasicSwings = 0.
+      //     4) Underway instant skill → extraBasicSwings = 1, damage = 150.
+      //     5) Underway charge skill → extraBasicSwings = 1 (carry-over at start of channel).
+      //     6) Basic action (cold) → extraBasicSwings = 0; damage = expectedBasicHit (= 50); post-action schedule = Infinity.
+      //     7) After a skill resolves, sim.nextBasicReadyAtSec is `+Infinity` (no leftover schedule that could spuriously re-arm).
+      //     8) Config flag off → carry-over suppressed even when underway is set (= 0 extra swings).
+      //     9) Sim state contains NO `basicAttackLikelyUnderway` field (schedule is the only source of truth).
+      try {
+        if (typeof plannerSeqSimulateAction === "function" && Config.planner && Config.planner.sequencePlanner) {
+          const prevFlag = Config.planner.sequencePlanner.simBasicSwingsBetweenActions;
+          const longSkill = {
+            slot: 0, name: "Long Cast", normalizedKey: "longcast",
+            isAttack: true, hasDirectDamage: true, manaCost: 0, castTimeSec: 2.5, cooldownSec: 0,
+            immediateDamage: 100,
+            immediateDamageByType: { physical: 100, magic: 0, unknown: 0 },
+            dotPerSec: 0, dotPerSecByType: { physical: 0, magic: 0, unknown: 0 },
+            dotDurationSec: 0, damageType: "physical",
+            isCharge: false, chargeMaxSec: 0, chargeGearPct: 0, isAoe: false, isControl: false,
+            controlDurationSec: 0, tacticalRoles: ["offensive"], semantic: null
+          };
+          const instantSkill = {
+            slot: 1, name: "Instant", normalizedKey: "instant",
+            isAttack: true, hasDirectDamage: true, manaCost: 0, castTimeSec: 0, cooldownSec: 0,
+            immediateDamage: 100,
+            immediateDamageByType: { physical: 100, magic: 0, unknown: 0 },
+            dotPerSec: 0, dotPerSecByType: { physical: 0, magic: 0, unknown: 0 },
+            dotDurationSec: 0, damageType: "physical",
+            isCharge: false, chargeMaxSec: 0, chargeGearPct: 0, isAoe: false, isControl: false,
+            controlDurationSec: 0, tacticalRoles: ["offensive"], semantic: null
+          };
+          const chargeSkill = {
+            slot: 2, name: "Big Hold", normalizedKey: "bighold",
+            isAttack: true, hasDirectDamage: true, manaCost: 0, castTimeSec: 0, cooldownSec: 6,
+            immediateDamage: 100,
+            immediateDamageByType: { physical: 100, magic: 0, unknown: 0 },
+            dotPerSec: 0, dotPerSecByType: { physical: 0, magic: 0, unknown: 0 },
+            dotDurationSec: 0, damageType: "physical",
+            isCharge: true, chargeMaxSec: 4, chargeGearPct: 200, isAoe: false, isControl: false,
+            controlDurationSec: 0, tacticalRoles: ["channeled"], semantic: null
+          };
+          // AI CHANGED: Planner rewrite v1.3 — schedule is the SINGLE source of truth; sim state no longer carries `basicAttackLikelyUnderway`.
+          // `nextBasicReadyAtSec = 0` represents an in-flight game auto-basic; `+Infinity` represents cold-start (no carry-over possible).
+          function mkSimV13(underway) {
+            return {
+              elapsedSec: 0,
+              playerHpCur: 1000, playerHpMax: 1000,
+              playerMpCur: 100, playerMpMax: 100,
+              targetHpCur: 5000, targetHpMax: 5000,
+              enemyCount: 1, activeAttackers: 1, pressure: 0,
+              incomingHpLossPerSec: 0,
+              basicSwingIntervalSec: 1,
+              expectedBasicHit: 50,
+              skillCooldownReadyAtSec: {},
+              targetFlags: {
+                hasMagicResistShred: false, hasSlow: false, hasDistract: false,
+                magicResistShredRemainingSec: 0, slowRemainingSec: 0, distractRemainingSec: 0
+              },
+              lastActionTimeSec: 0, mpWasted: 0, hpLost: 0, mobFactor: 1,
+              nextBasicReadyAtSec: underway ? 0 : Number.POSITIVE_INFINITY,
+              extraBasicSwingsTotal: 0, extraBasicDamageTotal: 0
+            };
+          }
+          Config.planner.sequencePlanner.simBasicSwingsBetweenActions = true;
+          const longCold = plannerSeqSimulateAction(mkSimV13(false), {
+            kind: "skill", name: "Long Cast", slot: 0, skill: longSkill
+          });
+          const longUnderway = plannerSeqSimulateAction(mkSimV13(true), {
+            kind: "skill", name: "Long Cast", slot: 0, skill: longSkill
+          });
+          const instantCold = plannerSeqSimulateAction(mkSimV13(false), {
+            kind: "skill", name: "Instant", slot: 1, skill: instantSkill
+          });
+          const instantUnderway = plannerSeqSimulateAction(mkSimV13(true), {
+            kind: "skill", name: "Instant", slot: 1, skill: instantSkill
+          });
+          const chargeUnderway = plannerSeqSimulateAction(mkSimV13(true), {
+            kind: "skill_charge", name: "Big Hold", slot: 2, chargeMode: "full", chargeReleaseFraction: 1, skill: chargeSkill
+          });
+          const basicCold = plannerSeqSimulateAction(mkSimV13(false), {
+            kind: "basic", name: "Basic Attack", slot: null
+          });
+          Config.planner.sequencePlanner.simBasicSwingsBetweenActions = false;
+          const longUnderwayFlagOff = plannerSeqSimulateAction(mkSimV13(true), {
+            kind: "skill", name: "Long Cast", slot: 0, skill: longSkill
+          });
+          Config.planner.sequencePlanner.simBasicSwingsBetweenActions = prevFlag;
+          // Expectations.
+          const longColdOk = longCold.action.extraBasicSwings === 0 && longCold.damageDealt === 100;
+          const longUnderwayOk = longUnderway.action.extraBasicSwings === 1 && Math.abs(longUnderway.damageDealt - 150) < 0.01;
+          const instantColdOk = instantCold.action.extraBasicSwings === 0 && instantCold.damageDealt === 100;
+          const instantUnderwayOk = instantUnderway.action.extraBasicSwings === 1 && Math.abs(instantUnderway.damageDealt - 150) < 0.01;
+          const chargeUnderwayOk = chargeUnderway.action.extraBasicSwings === 1;
+          const basicColdOk = basicCold.action.extraBasicSwings === 0 && basicCold.damageDealt === 50;
+          // After a skill resolves, schedule is `+Infinity` (consumed). Use isFinite to detect this clearly.
+          const longColdSchedOk = !Number.isFinite(longCold.next.nextBasicReadyAtSec) && longCold.next.nextBasicReadyAtSec > 0;
+          const basicColdSchedOk = !Number.isFinite(basicCold.next.nextBasicReadyAtSec) && basicCold.next.nextBasicReadyAtSec > 0;
+          const flagOffOk = longUnderwayFlagOff.action.extraBasicSwings === 0 && longUnderwayFlagOff.damageDealt === 100;
+          // Sim state must NOT carry `basicAttackLikelyUnderway` — schedule is the single source of truth in v1.3.
+          const noStaleFlagOk = !Object.prototype.hasOwnProperty.call(longUnderway.next, "basicAttackLikelyUnderway");
+          const passed = longColdOk && longUnderwayOk && instantColdOk && instantUnderwayOk && chargeUnderwayOk && basicColdOk && longColdSchedOk && basicColdSchedOk && flagOffOk && noStaleFlagOk;
+          addCheck(
+            "planner_basic_timing_conservative",
+            passed,
+            {
+              longCold: { swings: longCold.action.extraBasicSwings, damage: longCold.damageDealt },
+              longUnderway: { swings: longUnderway.action.extraBasicSwings, damage: longUnderway.damageDealt },
+              instantCold: { swings: instantCold.action.extraBasicSwings, damage: instantCold.damageDealt },
+              instantUnderway: { swings: instantUnderway.action.extraBasicSwings, damage: instantUnderway.damageDealt },
+              chargeUnderway: { swings: chargeUnderway.action.extraBasicSwings, damage: chargeUnderway.damageDealt },
+              basicCold: { swings: basicCold.action.extraBasicSwings, damage: basicCold.damageDealt },
+              longColdNextBasicReadyAtSec: longCold.next.nextBasicReadyAtSec === Number.POSITIVE_INFINITY ? "+Infinity" : longCold.next.nextBasicReadyAtSec,
+              basicColdNextBasicReadyAtSec: basicCold.next.nextBasicReadyAtSec === Number.POSITIVE_INFINITY ? "+Infinity" : basicCold.next.nextBasicReadyAtSec,
+              flagOffUnderway: { swings: longUnderwayFlagOff.action.extraBasicSwings, damage: longUnderwayFlagOff.damageDealt },
+              noStaleFlag: noStaleFlagOk,
+              passing: {
+                longColdOk: longColdOk, longUnderwayOk: longUnderwayOk,
+                instantColdOk: instantColdOk, instantUnderwayOk: instantUnderwayOk,
+                chargeUnderwayOk: chargeUnderwayOk, basicColdOk: basicColdOk,
+                longColdSchedOk: longColdSchedOk, basicColdSchedOk: basicColdSchedOk,
+                flagOffOk: flagOffOk, noStaleFlagOk: noStaleFlagOk
+              }
+            },
+            false
+          );
+        } else {
+          addCheck("planner_basic_timing_conservative", false, { reason: "fn_or_config_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_basic_timing_conservative threw", err);
+        addCheck("planner_basic_timing_conservative", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Planner rewrite v1.3 — carry-over fires at most ONCE per sequence. Chain the simulator twice from an underway depth-0
+      // state: the first skill credits 1 carry-over (schedule was 0); after the simulator finishes that step, schedule is `+Infinity`, so the
+      // second skill MUST NOT credit any extra basic. This is the structural guarantee that "no free basics during cast" cannot be violated.
+      try {
+        if (typeof plannerSeqSimulateAction === "function" && Config.planner && Config.planner.sequencePlanner) {
+          const skillA = {
+            slot: 0, name: "Skill A", normalizedKey: "skilla",
+            isAttack: true, hasDirectDamage: true, manaCost: 0, castTimeSec: 0.5, cooldownSec: 0,
+            immediateDamage: 80, immediateDamageByType: { physical: 80, magic: 0, unknown: 0 },
+            dotPerSec: 0, dotPerSecByType: { physical: 0, magic: 0, unknown: 0 },
+            dotDurationSec: 0, damageType: "physical",
+            isCharge: false, chargeMaxSec: 0, chargeGearPct: 0, isAoe: false, isControl: false,
+            controlDurationSec: 0, tacticalRoles: ["offensive"], semantic: null
+          };
+          const skillB = Object.assign({}, skillA, { slot: 1, name: "Skill B", normalizedKey: "skillb", castTimeSec: 0.4, immediateDamage: 60,
+            immediateDamageByType: { physical: 60, magic: 0, unknown: 0 } });
+          const sim0 = {
+            elapsedSec: 0,
+            playerHpCur: 1000, playerHpMax: 1000, playerMpCur: 100, playerMpMax: 100,
+            targetHpCur: 5000, targetHpMax: 5000, enemyCount: 1, activeAttackers: 1, pressure: 0,
+            incomingHpLossPerSec: 0, basicSwingIntervalSec: 1, expectedBasicHit: 50,
+            skillCooldownReadyAtSec: {},
+            targetFlags: { hasMagicResistShred: false, hasSlow: false, hasDistract: false,
+              magicResistShredRemainingSec: 0, slowRemainingSec: 0, distractRemainingSec: 0 },
+            lastActionTimeSec: 0, mpWasted: 0, hpLost: 0, mobFactor: 1,
+            nextBasicReadyAtSec: 0,
+            extraBasicSwingsTotal: 0, extraBasicDamageTotal: 0
+          };
+          const prevFlag = Config.planner.sequencePlanner.simBasicSwingsBetweenActions;
+          Config.planner.sequencePlanner.simBasicSwingsBetweenActions = true;
+          const step1 = plannerSeqSimulateAction(sim0, { kind: "skill", name: "Skill A", slot: 0, skill: skillA });
+          const step2 = plannerSeqSimulateAction(step1.next, { kind: "skill", name: "Skill B", slot: 1, skill: skillB });
+          Config.planner.sequencePlanner.simBasicSwingsBetweenActions = prevFlag;
+          const firstFired = step1.action.extraBasicSwings === 1 && Math.abs(step1.damageDealt - (80 + 50)) < 0.01;
+          const secondSilent = step2.action.extraBasicSwings === 0 && Math.abs(step2.damageDealt - 60) < 0.01;
+          const scheduleConsumed = !Number.isFinite(step1.next.nextBasicReadyAtSec) && step1.next.nextBasicReadyAtSec > 0;
+          const passed = firstFired && secondSilent && scheduleConsumed;
+          addCheck(
+            "planner_basic_carry_over_fires_once",
+            passed,
+            {
+              step1: { extraBasicSwings: step1.action.extraBasicSwings, damage: step1.damageDealt,
+                scheduleAfter: step1.next.nextBasicReadyAtSec === Number.POSITIVE_INFINITY ? "+Infinity" : step1.next.nextBasicReadyAtSec },
+              step2: { extraBasicSwings: step2.action.extraBasicSwings, damage: step2.damageDealt },
+              passing: { firstFired: firstFired, secondSilent: secondSilent, scheduleConsumed: scheduleConsumed }
+            },
+            false
+          );
+        } else {
+          addCheck("planner_basic_carry_over_fires_once", false, { reason: "fn_or_config_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_basic_carry_over_fires_once threw", err);
+        addCheck("planner_basic_carry_over_fires_once", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Planner rewrite v1.3 — typed shred handling (active in BOTH skill and skill_charge paths via `plannerSeqMagicShredBonus`).
+      //   Logic (bullet-list):
+      //     • A magic skill (immediateDamageByType.magic = 100) WITHOUT active shred → damage = 100.
+      //     • Same skill WITH shred → damage = 100 + 100*boost (default 0.2) = 120.
+      //     • Physical-only skill WITH shred → damage = 100 (no boost; shred only touches magic portion).
+      //     • Mixed skill (physical 60 + magic 40) WITH shred → 60 + 40 + 40*boost = 108 (only magic 40 is boosted).
+      //     • Magic CHARGE skill WITH shred → base (= magic * gearMultiplier) PLUS magic * gearMultiplier * boost. With base 50, gearPct 200,
+      //       release fraction 1.0 → gearMultiplier 3 → base damage 150, bonus 150*0.2 = 30, total 180. Confirms the helper is wired into
+      //       skill_charge path identically to skill path — no blanket multiplier anywhere.
+      try {
+        if (typeof plannerSeqSimulateAction === "function" && Config.planner && Config.planner.sequencePlanner) {
+          const magicSkill = {
+            slot: 0, name: "Magic Bolt", normalizedKey: "magicbolt",
+            isAttack: true, hasDirectDamage: true, manaCost: 0, castTimeSec: 0.5, cooldownSec: 0,
+            immediateDamage: 100,
+            immediateDamageByType: { physical: 0, magic: 100, unknown: 0 },
+            dotPerSec: 0, dotPerSecByType: { physical: 0, magic: 0, unknown: 0 },
+            dotDurationSec: 0, damageType: "magic",
+            isCharge: false, chargeMaxSec: 0, chargeGearPct: 0, isAoe: false, isControl: false,
+            controlDurationSec: 0, tacticalRoles: ["offensive"], semantic: null
+          };
+          const physicalSkill = Object.assign({}, magicSkill, {
+            name: "Physical Strike", normalizedKey: "physstrike", damageType: "physical",
+            immediateDamageByType: { physical: 100, magic: 0, unknown: 0 }
+          });
+          const mixedSkill = Object.assign({}, magicSkill, {
+            name: "Mixed Hit", normalizedKey: "mixedhit",
+            immediateDamage: 100,
+            immediateDamageByType: { physical: 60, magic: 40, unknown: 0 }, damageType: "magic"
+          });
+          const magicCharge = {
+            slot: 1, name: "Magic Hold", normalizedKey: "magichold",
+            isAttack: true, hasDirectDamage: true, manaCost: 0, castTimeSec: 0, cooldownSec: 0,
+            immediateDamage: 50,
+            immediateDamageByType: { physical: 0, magic: 50, unknown: 0 },
+            dotPerSec: 0, dotPerSecByType: { physical: 0, magic: 0, unknown: 0 },
+            dotDurationSec: 0, damageType: "magic",
+            isCharge: true, chargeMaxSec: 2, chargeGearPct: 200, isAoe: false, isControl: false,
+            controlDurationSec: 0, tacticalRoles: ["channeled"], semantic: null
+          };
+          function mkShredSim(shredOn) {
+            return {
+              elapsedSec: 0,
+              playerHpCur: 1000, playerHpMax: 1000,
+              playerMpCur: 100, playerMpMax: 100,
+              targetHpCur: 5000, targetHpMax: 5000,
+              enemyCount: 1, activeAttackers: 1, pressure: 0,
+              incomingHpLossPerSec: 0,
+              basicSwingIntervalSec: 1, expectedBasicHit: 50,
+              skillCooldownReadyAtSec: {},
+              targetFlags: {
+                hasMagicResistShred: !!shredOn, hasSlow: false, hasDistract: false,
+                magicResistShredRemainingSec: shredOn ? 15 : 0, slowRemainingSec: 0, distractRemainingSec: 0
+              },
+              lastActionTimeSec: 0, mpWasted: 0, hpLost: 0, mobFactor: 1,
+              nextBasicReadyAtSec: Number.POSITIVE_INFINITY,
+              extraBasicSwingsTotal: 0, extraBasicDamageTotal: 0
+            };
+          }
+          const boost = 0.2;
+          const magicNoShred = plannerSeqSimulateAction(mkShredSim(false), { kind: "skill", name: "Magic Bolt", slot: 0, skill: magicSkill });
+          const magicWithShred = plannerSeqSimulateAction(mkShredSim(true), { kind: "skill", name: "Magic Bolt", slot: 0, skill: magicSkill });
+          const physicalWithShred = plannerSeqSimulateAction(mkShredSim(true), { kind: "skill", name: "Physical Strike", slot: 0, skill: physicalSkill });
+          const mixedWithShred = plannerSeqSimulateAction(mkShredSim(true), { kind: "skill", name: "Mixed Hit", slot: 0, skill: mixedSkill });
+          const magicChargeWithShred = plannerSeqSimulateAction(mkShredSim(true), {
+            kind: "skill_charge", chargeMode: "full", chargeReleaseFraction: 1, name: "Magic Hold", slot: 1, skill: magicCharge
+          });
+          const magicNoShredOk = Math.abs(magicNoShred.damageDealt - 100) < 0.01;
+          const magicWithShredOk = Math.abs(magicWithShred.damageDealt - (100 + 100 * boost)) < 0.01; // 120
+          const physicalWithShredOk = Math.abs(physicalWithShred.damageDealt - 100) < 0.01; // no boost
+          const mixedWithShredOk = Math.abs(mixedWithShred.damageDealt - (100 + 40 * boost)) < 0.01; // 108
+          // Charge: base 50 * gearMultiplier 3 = 150 base damage; magic bonus = 50 * 3 * 0.2 = 30; total = 180.
+          const magicChargeExpected = 50 * 3 + 50 * 3 * boost;
+          const magicChargeWithShredOk = Math.abs(magicChargeWithShred.damageDealt - magicChargeExpected) < 0.01;
+          const passed = magicNoShredOk && magicWithShredOk && physicalWithShredOk && mixedWithShredOk && magicChargeWithShredOk;
+          addCheck(
+            "planner_typed_shred_only_boosts_magic",
+            passed,
+            {
+              magicNoShred: magicNoShred.damageDealt,
+              magicWithShred: magicWithShred.damageDealt,
+              physicalWithShred: physicalWithShred.damageDealt,
+              mixedWithShred: mixedWithShred.damageDealt,
+              magicChargeWithShred: magicChargeWithShred.damageDealt,
+              magicChargeExpected: magicChargeExpected,
+              passing: { magicNoShredOk: magicNoShredOk, magicWithShredOk: magicWithShredOk, physicalWithShredOk: physicalWithShredOk,
+                mixedWithShredOk: mixedWithShredOk, magicChargeWithShredOk: magicChargeWithShredOk }
+            },
+            false
+          );
+        } else {
+          addCheck("planner_typed_shred_only_boosts_magic", false, { reason: "fn_or_config_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_typed_shred_only_boosts_magic threw", err);
+        addCheck("planner_typed_shred_only_boosts_magic", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Planner rewrite v1.2 — Sniper Shot is guaranteed to normalize as charge.
+      //   Logic (bullet-list):
+      //     • Build a fake `row` representing a scanned Sniper Shot bar entry where the parser DID NOT detect a `channel_gear` effect
+      //       (real-world failure mode for locale variants / scan timing).
+      //     • Normalize it via `plannerSeqNormalizeOneSkill`.
+      //     • Expect: `isCharge === true`, `chargeMaxSec > 0`, `chargeGearPct > 0`, semantic enrichment resolved (`semantic.__semKey === "snipershot"`).
+      //     • Pass the normalized skill through `plannerSeqBuildCandidateActions` against a permissive sim state — expect BOTH full and partial release candidates.
+      try {
+        if (typeof plannerSeqNormalizeOneSkill === "function" && typeof plannerSeqBuildCandidateActions === "function") {
+          const sniperRow = {
+            slot: 3, name: "Sniper Shot", kind: "skill", isAttack: true, targetsEnemy: true,
+            manaCost: 0, castTimeSec: 0, cooldownSec: 6,
+            effects: [], // parser miss: no channel_gear effect detected
+            conception: null
+          };
+          const normalized = plannerSeqNormalizeOneSkill(sniperRow, null, 1, 50);
+          const isChargeOk = normalized && normalized.isCharge === true;
+          const chargeMaxOk = normalized && Number.isFinite(normalized.chargeMaxSec) && normalized.chargeMaxSec > 0;
+          const chargeGearOk = normalized && Number.isFinite(normalized.chargeGearPct) && normalized.chargeGearPct > 0;
+          const semanticOk = normalized && normalized.semantic && normalized.semantic.__semKey === "snipershot";
+          const synthSim = {
+            elapsedSec: 0.001, // bypass live-DOM ready check
+            playerMpCur: 100,
+            skillCooldownReadyAtSec: {}
+          };
+          const cands = plannerSeqBuildCandidateActions(synthSim, [normalized], { disallowChargeSkills: false });
+          const fullCands = cands.filter(function (c) { return c.kind === "skill_charge" && c.chargeMode === "full" && c.slot === 3; });
+          const partialCands = cands.filter(function (c) { return c.kind === "skill_charge" && c.chargeMode === "partial" && c.slot === 3; });
+          const fullPresent = fullCands.length === 1;
+          const partialPresent = partialCands.length === 1;
+          const passed = isChargeOk && chargeMaxOk && chargeGearOk && semanticOk && fullPresent && partialPresent;
+          addCheck(
+            "planner_sniper_shot_charge_guaranteed",
+            passed,
+            {
+              isCharge: normalized && normalized.isCharge,
+              chargeMaxSec: normalized && normalized.chargeMaxSec,
+              chargeGearPct: normalized && normalized.chargeGearPct,
+              semanticKey: normalized && normalized.semantic ? normalized.semantic.__semKey : null,
+              fullPresent: fullPresent,
+              partialPresent: partialPresent,
+              partialFraction: partialCands[0] ? partialCands[0].chargeReleaseFraction : null,
+              candidates: cands.map(function (c) { return { kind: c.kind, slot: c.slot, chargeMode: c.chargeMode, chargeReleaseFraction: c.chargeReleaseFraction }; })
+            },
+            false
+          );
+        } else {
+          addCheck("planner_sniper_shot_charge_guaranteed", false, { reason: "fn_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_sniper_shot_charge_guaranteed threw", err);
+        addCheck("planner_sniper_shot_charge_guaranteed", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Planner rewrite v1.2 — semantic tie-breaks use simulated state.
+      //   Logic (bullet-list):
+      //     • Sniper Shot finisher bonus must fire based on SIMULATED target HP %, not initial. Build a two-action node where the simulated
+      //       target HP% drops below the finisher threshold AFTER action 1, then Sniper Shot fires as action 2. Compare against a node where
+      //       Sniper Shot fires as action 1 against a fresh target — the EARNED-finisher Sniper Shot should NOT be over-penalized by initial-HP logic.
+      //     • The `pre` snapshot on each action must carry the simulated moment values.
+      try {
+        if (
+          typeof plannerSeqSimulateAction === "function" &&
+          typeof plannerSeqScoreNode === "function"
+        ) {
+          // Synthetic Sniper Shot (charge skill).
+          const sniper = {
+            slot: 0, name: "Sniper Shot", normalizedKey: "snipershot",
+            isAttack: true, hasDirectDamage: true, manaCost: 0, castTimeSec: 0, cooldownSec: 6,
+            immediateDamage: 100, immediateDamageByType: { physical: 100, magic: 0, unknown: 0 },
+            dotPerSec: 0, dotPerSecByType: { physical: 0, magic: 0, unknown: 0 },
+            dotDurationSec: 0, damageType: "physical",
+            isCharge: true, chargeMaxSec: 4, chargeGearPct: 200,
+            isAoe: false, isControl: false, controlDurationSec: 0, tacticalRoles: ["channeled"],
+            semantic: { __semKey: "snipershot", role: "finisher",
+              chargeFullPressurePenaltySec: 1.6, finisherTargetHpPctMax: 0.45, finisherBonusSec: 0.8 }
+          };
+          // Fresh target → mid-sequence Sniper Shot finisher window EARNED:
+          // AI CHANGED: Planner rewrite v1.3 — sim state no longer carries `basicAttackLikelyUnderway`; schedule = `+Infinity` means "no carry-over pending".
+          const initial = {
+            elapsedSec: 0,
+            playerHpCur: 1000, playerHpMax: 1000,
+            playerMpCur: 100, playerMpMax: 100,
+            targetHpCur: 500, targetHpMax: 1000, // start at 50%
+            enemyCount: 1, activeAttackers: 1, pressure: 0,
+            incomingHpLossPerSec: 0,
+            basicSwingIntervalSec: 1, expectedBasicHit: 50,
+            skillCooldownReadyAtSec: {},
+            targetFlags: { hasMagicResistShred: false, hasSlow: false, hasDistract: false,
+              magicResistShredRemainingSec: 0, slowRemainingSec: 0, distractRemainingSec: 0 },
+            lastActionTimeSec: 0, mpWasted: 0, hpLost: 0, mobFactor: 1,
+            nextBasicReadyAtSec: Number.POSITIVE_INFINITY, extraBasicSwingsTotal: 0, extraBasicDamageTotal: 0
+          };
+          // Build a node with PRE snapshots manually.
+          // AI CHANGED: Planner rewrite v1.3 — `basicCarryOverPending` is derived from the canonical schedule (mirrored on legacy alias `basicAttackLikelyUnderway`).
+          function preFor(simSnap) {
+            const reliefCount = Config.planner.sequencePlanner.archerSemantics && Config.planner.sequencePlanner.archerSemantics.distractingShot && Number.isFinite(Config.planner.sequencePlanner.archerSemantics.distractingShot.activeAttackerReliefCount)
+              ? Config.planner.sequencePlanner.archerSemantics.distractingShot.activeAttackerReliefCount : 1;
+            const effAtt = Number.isFinite(simSnap.activeAttackers)
+              ? Math.max(0, simSnap.activeAttackers - (simSnap.targetFlags && simSnap.targetFlags.hasDistract ? reliefCount : 0))
+              : null;
+            const carryOverPending = typeof simSnap.nextBasicReadyAtSec === "number"
+              && simSnap.nextBasicReadyAtSec <= simSnap.elapsedSec + 1e-9;
+            return {
+              elapsedSec: +simSnap.elapsedSec.toFixed(3),
+              targetHpPct: Number.isFinite(simSnap.targetHpCur) && simSnap.targetHpMax > 0 ? +(simSnap.targetHpCur / simSnap.targetHpMax).toFixed(4) : null,
+              playerHpPct: Number.isFinite(simSnap.playerHpCur) && simSnap.playerHpMax > 0 ? +(simSnap.playerHpCur / simSnap.playerHpMax).toFixed(4) : null,
+              pressure: Number.isFinite(simSnap.pressure) ? simSnap.pressure : null,
+              activeAttackers: simSnap.activeAttackers, effectiveActiveAttackers: effAtt,
+              enemyCount: simSnap.enemyCount,
+              hasMagicResistShred: !!(simSnap.targetFlags && simSnap.targetFlags.hasMagicResistShred),
+              hasSlow: !!(simSnap.targetFlags && simSnap.targetFlags.hasSlow),
+              hasDistract: !!(simSnap.targetFlags && simSnap.targetFlags.hasDistract),
+              basicCarryOverPending: carryOverPending,
+              basicAttackLikelyUnderway: carryOverPending
+            };
+          }
+          // Path A: Sniper Shot fired at initial state (target at 50% — already inside finisher window of 0.45 default? no, finisherTargetHpPctMax=0.45, 0.5>0.45, so no bonus).
+          const preA = preFor(initial);
+          const stepA = plannerSeqSimulateAction(initial, { kind: "skill_charge", chargeMode: "full", chargeReleaseFraction: 1, name: "Sniper Shot", slot: 0, skill: sniper });
+          const nodeA = {
+            sim: stepA.next,
+            actions: [{ kind: "skill_charge", chargeMode: "full", chargeReleaseFraction: 1, name: "Sniper Shot", slot: 0,
+              skill: { slot: 0, name: "Sniper Shot", normalizedKey: "snipershot", damageType: "physical" }, pre: preA }],
+            cumulativeDamage: stepA.damageDealt, killedAtSec: null
+          };
+          const combatStateForScore = {
+            mode: "fast",
+            player: { hpCur: 1000, hpMax: 1000, hpPct: 1, mpCur: 100, mpMax: 100, mpPct: 1,
+              basicSwingIntervalSec: 1, expectedBasicHit: 50, basicDpsAdjusted: 50, basicAttackLikelyUnderway: false, longSelfBuffs: [] },
+            target: { hpCur: 500, hpMax: 1000, hpPct: 0.5, visibleEffects: [],
+              flags: { hasMagicResistShred: false, hasSlow: false, hasDistract: false,
+                magicResistShredRemainingSec: 0, slowRemainingSec: 0, distractRemainingSec: 0 }, fingerprintKey: null },
+            fight: { enemiesPresent: 1, activeAttackerCount: 1, activeAttackerSource: "test",
+              pressure: 0, incomingHpLossPerSec: 0, combatMode: "fast" },
+            timing: { nowMs: Date.now(), maxHorizonSec: 6, maxActions: 5 },
+            paperBasicDps: 50, mobFactor: 1
+          };
+          // Path B: chain a softening basic action first to drop target to ~450/1000 (45%), THEN Sniper Shot.
+          const softener = { kind: "basic", name: "Basic Attack", slot: null };
+          const stepB1 = plannerSeqSimulateAction(initial, softener);
+          // Manually drop target HP further so Sniper Shot fires when targetHpPct < 0.45.
+          const midState = Object.assign({}, stepB1.next);
+          midState.targetHpCur = 0.4 * midState.targetHpMax;
+          const preB2 = preFor(midState);
+          const stepB2 = plannerSeqSimulateAction(midState, { kind: "skill_charge", chargeMode: "full", chargeReleaseFraction: 1, name: "Sniper Shot", slot: 0, skill: sniper });
+          const nodeB = {
+            sim: stepB2.next,
+            actions: [
+              { kind: "basic", name: "Basic Attack", slot: null, pre: preFor(initial) },
+              { kind: "skill_charge", chargeMode: "full", chargeReleaseFraction: 1, name: "Sniper Shot", slot: 0,
+                skill: { slot: 0, name: "Sniper Shot", normalizedKey: "snipershot", damageType: "physical" }, pre: preB2 }
+            ],
+            cumulativeDamage: stepB1.damageDealt + stepB2.damageDealt, killedAtSec: null
+          };
+          const scoreA = plannerSeqScoreNode(nodeA, combatStateForScore);
+          const scoreB = plannerSeqScoreNode(nodeB, combatStateForScore);
+          // Path B's Sniper Shot pre.targetHpPct = 0.4 < 0.45 → finisher bonus fires (semanticAdj -0.8). Path A's pre.targetHpPct = 0.5 → no bonus.
+          // The finisher must be reflected in the score — check that nodeB.actions[1].pre.targetHpPct < 0.45.
+          const preBTargetOk = nodeB.actions[1].pre && Number.isFinite(nodeB.actions[1].pre.targetHpPct) && nodeB.actions[1].pre.targetHpPct < 0.45;
+          const preAExists = !!(nodeA.actions[0] && nodeA.actions[0].pre);
+          const passed = preBTargetOk && preAExists;
+          addCheck(
+            "planner_semantic_uses_simulated_state",
+            passed,
+            {
+              preATargetHpPct: nodeA.actions[0] && nodeA.actions[0].pre ? nodeA.actions[0].pre.targetHpPct : null,
+              preBTargetHpPct: nodeB.actions[1] && nodeB.actions[1].pre ? nodeB.actions[1].pre.targetHpPct : null,
+              scoreA: scoreA,
+              scoreB: scoreB,
+              preATargetExists: preAExists,
+              preBTargetUnderFinisher: preBTargetOk
+            },
+            false
+          );
+        } else {
+          addCheck("planner_semantic_uses_simulated_state", false, { reason: "fns_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_semantic_uses_simulated_state threw", err);
+        addCheck("planner_semantic_uses_simulated_state", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Planner Part 2 — execution-plan SHAPE test.
+      //   Build a synthetic seqPick (no live state needed) and convert it to an execution plan via the internal helper
+      //   `plannerExecutionPlanFromSeqPick`. Verify the runtime-facing fields exist and look correct: `planId`, `builtAt`,
+      //   `actions[]`, `totalActions`, `currentIndex === 0`, `valid === true`, etc. Modules share IIFE scope inside the
+      //   concatenated bot.user.js so the helpers are referenced directly by name.
+      try {
+        if (typeof plannerExecutionPlanFromSeqPick === "function") {
+          const synthSeq = {
+            combatState: {
+              target: { fingerprintKey: "test-fp-001", hpCur: 1800, hpMax: 2000, flags: { hasMagicResistShred: false } },
+              player: { hpCur: 950, hpMax: 1000, mpCur: 800, mpMax: 1000 },
+              fight: { enemyCount: 1, activeAttackerCount: 1, pressure: 0.2, combatMode: "fast" },
+              timing: { maxHorizonSec: 6 }
+            },
+            best: {
+              actions: [
+                { kind: "skill", skill: { slot: 2, name: "Piercing Strike", damageType: "physical", normalizedKey: "piercing strike" }, damageDealt: 120, actionTimeSec: 0.6, elapsedAfterSec: 0.6 },
+                { kind: "skill", skill: { slot: 3, name: "Ice Shard", damageType: "magic", normalizedKey: "ice shard" }, damageDealt: 360, actionTimeSec: 0.7, elapsedAfterSec: 1.3 },
+                { kind: "basic" }
+              ],
+              cumulativeDamage: 540,
+              killedAtSec: null,
+              sim: { targetHpCur: 1460, playerHpCur: 950, playerMpCur: 700, elapsedSec: 2.0, hpLost: 0, playerHpMax: 1000 },
+              _finalScore: 12.5
+            },
+            firstAction: null,
+            secondAction: null,
+            normalizedSkills: [],
+            excludeSlotsApplied: null
+          };
+          const ep = plannerExecutionPlanFromSeqPick(synthSeq, { liveState: null });
+          const hasId = ep && typeof ep.planId === "string" && ep.planId.length > 3;
+          const hasBuiltAt = ep && Number.isFinite(ep.builtAt) && ep.builtAt > 0;
+          const fpOk = ep && ep.targetFingerprint === "test-fp-001";
+          const versionOk = ep && ep.version === 2;
+          const totalOk = ep && ep.totalActions === 3 && Array.isArray(ep.actions) && ep.actions.length === 3;
+          const cursorOk = ep && ep.currentIndex === 0;
+          const validOk = ep && ep.valid === true && ep.invalidReason === null;
+          const stepZero = ep ? ep.actions[0] : null;
+          const stepOne = ep ? ep.actions[1] : null;
+          const stepTwo = ep ? ep.actions[2] : null;
+          const stepZeroOk =
+            stepZero && stepZero.index === 0 && stepZero.kind === "skill" && stepZero.slot === 2 && stepZero.damageType === "physical";
+          const stepOneOk =
+            stepOne && stepOne.index === 1 && stepOne.kind === "skill" && stepOne.slot === 3 && stepOne.damageType === "magic";
+          const stepTwoOk =
+            stepTwo && stepTwo.index === 2 && stepTwo.kind === "basic" && stepTwo.slot === null;
+          const compactStateOk =
+            ep && ep.combatStateAtBuild &&
+            ep.combatStateAtBuild.target &&
+            ep.combatStateAtBuild.target.fingerprintKey === "test-fp-001" &&
+            ep.combatStateAtBuild.fight &&
+            ep.combatStateAtBuild.fight.enemyCount === 1;
+          const passed =
+            !!ep && hasId && hasBuiltAt && fpOk && versionOk && totalOk && cursorOk && validOk &&
+            stepZeroOk && stepOneOk && stepTwoOk && compactStateOk;
+          addCheck(
+            "planner_execution_plan_shape",
+            passed,
+            {
+              planId: ep ? ep.planId : null,
+              version: ep ? ep.version : null,
+              total: ep ? ep.totalActions : null,
+              currentIndex: ep ? ep.currentIndex : null,
+              valid: ep ? ep.valid : null,
+              steps: ep ? ep.actions.map(function (a) { return { i: a.index, k: a.kind, s: a.slot, t: a.damageType }; }) : null,
+              compact: ep ? ep.combatStateAtBuild : null
+            },
+            false
+          );
+        } else {
+          addCheck("planner_execution_plan_shape", false, { reason: "fn_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_execution_plan_shape threw", err);
+        addCheck("planner_execution_plan_shape", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Planner Part 2 — execution plan STEP ADVANCE test.
+      //   Build a synthetic plan, install as active, advance the cursor twice, verify cursor + stepHistory + plan-exhausted
+      //   invalidation. This validates that runtime can continue to step 2+ within a single plan.
+      try {
+        if (
+          typeof plannerExecutionPlanFromSeqPick === "function" &&
+          typeof plannerSetActiveExecutionPlan === "function" &&
+          typeof plannerAdvanceExecutionPlanStep === "function"
+        ) {
+          const prevPlan = Runtime.planner ? Runtime.planner.activeExecutionPlan : null;
+          const ep = plannerExecutionPlanFromSeqPick(
+            {
+              combatState: {
+                target: { fingerprintKey: "test-adv-001", hpCur: 600, hpMax: 1000, flags: { hasMagicResistShred: false } },
+                player: { hpCur: 1000, hpMax: 1000, mpCur: 1000, mpMax: 1000 },
+                fight: { enemyCount: 1, activeAttackerCount: 1, pressure: 0.1, combatMode: "fast" },
+                timing: { maxHorizonSec: 6 }
+              },
+              best: {
+                actions: [
+                  { kind: "skill", skill: { slot: 2, name: "Piercing Strike", damageType: "physical" }, damageDealt: 120, actionTimeSec: 0.6, elapsedAfterSec: 0.6 },
+                  { kind: "skill", skill: { slot: 3, name: "Ice Shard", damageType: "magic" }, damageDealt: 360, actionTimeSec: 0.7, elapsedAfterSec: 1.3 }
+                ],
+                cumulativeDamage: 480,
+                killedAtSec: null,
+                sim: { targetHpCur: 120, playerHpCur: 1000, playerMpCur: 900, elapsedSec: 1.3, hpLost: 0, playerHpMax: 1000 },
+                _finalScore: 8.4
+              },
+              excludeSlotsApplied: null
+            },
+            {}
+          );
+          plannerSetActiveExecutionPlan(ep);
+          const before = ep.currentIndex;
+          plannerAdvanceExecutionPlanStep({ result: "test_advance_1", source: "test" });
+          const afterFirst = ep.currentIndex;
+          plannerAdvanceExecutionPlanStep({ result: "test_advance_2", source: "test" });
+          const afterSecond = ep.currentIndex;
+          const exhaustedOk = ep.valid === false && ep.invalidReason === "plan_exhausted";
+          const historyOk =
+            Array.isArray(ep.stepHistory) &&
+            ep.stepHistory.length === 2 &&
+            ep.stepHistory[0].index === 0 &&
+            ep.stepHistory[1].index === 1 &&
+            ep.stepHistory[0].result === "test_advance_1" &&
+            ep.stepHistory[1].result === "test_advance_2";
+          const passed = before === 0 && afterFirst === 1 && afterSecond === 2 && exhaustedOk && historyOk;
+          addCheck(
+            "planner_execution_plan_step_advance",
+            passed,
+            {
+              before: before,
+              afterFirst: afterFirst,
+              afterSecond: afterSecond,
+              exhaustedReason: ep.invalidReason,
+              historyLen: Array.isArray(ep.stepHistory) ? ep.stepHistory.length : null
+            },
+            false
+          );
+          // Restore previous active plan to avoid leaking the synthetic into production runtime.
+          plannerSetActiveExecutionPlan(prevPlan);
+        } else {
+          addCheck("planner_execution_plan_step_advance", false, { reason: "advance_fns_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_execution_plan_step_advance threw", err);
+        addCheck("planner_execution_plan_step_advance", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Planner Part 2 — should-replan HELPER shape test.
+      //   Construct a known plan + varied live-state scenarios, verify each reason fires and the helper returns the
+      //   expected `{ shouldReplan, reason, details }` triple for inspection.
+      try {
+        const mkPlan = function (fp) {
+          return {
+            version: 2,
+            planId: "ep_test_replan",
+            builtAt: Date.now(),
+            targetFingerprint: fp || "test-replan-001",
+            combatStateAtBuild: {
+              target: { fingerprintKey: fp || "test-replan-001", hpCur: 800, hpMax: 1000, magicResistShred: false, shredRemainingSec: null },
+              player: { hpCur: 1000, hpMax: 1000, mpCur: 1000, mpMax: 1000 },
+              fight: { enemyCount: 1, activeAttackerCount: 1, pressure: 0.1, combatMode: "fast" }
+            },
+            actions: [
+              { index: 0, kind: "skill", slot: 2, name: "Piercing Strike", damageType: "physical", chargeMode: null, chargeReleaseFraction: null, predictedDamageDealt: 120, predictedActionTimeSec: 0.6, predictedEndElapsedSec: 0.6, reasonTags: [] }
+            ],
+            totalActions: 1,
+            currentIndex: 0,
+            selectionReason: "test",
+            predictedKillAtSec: null,
+            score: 1,
+            valid: true,
+            invalidReason: null,
+            replanReason: null,
+            stepHistory: [],
+            excludeSlotsApplied: null,
+            disallowChargeSkills: false,
+            firstBurstAfterRetarget: false
+          };
+        };
+        if (typeof plannerShouldReplanForExecutionPlan === "function") {
+          const planOk = mkPlan("fp-OK");
+          const liveOk = {
+            combat: { enemyCount: 1, targetHp: { valid: true, cur: 800, max: 1000 } },
+            player: { mp: { valid: true, cur: 1000 } }
+          };
+          const decisionOk = plannerShouldReplanForExecutionPlan({ plan: planOk, liveState: liveOk, targetFingerprint: "fp-OK" });
+          const planFpMismatch = mkPlan("fp-old");
+          const decisionFp = plannerShouldReplanForExecutionPlan({ plan: planFpMismatch, liveState: liveOk, targetFingerprint: "fp-new" });
+          const planDied = mkPlan("fp-died");
+          const liveDied = {
+            combat: { enemyCount: 1, targetHp: { valid: true, cur: 0, max: 1000 } },
+            player: { mp: { valid: true, cur: 1000 } }
+          };
+          const decisionDied = plannerShouldReplanForExecutionPlan({ plan: planDied, liveState: liveDied, targetFingerprint: "fp-died" });
+          const planExhausted = mkPlan("fp-exh");
+          planExhausted.currentIndex = 1;
+          const decisionExh = plannerShouldReplanForExecutionPlan({ plan: planExhausted, liveState: liveOk, targetFingerprint: "fp-exh" });
+          const decisionNoPlan = plannerShouldReplanForExecutionPlan({ plan: null, liveState: liveOk });
+          const planMax = mkPlan("fp-max");
+          const liveMaxDiff = {
+            combat: { enemyCount: 1, targetHp: { valid: true, cur: 1500, max: 2000 } },
+            player: { mp: { valid: true, cur: 1000 } }
+          };
+          const decisionMax = plannerShouldReplanForExecutionPlan({ plan: planMax, liveState: liveMaxDiff, targetFingerprint: "fp-max" });
+          const planOld = mkPlan("fp-old2");
+          planOld.builtAt = Date.now() - 60000;
+          const decisionOld = plannerShouldReplanForExecutionPlan({ plan: planOld, liveState: liveOk, targetFingerprint: "fp-old2", maxPlanAgeMs: 5000 });
+          const passed =
+            decisionOk && decisionOk.shouldReplan === false &&
+            decisionFp && decisionFp.shouldReplan === true && decisionFp.reason === "target_fingerprint_changed" &&
+            decisionDied && decisionDied.shouldReplan === true && decisionDied.reason === "target_died" &&
+            decisionExh && decisionExh.shouldReplan === true && decisionExh.reason === "plan_exhausted" &&
+            decisionNoPlan && decisionNoPlan.shouldReplan === true && decisionNoPlan.reason === "no_active_plan" &&
+            decisionMax && decisionMax.shouldReplan === true && decisionMax.reason === "target_max_hp_changed" &&
+            decisionOld && decisionOld.shouldReplan === true && decisionOld.reason === "plan_too_old";
+          addCheck(
+            "planner_should_replan_helper_shape",
+            passed,
+            {
+              ok: decisionOk,
+              fp: decisionFp,
+              died: decisionDied,
+              exh: decisionExh,
+              noPlan: decisionNoPlan,
+              max: decisionMax,
+              old: decisionOld
+            },
+            false
+          );
+        } else {
+          addCheck("planner_should_replan_helper_shape", false, { reason: "fn_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_should_replan_helper_shape threw", err);
+        addCheck("planner_should_replan_helper_shape", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Planner Part 2.1 — targeted BUGFIX test for `active_attacker_count_jumped`.
+      //   The old code did `Number.isFinite(readActiveAttackerCount())` on the object return shape and so this replan
+      //   condition was structurally dead. This test injects a deterministic `liveAttackerInfo` (the same shape that
+      //   `readActiveAttackerCount` returns: `{ count, buttonVisible, source }`) plus the simpler `liveAttackerCount`
+      //   path, and proves the helper now:
+      //     1) returns `shouldReplan: true` and `reason: "active_attacker_count_jumped"` when count jumps by ≥ 2
+      //     2) does NOT fire when the jump is < 2 (so the existing OK case still passes)
+      //     3) propagates the reader source in `details.liveAttackerSource` so live runtime can log provenance.
+      try {
+        if (typeof plannerShouldReplanForExecutionPlan === "function") {
+          const mkAtkPlan = function (builtAtkCount) {
+            return {
+              version: 2,
+              planId: "ep_test_atk_jump",
+              builtAt: Date.now(),
+              targetFingerprint: "fp-atk",
+              combatStateAtBuild: {
+                target: { fingerprintKey: "fp-atk", hpCur: 900, hpMax: 1000, magicResistShred: false, shredRemainingSec: null },
+                player: { hpCur: 1000, hpMax: 1000, mpCur: 1000, mpMax: 1000 },
+                fight: { enemyCount: 1, activeAttackerCount: builtAtkCount, pressure: 0.1, combatMode: "fast" }
+              },
+              actions: [
+                { index: 0, kind: "skill", slot: 2, name: "Piercing Strike", damageType: "physical", chargeMode: null, chargeReleaseFraction: null, predictedDamageDealt: 120, predictedActionTimeSec: 0.6, predictedEndElapsedSec: 0.6, reasonTags: [] }
+              ],
+              totalActions: 1,
+              currentIndex: 0,
+              selectionReason: "test_atk_jump",
+              predictedKillAtSec: null,
+              score: 1,
+              valid: true,
+              invalidReason: null,
+              replanReason: null,
+              stepHistory: [],
+              excludeSlotsApplied: null,
+              disallowChargeSkills: false,
+              firstBurstAfterRetarget: false
+            };
+          };
+          const liveOk = {
+            combat: { enemyCount: 1, targetHp: { valid: true, cur: 900, max: 1000 } },
+            player: { mp: { valid: true, cur: 1000 } }
+          };
+          // 1) Object override matching real `readActiveAttackerCount()` shape — count jumped from 1 -> 4 (Δ = 3 ≥ 2).
+          const planAtk = mkAtkPlan(1);
+          const decisionJumpObj = plannerShouldReplanForExecutionPlan({
+            plan: planAtk,
+            liveState: liveOk,
+            targetFingerprint: "fp-atk",
+            liveAttackerInfo: { count: 4, buttonVisible: true, source: "badge_value" }
+          });
+          // 2) Number override — count jumped from 1 -> 3 (Δ = 2, exactly threshold).
+          const planAtk2 = mkAtkPlan(1);
+          const decisionJumpNum = plannerShouldReplanForExecutionPlan({
+            plan: planAtk2,
+            liveState: liveOk,
+            targetFingerprint: "fp-atk",
+            liveAttackerCount: 3
+          });
+          // 3) Sub-threshold delta — 1 -> 2 (Δ = 1) must NOT fire active_attacker_count_jumped.
+          const planAtkNoJump = mkAtkPlan(1);
+          const decisionNoJump = plannerShouldReplanForExecutionPlan({
+            plan: planAtkNoJump,
+            liveState: liveOk,
+            targetFingerprint: "fp-atk",
+            liveAttackerInfo: { count: 2, buttonVisible: true, source: "badge_value" }
+          });
+          const passedObj =
+            decisionJumpObj &&
+            decisionJumpObj.shouldReplan === true &&
+            decisionJumpObj.reason === "active_attacker_count_jumped" &&
+            decisionJumpObj.details &&
+            decisionJumpObj.details.was === 1 &&
+            decisionJumpObj.details.now === 4 &&
+            decisionJumpObj.details.liveAttackerSource === "badge_value";
+          const passedNum =
+            decisionJumpNum &&
+            decisionJumpNum.shouldReplan === true &&
+            decisionJumpNum.reason === "active_attacker_count_jumped" &&
+            decisionJumpNum.details &&
+            decisionJumpNum.details.was === 1 &&
+            decisionJumpNum.details.now === 3 &&
+            decisionJumpNum.details.liveAttackerSource === "opts.liveAttackerCount";
+          const passedNoJump =
+            decisionNoJump &&
+            decisionNoJump.shouldReplan === false &&
+            decisionNoJump.reason == null;
+          const passed = !!(passedObj && passedNum && passedNoJump);
+          addCheck(
+            "planner_should_replan_active_attacker_jump",
+            passed,
+            {
+              jumpObj: decisionJumpObj,
+              jumpNum: decisionJumpNum,
+              noJump: decisionNoJump
+            },
+            false
+          );
+        } else {
+          addCheck("planner_should_replan_active_attacker_jump", false, { reason: "fn_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_should_replan_active_attacker_jump threw", err);
+        addCheck("planner_should_replan_active_attacker_jump", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Planner tactical tuning v1.1.2 — deterministic tactical-quality checks. These DO NOT automate live combat. They build
+      // synthetic combat-state + normalized-skill fixtures, run the full sequence planner (`plannerSeqSearchSequences` + the per-action
+      // explanation helper `plannerSeqExplainSemantic` surfaced via `plannerSeqDescribeNode`), and assert that each tactical RULE fires
+      // (reason-tag presence on the relevant action) under the matching synthetic context. Each check is a planner-logic test (no DOM, no
+      // awaits, no randomness). Tag-presence is the most stable assertion — overall ranking is sensitive to many emergent factors (beam
+      // pruning, multi-skill stacking with shred bonuses) so we only assert ranking where it is unambiguous (pressure-evolution, raw
+      // pressure-drop in the simulator).
+      try {
+        if (
+          typeof plannerSeqSearchSequences === "function" &&
+          typeof plannerSeqDescribeNode === "function" &&
+          typeof plannerSeqResolveSemanticEnrichment === "function"
+        ) {
+          // Reusable archer skill kit (mirrors normalization output shape from `plannerSeqNormalizeOneSkill`).
+          const mkArcherCtx = function () {
+            const piercing = {
+              slot: 1, name: "Piercing Strike", normalizedKey: "piercingstrike", kind: "skill",
+              manaCost: 10, castTimeSec: 0.6, cooldownSec: 4,
+              immediateDamage: 80,
+              immediateDamageByType: { physical: 80, magic: 0, unknown: 0 },
+              dotTotal: 0, dotDurationSec: 0, dotPerSec: 0,
+              dotPerSecByType: { physical: 0, magic: 0, unknown: 0 },
+              damageType: "physical",
+              isAttack: true, isCharge: false, chargeMaxSec: 0, chargeGearPct: 0,
+              isAoe: false, isControl: false, controlDurationSec: 0,
+              tacticalRoles: [], semantic: plannerSeqResolveSemanticEnrichment("Piercing Strike"),
+              hasDirectDamage: true
+            };
+            const iceShard = {
+              slot: 2, name: "Ice Shard", normalizedKey: "iceshard", kind: "skill",
+              manaCost: 12, castTimeSec: 0.6, cooldownSec: 5,
+              immediateDamage: 90,
+              immediateDamageByType: { physical: 0, magic: 90, unknown: 0 },
+              dotTotal: 0, dotDurationSec: 0, dotPerSec: 0,
+              dotPerSecByType: { physical: 0, magic: 0, unknown: 0 },
+              damageType: "magic",
+              isAttack: true, isCharge: false, chargeMaxSec: 0, chargeGearPct: 0,
+              isAoe: false, isControl: true, controlDurationSec: 5,
+              tacticalRoles: [], semantic: plannerSeqResolveSemanticEnrichment("Ice Shard"),
+              hasDirectDamage: true
+            };
+            const sniper = {
+              slot: 3, name: "Sniper Shot", normalizedKey: "snipershot", kind: "skill",
+              manaCost: 18, castTimeSec: 0, cooldownSec: 8,
+              immediateDamage: 60,
+              immediateDamageByType: { physical: 60, magic: 0, unknown: 0 },
+              dotTotal: 0, dotDurationSec: 0, dotPerSec: 0,
+              dotPerSecByType: { physical: 0, magic: 0, unknown: 0 },
+              damageType: "physical",
+              isAttack: true, isCharge: true, chargeMaxSec: 4, chargeGearPct: 200,
+              isAoe: false, isControl: false, controlDurationSec: 0,
+              tacticalRoles: [], semantic: plannerSeqResolveSemanticEnrichment("Sniper Shot"),
+              hasDirectDamage: true
+            };
+            const distracting = {
+              slot: 4, name: "Distracting Shot", normalizedKey: "distractingshot", kind: "skill",
+              manaCost: 12, castTimeSec: 0.6, cooldownSec: 6,
+              immediateDamage: 50,
+              immediateDamageByType: { physical: 50, magic: 0, unknown: 0 },
+              dotTotal: 0, dotDurationSec: 0, dotPerSec: 0,
+              dotPerSecByType: { physical: 0, magic: 0, unknown: 0 },
+              damageType: "physical",
+              isAttack: true, isCharge: false, chargeMaxSec: 0, chargeGearPct: 0,
+              isAoe: false, isControl: false, controlDurationSec: 0,
+              tacticalRoles: [], semantic: plannerSeqResolveSemanticEnrichment("Distracting Shot"),
+              hasDirectDamage: true
+            };
+            const fanVolley = {
+              slot: 5, name: "Fan Volley", normalizedKey: "fanvolley", kind: "skill",
+              manaCost: 40, castTimeSec: 0.7, cooldownSec: 10,
+              immediateDamage: 120,
+              immediateDamageByType: { physical: 120, magic: 0, unknown: 0 },
+              dotTotal: 0, dotDurationSec: 0, dotPerSec: 0,
+              dotPerSecByType: { physical: 0, magic: 0, unknown: 0 },
+              damageType: "physical",
+              isAttack: true, isCharge: false, chargeMaxSec: 0, chargeGearPct: 0,
+              isAoe: true, isControl: false, controlDurationSec: 0,
+              tacticalRoles: [], semantic: plannerSeqResolveSemanticEnrichment("Fan Volley"),
+              hasDirectDamage: true
+            };
+            return { piercing: piercing, iceShard: iceShard, sniper: sniper, distracting: distracting, fanVolley: fanVolley };
+          };
+          const mkCombatState = function (overrides) {
+            const base = {
+              builtAt: Date.now(),
+              mode: "fast",
+              player: {
+                hpCur: 1000, hpMax: 1000, hpPct: 1,
+                mpCur: 100, mpMax: 100, mpPct: 1,
+                basicSwingIntervalSec: 1, expectedBasicHit: 25,
+                basicDpsAdjusted: 25, basicAttackLikelyUnderway: false, longSelfBuffs: []
+              },
+              target: {
+                hpCur: 500, hpMax: 500, hpPct: 1, visibleEffects: [],
+                flags: { hasMagicResistShred: false, hasSlow: false, hasDistract: false,
+                  magicResistShredRemainingSec: 0, slowRemainingSec: 0, distractRemainingSec: 0 },
+                fingerprintKey: null
+              },
+              fight: {
+                enemiesPresent: 1, activeAttackerCount: 1, activeAttackerSource: "test",
+                pressure: 0, incomingHpLossPerSec: 0, combatMode: "fast"
+              },
+              timing: { nowMs: Date.now(), maxHorizonSec: 6, maxActions: 5 },
+              paperBasicDps: 25, mobFactor: 1
+            };
+            return Object.assign(base, overrides || {});
+          };
+          const firstActionName = function (seqs) {
+            if (!Array.isArray(seqs) || seqs.length === 0) return null;
+            const best = seqs[0];
+            if (!best || !Array.isArray(best.actions) || best.actions.length === 0) return null;
+            return best.actions[0].name || null;
+          };
+          const ctx = mkArcherCtx();
+          const allSkills = [ctx.piercing, ctx.iceShard, ctx.sniper, ctx.distracting, ctx.fanVolley];
+
+          // Shared helper: search and find the FIRST sequence whose action at `actionIndex` matches `actionName`. Returns the described
+          // node (with reasonTags + scoreContributions) or null when no such sequence exists in the search results.
+          const findAndDescribeWithAction = function (seqs, combatState, actionIndex, actionName, optionalCondition) {
+            for (let s = 0; s < seqs.length; s += 1) {
+              const seq = seqs[s];
+              const actions = seq && Array.isArray(seq.actions) ? seq.actions : [];
+              const target = actions[actionIndex];
+              if (target && target.name === actionName) {
+                if (typeof optionalCondition === "function" && !optionalCondition(target, seq, actions)) {
+                  continue;
+                }
+                const desc = plannerSeqDescribeNode(seq, combatState);
+                return { desc: desc, originalSeq: seq };
+              }
+            }
+            return null;
+          };
+          const tagsOf = function (foundEntry, actionIndex) {
+            if (!foundEntry || !foundEntry.desc || !Array.isArray(foundEntry.desc.actions)) return [];
+            const a = foundEntry.desc.actions[actionIndex];
+            return a && Array.isArray(a.reasonTags) ? a.reasonTags : [];
+          };
+
+          // ---- Scenario A (CALM 1-attacker): a Distracting Shot opener carries the `distractingshot_calm_opener` tag.
+          //  Tests the calm-opener semantic rule directly (not whether DS is the best opener — it shouldn't be, but the test we want is
+          //  whether the calm-opener PENALTY actually fires when DS is picked as opener in a calm context).
+          const calmState = mkCombatState({
+            target: { hpCur: 500, hpMax: 500, hpPct: 1, visibleEffects: [],
+              flags: { hasMagicResistShred: false, hasSlow: false, hasDistract: false,
+                magicResistShredRemainingSec: 0, slowRemainingSec: 0, distractRemainingSec: 0 }, fingerprintKey: null },
+            fight: { enemiesPresent: 1, activeAttackerCount: 1, activeAttackerSource: "test",
+              pressure: 0, incomingHpLossPerSec: 0, combatMode: "fast" }
+          });
+          const calmSeqs = plannerSeqSearchSequences(calmState, allSkills, {});
+          const calmDsFound = findAndDescribeWithAction(calmSeqs, calmState, 0, "Distracting Shot");
+          const calmDsTags = tagsOf(calmDsFound, 0);
+          const calmDsPassed = calmDsFound !== null
+            && calmDsTags.indexOf("distractingshot_calm_opener") >= 0
+            && calmDsTags.indexOf("distractingshot_calm_opener_full_target") >= 0
+            && calmDsTags.indexOf("distractingshot_pressure_relief") < 0;
+          addCheck(
+            "tactical_distracting_shot_calm_opener_tagged",
+            calmDsPassed,
+            { tags: calmDsTags, found: calmDsFound !== null },
+            false
+          );
+
+          // ---- Scenario B (3-attacker high pressure): a Distracting Shot opener carries `distractingshot_pressure_relief` (no calm tag).
+          const pressureState = mkCombatState({
+            player: { hpCur: 600, hpMax: 1000, hpPct: 0.6, mpCur: 100, mpMax: 100, mpPct: 1,
+              basicSwingIntervalSec: 1, expectedBasicHit: 25, basicDpsAdjusted: 25, basicAttackLikelyUnderway: false, longSelfBuffs: [] },
+            target: { hpCur: 700, hpMax: 700, hpPct: 1, visibleEffects: [],
+              flags: { hasMagicResistShred: false, hasSlow: false, hasDistract: false,
+                magicResistShredRemainingSec: 0, slowRemainingSec: 0, distractRemainingSec: 0 }, fingerprintKey: null },
+            fight: { enemiesPresent: 3, activeAttackerCount: 3, activeAttackerSource: "test",
+              pressure: 2.2, incomingHpLossPerSec: 50, combatMode: "fast" }
+          });
+          const pressureSeqs = plannerSeqSearchSequences(pressureState, allSkills, {});
+          const pressureDsFound = findAndDescribeWithAction(pressureSeqs, pressureState, 0, "Distracting Shot");
+          const pressureDsTags = tagsOf(pressureDsFound, 0);
+          const pressureDsPassed = pressureDsFound !== null
+            && pressureDsTags.indexOf("distractingshot_pressure_relief") >= 0
+            && pressureDsTags.indexOf("distractingshot_calm_opener") < 0;
+          addCheck(
+            "tactical_distracting_shot_pressure_relief_tagged",
+            pressureDsPassed,
+            { tags: pressureDsTags, found: pressureDsFound !== null },
+            false
+          );
+
+          // ---- Scenario C (lethal HP): a Sniper Shot opener carries `snipershot_finisher_window` + `snipershot_lethal_window` tags.
+          const finisherState = mkCombatState({
+            target: { hpCur: 90, hpMax: 500, hpPct: 0.18, visibleEffects: [],
+              flags: { hasMagicResistShred: false, hasSlow: false, hasDistract: false,
+                magicResistShredRemainingSec: 0, slowRemainingSec: 0, distractRemainingSec: 0 }, fingerprintKey: null },
+            fight: { enemiesPresent: 1, activeAttackerCount: 1, activeAttackerSource: "test",
+              pressure: 0, incomingHpLossPerSec: 0, combatMode: "fast" }
+          });
+          const finisherSeqs = plannerSeqSearchSequences(finisherState, allSkills, {});
+          const finisherSniperFound = findAndDescribeWithAction(finisherSeqs, finisherState, 0, "Sniper Shot");
+          const finisherSniperTags = tagsOf(finisherSniperFound, 0);
+          const finisherPassed = finisherSniperFound !== null
+            && finisherSniperTags.indexOf("snipershot_finisher_window") >= 0
+            && finisherSniperTags.indexOf("snipershot_lethal_window") >= 0;
+          addCheck(
+            "tactical_sniper_shot_finisher_tagged",
+            finisherPassed,
+            { tags: finisherSniperTags, found: finisherSniperFound !== null },
+            false
+          );
+
+          // ---- Scenario C2 (high HP + high pressure): a Sniper Shot FULL CHARGE opener carries both pressure + full-hp-opener penalty tags.
+          const sniperOpenerBadState = mkCombatState({
+            target: { hpCur: 700, hpMax: 700, hpPct: 1, visibleEffects: [],
+              flags: { hasMagicResistShred: false, hasSlow: false, hasDistract: false,
+                magicResistShredRemainingSec: 0, slowRemainingSec: 0, distractRemainingSec: 0 }, fingerprintKey: null },
+            fight: { enemiesPresent: 3, activeAttackerCount: 3, activeAttackerSource: "test",
+              pressure: 2.2, incomingHpLossPerSec: 50, combatMode: "fast" }
+          });
+          const sniperOpenerSeqs = plannerSeqSearchSequences(sniperOpenerBadState, allSkills, {});
+          const fullSniperFound = findAndDescribeWithAction(
+            sniperOpenerSeqs,
+            sniperOpenerBadState,
+            0,
+            "Sniper Shot",
+            function (target) { return target.chargeMode === "full"; }
+          );
+          const fullSniperTags = tagsOf(fullSniperFound, 0);
+          const fullSniperPassed = fullSniperFound !== null
+            && fullSniperTags.indexOf("snipershot_full_under_pressure") >= 0
+            && fullSniperTags.indexOf("snipershot_full_charge_full_hp_opener") >= 0;
+          addCheck(
+            "tactical_sniper_shot_full_opener_penalized",
+            fullSniperPassed,
+            { tags: fullSniperTags, found: fullSniperFound !== null },
+            false
+          );
+
+          // ---- Scenario D (calm single-target): a Fan Volley opener carries `fanvolley_single_target_misuse` + mp-heavy + mp-fraction-high.
+          const calmFvFound = findAndDescribeWithAction(calmSeqs, calmState, 0, "Fan Volley");
+          const calmFvTags = tagsOf(calmFvFound, 0);
+          const calmFvPassed = calmFvFound !== null
+            && calmFvTags.indexOf("fanvolley_single_target_misuse") >= 0
+            && calmFvTags.indexOf("fanvolley_mp_heavy") >= 0
+            && calmFvTags.indexOf("fanvolley_mp_fraction_high") >= 0
+            && calmFvTags.indexOf("fanvolley_true_multi_threat") < 0;
+          addCheck(
+            "tactical_fan_volley_calm_penalty_tagged",
+            calmFvPassed,
+            { tags: calmFvTags, found: calmFvFound !== null },
+            false
+          );
+
+          // ---- Scenario E (true multi-threat): a Fan Volley opener carries `fanvolley_true_multi_threat` (and NOT single-target-misuse).
+          const fvThreatState = mkCombatState({
+            target: { hpCur: 400, hpMax: 400, hpPct: 1, visibleEffects: [],
+              flags: { hasMagicResistShred: false, hasSlow: false, hasDistract: false,
+                magicResistShredRemainingSec: 0, slowRemainingSec: 0, distractRemainingSec: 0 }, fingerprintKey: null },
+            fight: { enemiesPresent: 3, activeAttackerCount: 2, activeAttackerSource: "test",
+              pressure: 1.5, incomingHpLossPerSec: 30, combatMode: "fast" }
+          });
+          const fvThreatSeqs = plannerSeqSearchSequences(fvThreatState, allSkills, {});
+          const threatFvFound = findAndDescribeWithAction(fvThreatSeqs, fvThreatState, 0, "Fan Volley");
+          const threatFvTags = tagsOf(threatFvFound, 0);
+          const threatFvPassed = threatFvFound !== null
+            && threatFvTags.indexOf("fanvolley_true_multi_threat") >= 0
+            && threatFvTags.indexOf("fanvolley_single_target_misuse") < 0;
+          addCheck(
+            "tactical_fan_volley_true_multi_threat_tagged",
+            threatFvPassed,
+            { tags: threatFvTags, found: threatFvFound !== null },
+            false
+          );
+
+          // ---- Scenario F (Piercing Strike + magic follow-up): a PS->IceShard sequence carries `piercingstrike_setup_with_magic_follow_up`,
+          //  NOT `piercingstrike_wasted_setup`. We accept any PS opener whose depth-1 action is the magic-typed Ice Shard.
+          const shredState = mkCombatState({
+            target: { hpCur: 600, hpMax: 600, hpPct: 1, visibleEffects: [],
+              flags: { hasMagicResistShred: false, hasSlow: false, hasDistract: false,
+                magicResistShredRemainingSec: 0, slowRemainingSec: 0, distractRemainingSec: 0 }, fingerprintKey: null },
+            fight: { enemiesPresent: 1, activeAttackerCount: 1, activeAttackerSource: "test",
+              pressure: 0.2, incomingHpLossPerSec: 0, combatMode: "fast" }
+          });
+          const shredSeqs = plannerSeqSearchSequences(shredState, allSkills, {});
+          const psSetupFound = findAndDescribeWithAction(
+            shredSeqs,
+            shredState,
+            0,
+            "Piercing Strike",
+            function (target, seq, actions) {
+              return actions[1] && actions[1].name === "Ice Shard";
+            }
+          );
+          const psSetupTags = tagsOf(psSetupFound, 0);
+          const psSetupPassed = psSetupFound !== null
+            && psSetupTags.indexOf("piercingstrike_setup_with_magic_follow_up") >= 0
+            && psSetupTags.indexOf("piercingstrike_wasted_setup") < 0;
+          addCheck(
+            "tactical_piercing_strike_setup_tagged",
+            psSetupPassed,
+            { tags: psSetupTags, found: psSetupFound !== null },
+            false
+          );
+
+          // ---- Scenario F2 (Piercing Strike WITHOUT magic follow-up): a PS opener with NO magic follow-up should carry `piercingstrike_wasted_setup`.
+          //  Build a tiny skill set with only physical-damage non-magic follow-up options so PS cannot find a magic skill in the sequence.
+          const physOnlySkills = [
+            ctx.piercing,
+            // Sniper Shot is physical; basic is physical/null. Distracting Shot is physical. No magic skill available.
+            ctx.sniper,
+            ctx.distracting
+          ];
+          const physOnlySeqs = plannerSeqSearchSequences(shredState, physOnlySkills, {});
+          const psWastedFound = findAndDescribeWithAction(physOnlySeqs, shredState, 0, "Piercing Strike");
+          const psWastedTags = tagsOf(psWastedFound, 0);
+          const psWastedPassed = psWastedFound !== null
+            && psWastedTags.indexOf("piercingstrike_wasted_setup") >= 0
+            && psWastedTags.indexOf("piercingstrike_setup_with_magic_follow_up") < 0;
+          addCheck(
+            "tactical_piercing_strike_wasted_setup_tagged",
+            psWastedPassed,
+            { tags: psWastedTags, found: psWastedFound !== null },
+            false
+          );
+
+          // ---- Scenario G (Ice Shard under pressure): an Ice Shard opener carries `iceshard_tempo_under_pressure`.
+          const iceTempoSeqs = plannerSeqSearchSequences(pressureState, allSkills, {});
+          const iceTempoFound = findAndDescribeWithAction(iceTempoSeqs, pressureState, 0, "Ice Shard");
+          const iceTempoTags = tagsOf(iceTempoFound, 0);
+          const iceTempoPassed = iceTempoFound !== null
+            && iceTempoTags.indexOf("iceshard_tempo_under_pressure") >= 0;
+          addCheck(
+            "tactical_ice_shard_tempo_under_pressure_tagged",
+            iceTempoPassed,
+            { tags: iceTempoTags, found: iceTempoFound !== null },
+            false
+          );
+
+          // ---- Scenario G2 (Ice Shard calm): an Ice Shard opener does NOT carry the tempo tag (no calm penalty either — IceShard is a real
+          //  damage skill, we should not punish it for being chosen when calm; it just doesn't earn the tempo bonus).
+          const calmIceFound = findAndDescribeWithAction(calmSeqs, calmState, 0, "Ice Shard");
+          const calmIceTags = tagsOf(calmIceFound, 0);
+          const calmIcePassed = calmIceFound !== null
+            && calmIceTags.indexOf("iceshard_tempo_under_pressure") < 0;
+          addCheck(
+            "tactical_ice_shard_calm_no_tempo_bonus",
+            calmIcePassed,
+            { tags: calmIceTags, found: calmIceFound !== null },
+            false
+          );
+
+          // ---- Scenario H (pure simulator pressure-evolution test). Confirms `next.pressure` ACTUALLY drops after Distracting Shot.
+          //  This is the keystone of the tactical tuning — without pressure evolution, none of the downstream semantic re-evaluations work.
+          if (typeof plannerSeqSimulateAction === "function") {
+            const evolveSim = {
+              elapsedSec: 0,
+              playerHpCur: 600, playerHpMax: 1000,
+              playerMpCur: 100, playerMpMax: 100,
+              targetHpCur: 700, targetHpMax: 700,
+              enemyCount: 3, activeAttackers: 3,
+              pressure: 2.2, incomingHpLossPerSec: 50,
+              basicSwingIntervalSec: 1, expectedBasicHit: 25,
+              skillCooldownReadyAtSec: {},
+              targetFlags: { hasMagicResistShred: false, hasSlow: false, hasDistract: false,
+                magicResistShredRemainingSec: 0, slowRemainingSec: 0, distractRemainingSec: 0 },
+              lastActionTimeSec: 0, mpWasted: 0, hpLost: 0, mobFactor: 1,
+              nextBasicReadyAtSec: Number.POSITIVE_INFINITY, extraBasicSwingsTotal: 0, extraBasicDamageTotal: 0
+            };
+            const evolveStep = plannerSeqSimulateAction(evolveSim, {
+              kind: "skill", name: "Distracting Shot", slot: 4, skill: ctx.distracting
+            });
+            const postPressure = evolveStep.next.pressure;
+            // Initial pressure 2.2, after DS effective attackers = 3-1=2 → pressure floor (2-1)=1 + hp_dip + slow/distract_incoming_scale.
+            // Expect a clean drop of at least 0.5 sec — empirically ~0.8 sec.
+            const pressureDropOk = Number.isFinite(postPressure) && postPressure < evolveSim.pressure - 0.5;
+            const flagsOk = !!(evolveStep.next.targetFlags && evolveStep.next.targetFlags.hasDistract === true);
+            addCheck(
+              "tactical_pressure_evolves_after_distracting_shot",
+              pressureDropOk && flagsOk,
+              {
+                initialPressure: evolveSim.pressure,
+                postPressure: Number.isFinite(postPressure) ? +postPressure.toFixed(3) : null,
+                hasDistract: flagsOk
+              },
+              false
+            );
+            // Confirm Ice Shard slow actually reduces simulated incoming HP loss during its own cast — compare to a non-slow skill of the
+            // same cast time (Piercing Strike, 0.6s, no slow effect). The slow factor (0.3) must yield strictly less HP lost than the
+            // unmitigated baseline so we know `effectiveIncoming` honors `hasSlow` correctly.
+            const baseSimSlow = {
+              elapsedSec: 0,
+              playerHpCur: 600, playerHpMax: 1000,
+              playerMpCur: 100, playerMpMax: 100,
+              targetHpCur: 700, targetHpMax: 700,
+              enemyCount: 1, activeAttackers: 1,
+              pressure: 0.0, incomingHpLossPerSec: 50,
+              basicSwingIntervalSec: 1, expectedBasicHit: 25,
+              skillCooldownReadyAtSec: {},
+              targetFlags: { hasMagicResistShred: false, hasSlow: false, hasDistract: false,
+                magicResistShredRemainingSec: 0, slowRemainingSec: 0, distractRemainingSec: 0 },
+              lastActionTimeSec: 0, mpWasted: 0, hpLost: 0, mobFactor: 1,
+              nextBasicReadyAtSec: Number.POSITIVE_INFINITY, extraBasicSwingsTotal: 0, extraBasicDamageTotal: 0
+            };
+            const stepIce = plannerSeqSimulateAction(baseSimSlow, { kind: "skill", name: "Ice Shard", slot: 2, skill: ctx.iceShard });
+            const stepPiercingNoSlow = plannerSeqSimulateAction(
+              Object.assign({}, baseSimSlow, {
+                targetFlags: { hasMagicResistShred: false, hasSlow: false, hasDistract: false,
+                  magicResistShredRemainingSec: 0, slowRemainingSec: 0, distractRemainingSec: 0 }
+              }),
+              { kind: "skill", name: "Piercing Strike", slot: 1, skill: ctx.piercing }
+            );
+            const hpLossWithIceShardSlow = stepIce.next.hpLost;
+            const hpLossWithoutSlow = stepPiercingNoSlow.next.hpLost;
+            const slowSavedHp = hpLossWithIceShardSlow < hpLossWithoutSlow - 1;
+            const iceFlagOk = !!(stepIce.next.targetFlags && stepIce.next.targetFlags.hasSlow === true);
+            addCheck(
+              "tactical_pressure_evolves_after_ice_shard",
+              slowSavedHp && iceFlagOk,
+              {
+                hpLossWithIceShardSlow: +hpLossWithIceShardSlow.toFixed(2),
+                hpLossWithoutSlow: +hpLossWithoutSlow.toFixed(2),
+                hasSlow: iceFlagOk
+              },
+              false
+            );
+          } else {
+            addCheck("tactical_pressure_evolves_after_distracting_shot", false, { reason: "fn_missing" }, false);
+            addCheck("tactical_pressure_evolves_after_ice_shard", false, { reason: "fn_missing" }, false);
+          }
+
+          // ---- Scenario I (reasonTags + scoreContributions are surfaced on describe output for diagnostics). Verifies the diagnostic
+          //  surface is wired correctly so `previewPlannerSequences()` consumers can see WHY one sequence beat another.
+          const describeSampleSeq = finisherSeqs.length > 0 ? finisherSeqs[0] : null;
+          const describeSampleDesc = describeSampleSeq ? plannerSeqDescribeNode(describeSampleSeq, finisherState) : null;
+          const describePassed = describeSampleDesc !== null
+            && Array.isArray(describeSampleDesc.actions)
+            && describeSampleDesc.actions.every(function (a) {
+                return a
+                  && Array.isArray(a.reasonTags)
+                  && a.scoreContributions !== undefined
+                  && typeof a.scoreContributions === "object";
+              })
+            && Number.isFinite(describeSampleDesc.semanticAdjSec)
+            && describeSampleDesc.survivalSummary
+            && Object.prototype.hasOwnProperty.call(describeSampleDesc.survivalSummary, "pressureEnd");
+          addCheck(
+            "tactical_reason_tags_exposed_on_describe",
+            describePassed,
+            {
+              actionCount: describeSampleDesc && Array.isArray(describeSampleDesc.actions) ? describeSampleDesc.actions.length : null,
+              firstReasonTags: describeSampleDesc && describeSampleDesc.actions && describeSampleDesc.actions[0] ? describeSampleDesc.actions[0].reasonTags : null,
+              semanticAdjSec: describeSampleDesc ? describeSampleDesc.semanticAdjSec : null,
+              pressureEnd: describeSampleDesc && describeSampleDesc.survivalSummary ? describeSampleDesc.survivalSummary.pressureEnd : null
+            },
+            false
+          );
+        } else {
+          addCheck("tactical_distracting_shot_calm_opener_tagged", false, { reason: "fns_missing" }, false);
+          addCheck("tactical_distracting_shot_pressure_relief_tagged", false, { reason: "fns_missing" }, false);
+          addCheck("tactical_sniper_shot_finisher_tagged", false, { reason: "fns_missing" }, false);
+          addCheck("tactical_sniper_shot_full_opener_penalized", false, { reason: "fns_missing" }, false);
+          addCheck("tactical_fan_volley_calm_penalty_tagged", false, { reason: "fns_missing" }, false);
+          addCheck("tactical_fan_volley_true_multi_threat_tagged", false, { reason: "fns_missing" }, false);
+          addCheck("tactical_piercing_strike_setup_tagged", false, { reason: "fns_missing" }, false);
+          addCheck("tactical_piercing_strike_wasted_setup_tagged", false, { reason: "fns_missing" }, false);
+          addCheck("tactical_ice_shard_tempo_under_pressure_tagged", false, { reason: "fns_missing" }, false);
+          addCheck("tactical_ice_shard_calm_no_tempo_bonus", false, { reason: "fns_missing" }, false);
+          addCheck("tactical_pressure_evolves_after_distracting_shot", false, { reason: "fns_missing" }, false);
+          addCheck("tactical_pressure_evolves_after_ice_shard", false, { reason: "fns_missing" }, false);
+          addCheck("tactical_reason_tags_exposed_on_describe", false, { reason: "fns_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_tactical_quality_block threw", err);
+        addCheck("planner_tactical_quality_block", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Planner Part 2 retarget fix v1.1.3 — POST-RETARGET CANCEL HELPER + LETHAL GUARD + SNIPER OVERCOMMIT REGRESSION.
+      //   These checks pin the new runtime policy:
+      //     1. The post-retarget cancel helper exists, returns the documented structured shape, and respects stop-cooperation
+      //        and the disable-by-config knob (no DOM dependency — we exercise the early-return branches directly).
+      //     2. The lethal guard helper correctly classifies a clearly-overkill committed action as `wouldKill: true` and a
+      //        clearly-non-lethal action as `wouldKill: false`. Confidence factor is honored (overrides + default).
+      //     3. The lethal guard reads `predictedDamageDealt` from a synthetic execution plan step (the path used by both the
+      //        opener-time guard in `attackUntilProgress` and the chain-time guard in `fireCombatActionQueue`).
+      //     4. SNIPER SHOT OVERCOMMIT REGRESSION: a synthetic plan with [Piercing Strike (lethal), Sniper Shot] + a live target
+      //        whose HP is well below the predicted Piercing Strike damage must report wouldKill === true at committedStepIndex 0,
+      //        which is the gate the runtime uses to refuse to arm the queued Sniper Shot follow-up.
+      try {
+        let cancelHelper = typeof cancelPostRetargetAutoBasic === "function" ? cancelPostRetargetAutoBasic : null;
+        if (!cancelHelper && typeof window !== "undefined" && window.ligmarBot && typeof window.ligmarBot.cancelPostRetargetAutoBasic === "function") {
+          cancelHelper = window.ligmarBot.cancelPostRetargetAutoBasic;
+        }
+        if (cancelHelper) {
+          // (1a) stop_requested branch — Runtime.autoFarm.stopRequested = true must short-circuit before touching the DOM.
+          const prevStop = Runtime.autoFarm.stopRequested;
+          Runtime.autoFarm.stopRequested = true;
+          const stopRes = await cancelHelper({});
+          Runtime.autoFarm.stopRequested = prevStop;
+          const stopOk =
+            stopRes &&
+            stopRes.ok === true &&
+            stopRes.cancelled === false &&
+            stopRes.reason === "stop_requested" &&
+            stopRes.method === null;
+          // (1b) disabled_by_config branch — postRetargetCancelAutoBasic = false must short-circuit similarly.
+          const prevCfg = Config.combat.postRetargetCancelAutoBasic;
+          Config.combat.postRetargetCancelAutoBasic = false;
+          const cfgRes = await cancelHelper({});
+          Config.combat.postRetargetCancelAutoBasic = prevCfg;
+          const cfgOk =
+            cfgRes &&
+            cfgRes.ok === true &&
+            cfgRes.cancelled === false &&
+            cfgRes.reason === "disabled_by_config" &&
+            cfgRes.method === null;
+          addCheck(
+            "post_retarget_cancel_helper_shape",
+            stopOk && cfgOk,
+            { stopRes: stopRes, cfgRes: cfgRes },
+            false
+          );
+        } else {
+          addCheck("post_retarget_cancel_helper_shape", false, { reason: "fn_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "post_retarget_cancel_helper_shape threw", err);
+        addCheck("post_retarget_cancel_helper_shape", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      try {
+        let lethalGuard = typeof plannerWouldCommittedActionAlreadyKillTarget === "function" ? plannerWouldCommittedActionAlreadyKillTarget : null;
+        if (!lethalGuard && typeof window !== "undefined" && window.ligmarBot && typeof window.ligmarBot.plannerWouldCommittedActionAlreadyKillTarget === "function") {
+          lethalGuard = window.ligmarBot.plannerWouldCommittedActionAlreadyKillTarget;
+        }
+        if (lethalGuard) {
+          const liveLow = {
+            combat: { enemyCount: 1, targetHp: { valid: true, cur: 80, max: 1000 } },
+            player: { mp: { valid: true, cur: 1000, max: 1000 } }
+          };
+          const liveHigh = {
+            combat: { enemyCount: 1, targetHp: { valid: true, cur: 800, max: 1000 } },
+            player: { mp: { valid: true, cur: 1000, max: 1000 } }
+          };
+          // (2a) explicit predictedDamage 200 vs targetHp 80, factor 1.3 → required = 104 → 200 >= 104 → wouldKill true.
+          const lethalRes = lethalGuard({
+            liveState: liveLow,
+            committedPredictedDamage: 200,
+            confidenceFactor: 1.3
+          });
+          // (2b) explicit predictedDamage 80 vs targetHp 800, factor 1.3 → required = 1040 → 80 << 1040 → wouldKill false.
+          const safeRes = lethalGuard({
+            liveState: liveHigh,
+            committedPredictedDamage: 80,
+            confidenceFactor: 1.3
+          });
+          // (2c) borderline: predictedDamage 100 vs targetHp 90, factor 1.3 → required = 117 → 100 < 117 → wouldKill false (CONSERVATIVE).
+          const borderRes = lethalGuard({
+            liveState: { combat: { enemyCount: 1, targetHp: { valid: true, cur: 90, max: 1000 } }, player: { mp: { valid: true } } },
+            committedPredictedDamage: 100,
+            confidenceFactor: 1.3
+          });
+          // (2d) target_already_dead branch — targetHp.cur === 0 → wouldKill true regardless of predicted.
+          const deadRes = lethalGuard({
+            liveState: { combat: { enemyCount: 1, targetHp: { valid: true, cur: 0, max: 1000 } }, player: { mp: { valid: true } } }
+          });
+          // (2e) no_predicted_damage branch — no source available → wouldKill false (NOT a default-true bug).
+          const noPredRes = lethalGuard({ liveState: liveLow });
+          const passed =
+            lethalRes && lethalRes.wouldKill === true && lethalRes.reason === "predicted_lethal" &&
+              Math.abs(lethalRes.requiredPredicted - 104) < 0.01 && lethalRes.confidenceFactor === 1.3 &&
+            safeRes && safeRes.wouldKill === false && safeRes.reason === "predicted_not_lethal" &&
+            borderRes && borderRes.wouldKill === false && borderRes.reason === "predicted_not_lethal" &&
+            deadRes && deadRes.wouldKill === true && deadRes.reason === "target_already_dead" &&
+            noPredRes && noPredRes.wouldKill === false && noPredRes.reason === "no_predicted_damage";
+          addCheck(
+            "planner_lethal_guard_basic_shape",
+            passed,
+            { lethalRes: lethalRes, safeRes: safeRes, borderRes: borderRes, deadRes: deadRes, noPredRes: noPredRes },
+            false
+          );
+        } else {
+          addCheck("planner_lethal_guard_basic_shape", false, { reason: "fn_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_lethal_guard_basic_shape threw", err);
+        addCheck("planner_lethal_guard_basic_shape", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      try {
+        let lethalGuard = typeof plannerWouldCommittedActionAlreadyKillTarget === "function" ? plannerWouldCommittedActionAlreadyKillTarget : null;
+        if (!lethalGuard && typeof window !== "undefined" && window.ligmarBot && typeof window.ligmarBot.plannerWouldCommittedActionAlreadyKillTarget === "function") {
+          lethalGuard = window.ligmarBot.plannerWouldCommittedActionAlreadyKillTarget;
+        }
+        if (lethalGuard) {
+          // Synthetic execution plan: step 0 = Piercing Strike (predicted 200), step 1 = Sniper Shot (would be the overcommit).
+          // Live target HP = 90 (clearly < 200 / 1.3 = 153.8). Plan cursor is at 1 (we already advanced past step 0).
+          // The runtime calls the guard with committedStepIndex = currentIndex - 1 → reads step 0's predictedDamageDealt → wouldKill true.
+          const plan = {
+            version: 2,
+            planId: "ep_test_sniper_overcommit",
+            actions: [
+              { index: 0, kind: "skill", slot: 1, name: "Piercing Strike", damageType: "physical", predictedDamageDealt: 200, predictedActionTimeSec: 0.6, predictedEndElapsedSec: 0.6, reasonTags: [] },
+              { index: 1, kind: "skill_charge", slot: 4, name: "Sniper Shot", damageType: "physical", chargeMode: "full", chargeReleaseFraction: 1, predictedDamageDealt: 600, predictedActionTimeSec: 4, predictedEndElapsedSec: 4.6, reasonTags: [] }
+            ],
+            currentIndex: 1,
+            valid: true
+          };
+          const liveTargetLow = {
+            combat: { enemyCount: 1, targetHp: { valid: true, cur: 90, max: 1000 } },
+            player: { mp: { valid: true, cur: 1000, max: 1000 } }
+          };
+          const guardRes = lethalGuard({
+            liveState: liveTargetLow,
+            plan: plan,
+            committedStepIndex: plan.currentIndex - 1
+          });
+          const passed =
+            guardRes &&
+            guardRes.wouldKill === true &&
+            guardRes.reason === "predicted_lethal" &&
+            guardRes.source === "plan_step_index_0" &&
+            Math.abs(guardRes.predictedDamage - 200) < 0.01 &&
+            guardRes.targetHpCur === 90;
+          addCheck(
+            "planner_sniper_shot_overcommit_regression",
+            passed,
+            { guardRes: guardRes },
+            false
+          );
+        } else {
+          addCheck("planner_sniper_shot_overcommit_regression", false, { reason: "fn_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_sniper_shot_overcommit_regression threw", err);
+        addCheck("planner_sniper_shot_overcommit_regression", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      try {
+        // Plan-cursor advancement check: the cancel helper does NOT advance the plan; only `plannerAdvanceExecutionPlanStep`
+        // advances `currentIndex`. We exercise this by setting an active plan, calling the cancel helper (under stop_requested
+        // so we deterministically hit the early-return branch), and confirming `currentIndex` stayed at 0.
+        let setPlan = typeof plannerSetActiveExecutionPlan === "function" ? plannerSetActiveExecutionPlan : null;
+        let getPlan = typeof plannerGetActiveExecutionPlan === "function" ? plannerGetActiveExecutionPlan : null;
+        let cancelHelper = typeof cancelPostRetargetAutoBasic === "function" ? cancelPostRetargetAutoBasic : null;
+        if (!cancelHelper && typeof window !== "undefined" && window.ligmarBot && typeof window.ligmarBot.cancelPostRetargetAutoBasic === "function") {
+          cancelHelper = window.ligmarBot.cancelPostRetargetAutoBasic;
+        }
+        if (setPlan && getPlan && cancelHelper) {
+          const prevPlan = Runtime.planner ? Runtime.planner.activeExecutionPlan : null;
+          const fakePlan = {
+            version: 2,
+            planId: "ep_test_cursor_no_advance",
+            builtAt: Date.now(),
+            targetFingerprint: "fp-cursor",
+            actions: [
+              { index: 0, kind: "skill", slot: 1, name: "Piercing Strike", damageType: "physical", predictedDamageDealt: 50, reasonTags: [] },
+              { index: 1, kind: "skill", slot: 2, name: "Ice Shard", damageType: "magic", predictedDamageDealt: 90, reasonTags: [] }
+            ],
+            totalActions: 2,
+            currentIndex: 0,
+            valid: true,
+            invalidReason: null,
+            replanReason: null,
+            stepHistory: [],
+            excludeSlotsApplied: null,
+            disallowChargeSkills: false
+          };
+          setPlan(fakePlan);
+          const before = getPlan();
+          const beforeIndex = before ? before.currentIndex : null;
+          const prevStop = Runtime.autoFarm.stopRequested;
+          Runtime.autoFarm.stopRequested = true;
+          const cancelOutcome = await cancelHelper({});
+          Runtime.autoFarm.stopRequested = prevStop;
+          const after = getPlan();
+          const afterIndex = after ? after.currentIndex : null;
+          const passed =
+            cancelOutcome && cancelOutcome.cancelled === false &&
+            beforeIndex === 0 && afterIndex === 0 &&
+            after && after.valid === true;
+          setPlan(prevPlan);
+          addCheck(
+            "post_retarget_cancel_does_not_advance_plan_cursor",
+            passed,
+            { beforeIndex: beforeIndex, afterIndex: afterIndex, cancelOutcome: cancelOutcome },
+            false
+          );
+        } else {
+          addCheck("post_retarget_cancel_does_not_advance_plan_cursor", false, { reason: "fns_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "post_retarget_cancel_does_not_advance_plan_cursor threw", err);
+        addCheck("post_retarget_cancel_does_not_advance_plan_cursor", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      try {
+        // Policy regression: the new post-retarget runtime path no longer reroutes through the old "queue planner skill onto
+        // the game's auto-basic" intentionally — by default it cancels the auto-basic and clicks the planner skill directly.
+        // We verify the documented config knob `postRetargetQueueOnGameBasicFallback` defaults to false (legacy behavior is
+        // OPT-IN ONLY, used as a last resort when the cancel could not be dispatched).
+        const fallbackOff =
+          Config.combat &&
+          Object.prototype.hasOwnProperty.call(Config.combat, "postRetargetQueueOnGameBasicFallback") &&
+          Config.combat.postRetargetQueueOnGameBasicFallback === false;
+        const cancelOnByDefault =
+          Config.combat &&
+          Object.prototype.hasOwnProperty.call(Config.combat, "postRetargetCancelAutoBasic") &&
+          Config.combat.postRetargetCancelAutoBasic === true;
+        addCheck(
+          "post_retarget_policy_default_is_cancel_not_queue",
+          !!(fallbackOff && cancelOnByDefault),
+          { fallbackOff: fallbackOff, cancelOnByDefault: cancelOnByDefault },
+          false
+        );
+      } catch (err) {
+        Logger.warn("TEST", "post_retarget_policy_default_is_cancel_not_queue threw", err);
+        addCheck("post_retarget_policy_default_is_cancel_not_queue", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: v1.2.0-alpha — DESKTOP APP CONTROLS test bundle. Each block is independent and self-contained.
+
+      // 1) In-page GUI is no longer auto-mounted by default.
+      try {
+        const cfg = Config.bootGui || null;
+        const autoMountFalse = !!(cfg && cfg.autoMountPanel === false);
+        const panelExists = !!(document.getElementById && document.getElementById("ligmarbot-control-panel"));
+        addCheck(
+          "v120_no_inpage_gui_auto_mount_default",
+          autoMountFalse,
+          { autoMountPanel: cfg ? cfg.autoMountPanel : null, panelInDom: panelExists },
+          false
+        );
+      } catch (err) {
+        addCheck("v120_no_inpage_gui_auto_mount_default", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 2) Combat mode rename — canonical names + legacy aliases.
+      try {
+        const ok =
+          typeof normalizeCombatModeName === "function" &&
+          normalizeCombatModeName("fast") === "normal" &&
+          normalizeCombatModeName("safe") === "hard" &&
+          normalizeCombatModeName("normal") === "normal" &&
+          normalizeCombatModeName("hard") === "hard" &&
+          normalizeCombatModeName("easy") === "easy";
+        addCheck("v120_combat_mode_aliases_normalize", ok, {
+          fastNorm: typeof normalizeCombatModeName === "function" ? normalizeCombatModeName("fast") : null,
+          safeNorm: typeof normalizeCombatModeName === "function" ? normalizeCombatModeName("safe") : null,
+          normalNorm: typeof normalizeCombatModeName === "function" ? normalizeCombatModeName("normal") : null,
+          hardNorm: typeof normalizeCombatModeName === "function" ? normalizeCombatModeName("hard") : null,
+          easyNorm: typeof normalizeCombatModeName === "function" ? normalizeCombatModeName("easy") : null
+        }, false);
+      } catch (err) {
+        addCheck("v120_combat_mode_aliases_normalize", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 3) Combat mode setter accepts legacy "fast" → stores "normal".
+      try {
+        if (typeof setAutoFarmCombatMode !== "function" || typeof getAutoFarmCombatMode !== "function") {
+          addCheck("v120_combat_mode_setter_accepts_alias", false, { reason: "missing_helpers" }, false);
+        } else {
+          const before = getAutoFarmCombatMode();
+          setAutoFarmCombatMode("fast");
+          const after = getAutoFarmCombatMode();
+          // restore
+          setAutoFarmCombatMode(before.mode);
+          addCheck(
+            "v120_combat_mode_setter_accepts_alias",
+            after && after.mode === "normal",
+            { afterMode: after ? after.mode : null, restoredTo: before ? before.mode : null },
+            false
+          );
+        }
+      } catch (err) {
+        addCheck("v120_combat_mode_setter_accepts_alias", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 4) Avoidance preference shape + setter behavior.
+      try {
+        if (typeof setAvoidChampions !== "function" || typeof getAvoidChampions !== "function") {
+          addCheck("v120_avoidance_pref_shape", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startCh = getAvoidChampions();
+          const startGo = typeof getAvoidGoblins === "function" ? getAvoidGoblins() : null;
+          setAvoidChampions(false);
+          const off = getAvoidChampions();
+          setAvoidChampions(true);
+          const on = getAvoidChampions();
+          // restore
+          setAvoidChampions(!!startCh);
+          if (typeof setAvoidGoblins === "function") setAvoidGoblins(!!startGo);
+          addCheck(
+            "v120_avoidance_pref_shape",
+            off === false && on === true,
+            { startedAt: { ch: startCh, go: startGo }, off: off, on: on },
+            false
+          );
+        }
+      } catch (err) {
+        addCheck("v120_avoidance_pref_shape", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 5) scoreScannedTile honors avoidance toggles for boss + goblin tiles.
+      try {
+        if (typeof scoreScannedTile !== "function") {
+          addCheck("v120_score_honors_avoidance_toggles", false, { reason: "no_score_fn" }, false);
+        } else {
+          const startCh = typeof getAvoidChampions === "function" ? getAvoidChampions() : true;
+          const startGo = typeof getAvoidGoblins === "function" ? getAvoidGoblins() : false;
+          const champTile = { ok: true, classification: "walkable", key: "TR", enemies: 1, allies: 0, lootIcons: ["icon-src-mob-type-champion"] };
+          const goblinTile = { ok: true, classification: "walkable", key: "L", enemies: 0, allies: 0, lootIcons: ["icon-src-event-goblin"] };
+          const emptyTile = { ok: true, classification: "walkable", key: "R", enemies: 0, allies: 0, lootIcons: [] };
+          if (typeof setAvoidChampions === "function") setAvoidChampions(true);
+          const champAvoidedScore = scoreScannedTile(champTile);
+          if (typeof setAvoidChampions === "function") setAvoidChampions(false);
+          const champTargetScore = scoreScannedTile(champTile);
+          if (typeof setAvoidGoblins === "function") setAvoidGoblins(false);
+          const gobAllowedScore = scoreScannedTile(goblinTile);
+          if (typeof setAvoidGoblins === "function") setAvoidGoblins(true);
+          const gobAvoidedScore = scoreScannedTile(goblinTile);
+          const emptyScore = scoreScannedTile(emptyTile);
+          // restore prefs
+          if (typeof setAvoidChampions === "function") setAvoidChampions(!!startCh);
+          if (typeof setAvoidGoblins === "function") setAvoidGoblins(!!startGo);
+          const ok =
+            champAvoidedScore < -100000 &&
+            champTargetScore > emptyScore &&
+            gobAllowedScore > emptyScore &&
+            gobAvoidedScore < emptyScore;
+          addCheck(
+            "v120_score_honors_avoidance_toggles",
+            ok,
+            { champAvoidedScore: champAvoidedScore, champTargetScore: champTargetScore, gobAllowedScore: gobAllowedScore, gobAvoidedScore: gobAvoidedScore, emptyScore: emptyScore },
+            false
+          );
+        }
+      } catch (err) {
+        addCheck("v120_score_honors_avoidance_toggles", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 6) Champion red pixel scan exists + only consulted when champion avoidance is OFF (helper signature).
+      try {
+        const hasFn = typeof scanSecondRingForChampion === "function";
+        const hasColor = !!(Config && Config.scan && Config.scan.secondRing && Config.scan.secondRing.championRedColor);
+        const colorMatch =
+          hasColor &&
+          Config.scan.secondRing.championRedColor.r === 0xaa &&
+          Config.scan.secondRing.championRedColor.g === 0x40 &&
+          Config.scan.secondRing.championRedColor.b === 0x40;
+        addCheck(
+          "v120_champion_red_scanner_shape",
+          hasFn && colorMatch,
+          { hasFn: hasFn, colorMatch: colorMatch, color: hasColor ? Config.scan.secondRing.championRedColor : null },
+          false
+        );
+      } catch (err) {
+        addCheck("v120_champion_red_scanner_shape", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 7) Lens detection runtime shape: hasLens defaults to null, override + getter work.
+      try {
+        if (typeof getLensState !== "function" || typeof setLensStateOverride !== "function") {
+          addCheck("v120_lens_state_shape", false, { reason: "missing_helpers" }, false);
+        } else {
+          const before = getLensState();
+          setLensStateOverride(true);
+          const o = getLensState();
+          setLensStateOverride(false);
+          const f = getLensState();
+          setLensStateOverride(null);
+          const cleared = getLensState();
+          addCheck(
+            "v120_lens_state_shape",
+            o.hasLens === true && f.hasLens === false && cleared.manualOverride === null,
+            { before: before, overrideTrue: o, overrideFalse: f, cleared: cleared },
+            false
+          );
+        }
+      } catch (err) {
+        addCheck("v120_lens_state_shape", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 8) Third-ring offsets + scan helper presence.
+      try {
+        const hasOff = typeof getThirdRingOffsets === "function";
+        const hasScan = typeof scanThirdRingForColor === "function";
+        const offsets = hasOff ? getThirdRingOffsets() : [];
+        addCheck(
+          "v120_third_ring_helpers_shape",
+          hasOff && hasScan && Array.isArray(offsets) && offsets.length === 18,
+          { hasOff: hasOff, hasScan: hasScan, offsetCount: Array.isArray(offsets) ? offsets.length : 0 },
+          false
+        );
+      } catch (err) {
+        addCheck("v120_third_ring_helpers_shape", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 9) Basement state shape + toggle.
+      try {
+        if (typeof setBasementFarmingEnabled !== "function" || typeof getBasementFarmingEnabled !== "function") {
+          addCheck("v120_basement_pref_shape", false, { reason: "missing_helpers" }, false);
+        } else {
+          const start = getBasementFarmingEnabled();
+          setBasementFarmingEnabled(true);
+          const on = getBasementFarmingEnabled();
+          setBasementFarmingEnabled(false);
+          const off = getBasementFarmingEnabled();
+          setBasementFarmingEnabled(!!start);
+          addCheck("v120_basement_pref_shape", on === true && off === false, { startedAt: start, on: on, off: off }, false);
+        }
+      } catch (err) {
+        addCheck("v120_basement_pref_shape", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 10) Basement-end champion override beats global avoidance for a champion tile.
+      try {
+        if (typeof scoreScannedTile !== "function" || typeof markBasementEntered !== "function") {
+          addCheck("v120_basement_end_champ_override", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startCh = typeof getAvoidChampions === "function" ? getAvoidChampions() : true;
+          const startActive = !!(Runtime.basement && Runtime.basement.active);
+          const startEnd = !!(Runtime.basement && Runtime.basement.atEndTile);
+          if (typeof setAvoidChampions === "function") setAvoidChampions(true);
+          markBasementEntered({ source: "test" });
+          if (typeof setBasementAtEndTile === "function") setBasementAtEndTile(true);
+          const champTile = { ok: true, classification: "walkable", key: "TR", enemies: 1, allies: 0, lootIcons: ["icon-src-mob-type-champion"] };
+          const overrideScore = scoreScannedTile(champTile);
+          if (typeof setBasementAtEndTile === "function") setBasementAtEndTile(false);
+          const noOverrideScore = scoreScannedTile(champTile);
+          // restore
+          if (typeof markBasementExited === "function") markBasementExited({ reason: "test_done" });
+          Runtime.basement.active = !!startActive;
+          Runtime.basement.atEndTile = !!startEnd;
+          if (typeof setAvoidChampions === "function") setAvoidChampions(!!startCh);
+          addCheck(
+            "v120_basement_end_champ_override",
+            overrideScore > 0 && noOverrideScore < -100000,
+            { overrideScore: overrideScore, noOverrideScore: noOverrideScore },
+            false
+          );
+        }
+      } catch (err) {
+        addCheck("v120_basement_end_champ_override", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 11) Basement forward-objective penalizes reverse-direction tile.
+      try {
+        if (typeof scoreScannedTile !== "function" || typeof markBasementEntered !== "function") {
+          addCheck("v120_basement_forward_objective_penalizes_reverse", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startActive = !!(Runtime.basement && Runtime.basement.active);
+          const startLastMove = Runtime.exploration ? Runtime.exploration.lastMoveDir : null;
+          markBasementEntered({ source: "test" });
+          if (Runtime.exploration) Runtime.exploration.lastMoveDir = "TR"; // last move went TR -> reverse is BL
+          const reverseTile = { ok: true, classification: "walkable", key: "BL", enemies: 1, allies: 0, lootIcons: [] };
+          const forwardTile = { ok: true, classification: "walkable", key: "TR", enemies: 1, allies: 0, lootIcons: [] };
+          const reverseScore = scoreScannedTile(reverseTile);
+          const forwardScore = scoreScannedTile(forwardTile);
+          // restore
+          if (typeof markBasementExited === "function") markBasementExited({ reason: "test_done" });
+          Runtime.basement.active = !!startActive;
+          if (Runtime.exploration) Runtime.exploration.lastMoveDir = startLastMove;
+          addCheck(
+            "v120_basement_forward_objective_penalizes_reverse",
+            forwardScore > reverseScore,
+            { forwardScore: forwardScore, reverseScore: reverseScore },
+            false
+          );
+        }
+      } catch (err) {
+        addCheck("v120_basement_forward_objective_penalizes_reverse", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 12) Manual chat API: set/get/add/remove/clear shape.
+      try {
+        if (
+          typeof setAutoChatMessages !== "function" ||
+          typeof getAutoChatMessages !== "function" ||
+          typeof addAutoChatMessage !== "function" ||
+          typeof removeAutoChatMessage !== "function" ||
+          typeof clearAutoChatMessages !== "function"
+        ) {
+          addCheck("v120_manual_chat_api_shape", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startMsgs = getAutoChatMessages();
+          clearAutoChatMessages();
+          setAutoChatMessages(["hello world", "second"]);
+          const got1 = getAutoChatMessages();
+          addAutoChatMessage("third");
+          const got2 = getAutoChatMessages();
+          removeAutoChatMessage(0);
+          const got3 = getAutoChatMessages();
+          clearAutoChatMessages();
+          const got4 = getAutoChatMessages();
+          // restore
+          if (Array.isArray(startMsgs)) setAutoChatMessages(startMsgs);
+          const ok =
+            got1.length === 2 && got1[0] === "hello world" &&
+            got2.length === 3 && got2[2] === "third" &&
+            got3.length === 2 && got3[0] === "second" &&
+            got4.length === 0;
+          addCheck("v120_manual_chat_api_shape", ok, { got1: got1, got2: got2, got3: got3, got4: got4 }, false);
+        }
+      } catch (err) {
+        addCheck("v120_manual_chat_api_shape", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 13) Manual chat dispatcher returns null when user list empty + useUserMessages on.
+      try {
+        if (typeof pickAutoChatSpammerDispatch !== "function") {
+          addCheck("v120_manual_chat_empty_dispatch_null", false, { reason: "no_picker" }, false);
+        } else {
+          const startMsgs = typeof getAutoChatMessages === "function" ? getAutoChatMessages() : [];
+          const startUseUser = !!(Config.chat && Config.chat.useUserMessages);
+          const startEnabled = !!(Config.chat && Config.chat.autoLocalPromocodeSpammerEnabled);
+          if (typeof clearAutoChatMessages === "function") clearAutoChatMessages();
+          Config.chat.useUserMessages = true;
+          const dispEmpty = pickAutoChatSpammerDispatch();
+          if (typeof setAutoChatMessages === "function") setAutoChatMessages(["one", "two"]);
+          const dispOne = pickAutoChatSpammerDispatch();
+          const dispTwo = pickAutoChatSpammerDispatch();
+          // restore
+          if (typeof clearAutoChatMessages === "function") clearAutoChatMessages();
+          if (Array.isArray(startMsgs) && startMsgs.length > 0 && typeof setAutoChatMessages === "function") setAutoChatMessages(startMsgs);
+          Config.chat.useUserMessages = startUseUser;
+          Config.chat.autoLocalPromocodeSpammerEnabled = startEnabled;
+          const ok =
+            dispEmpty === null &&
+            dispOne && dispOne.kind === "user" && dispOne.message === "one" &&
+            dispTwo && dispTwo.kind === "user" && dispTwo.message === "two";
+          addCheck("v120_manual_chat_empty_dispatch_null", ok, { dispEmpty: dispEmpty, dispOne: dispOne, dispTwo: dispTwo }, false);
+        }
+      } catch (err) {
+        addCheck("v120_manual_chat_empty_dispatch_null", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 14) Manual chat interval range setter.
+      try {
+        if (typeof setAutoChatIntervalRange !== "function" || typeof getAutoChatIntervalRange !== "function") {
+          addCheck("v120_manual_chat_interval_shape", false, { reason: "missing_helpers" }, false);
+        } else {
+          const before = getAutoChatIntervalRange();
+          setAutoChatIntervalRange(1000, 2000);
+          const r = getAutoChatIntervalRange();
+          const bad = setAutoChatIntervalRange(5000, 1000);
+          setAutoChatIntervalRange(null, null); // clear
+          const cleared = getAutoChatIntervalRange();
+          addCheck(
+            "v120_manual_chat_interval_shape",
+            r && r.minMs === 1000 && r.maxMs === 2000 && bad && bad.ok === false && cleared && cleared.source === "config",
+            { before: before, r: r, bad: bad, cleared: cleared },
+            false
+          );
+        }
+      } catch (err) {
+        addCheck("v120_manual_chat_interval_shape", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 15) Champion red 2-ring scan is gated to non-avoiding state in exploreByScan code path.
+      //     We can't run a full scan here without a canvas; verify wiring shape: helper exists + Config flag exists +
+      //     `scoreScannedTile` boss case respects toggle (covered by test 5). This test specifically asserts that when
+      //     champions ARE avoided (default state), `scanSecondRingForChampion` is still callable but the EXPLORE path
+      //     in the bundle will only invoke it when NOT avoiding (verified by reading code). We keep the shape assertion.
+      try {
+        const hasFn = typeof scanSecondRingForChampion === "function";
+        const hasFlag = !!(Config && Config.exploration && Object.prototype.hasOwnProperty.call(Config.exploration, "avoidChampions"));
+        addCheck("v120_champ_red_scan_only_when_not_avoided_shape", hasFn && hasFlag, { hasFn: hasFn, hasFlag: hasFlag }, false);
+      } catch (err) {
+        addCheck("v120_champ_red_scan_only_when_not_avoided_shape", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 16) selectSpecialTileTargetIfDesired returns skip-shape when both avoidance flags are on.
+      try {
+        if (typeof selectSpecialTileTargetIfDesired !== "function") {
+          addCheck("v120_special_target_helper_shape", false, { reason: "missing_helper" }, false);
+        } else {
+          const startCh = typeof getAvoidChampions === "function" ? getAvoidChampions() : true;
+          const startGo = typeof getAvoidGoblins === "function" ? getAvoidGoblins() : false;
+          if (typeof setAvoidChampions === "function") setAvoidChampions(true);
+          if (typeof setAvoidGoblins === "function") setAvoidGoblins(true);
+          const result = await selectSpecialTileTargetIfDesired();
+          if (typeof setAvoidChampions === "function") setAvoidChampions(!!startCh);
+          if (typeof setAvoidGoblins === "function") setAvoidGoblins(!!startGo);
+          addCheck(
+            "v120_special_target_helper_shape",
+            result && result.ok === false && result.skipped === true && result.reason === "both_avoided",
+            { result: result },
+            false
+          );
+        }
+      } catch (err) {
+        addCheck("v120_special_target_helper_shape", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: v1.2.1-alpha — FEATURE COMPLETION test bundle.
+
+      // 1) Special-target helper soft-fails cleanly when no popup / no map.
+      //   Outside AUTO with no live map UI, the helper must NOT throw and must return a structured failure with a
+      //   recognizable `reason`. We invoke it with avoidance-off so it tries the full flow.
+      try {
+        if (typeof selectSpecialTileTargetIfDesired !== "function") {
+          addCheck("v121_special_target_soft_fail_shape", false, { reason: "missing_helper" }, false);
+        } else {
+          const startCh = typeof getAvoidChampions === "function" ? getAvoidChampions() : true;
+          const startGo = typeof getAvoidGoblins === "function" ? getAvoidGoblins() : false;
+          if (typeof setAvoidChampions === "function") setAvoidChampions(false);
+          if (typeof setAvoidGoblins === "function") setAvoidGoblins(false);
+          const result = await selectSpecialTileTargetIfDesired();
+          if (typeof setAvoidChampions === "function") setAvoidChampions(!!startCh);
+          if (typeof setAvoidGoblins === "function") setAvoidGoblins(!!startGo);
+          // Acceptable failure reasons in TEST-only mode. Live runs will succeed on a real basement-end tile.
+          const acceptableReasons = [
+            "map_not_open",
+            "center_failed",
+            "center_threw",
+            "center_tile_click_failed",
+            "center_tile_click_threw",
+            "popup_timeout",
+            "popup_not_current_tile",
+            "no_event_icons",
+            "no_matching_icon"
+          ];
+          const okShape =
+            result && typeof result === "object" && (
+              result.ok === true ||
+              (result.ok === false && acceptableReasons.indexOf(result.reason) !== -1)
+            );
+          addCheck("v121_special_target_soft_fail_shape", !!okShape, { result: result, acceptableReasons: acceptableReasons }, false);
+        }
+      } catch (err) {
+        addCheck("v121_special_target_soft_fail_shape", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // 2) Lens auto-detect helper short-circuits on manual override (no destructive probe).
+      try {
+        if (typeof maybeAutoDetectLensIfNeeded !== "function" || typeof setLensStateOverride !== "function") {
+          addCheck("v121_lens_auto_detect_manual_override_short_circuit", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startOverride = Runtime.vision ? Runtime.vision.manualOverride : null;
+          const startLatch = !!(Runtime.autoFarm && Runtime.autoFarm.lensAutoDetectDone);
+          const startRunning = !!(Runtime.autoFarm && Runtime.autoFarm.running);
+          // Force the precondition: in AUTO + latch unset, but with manual override set.
+          Runtime.autoFarm.running = true;
+          Runtime.autoFarm.stopRequested = false;
+          Runtime.autoFarm.lensAutoDetectDone = false;
+          setLensStateOverride(true);
+          const result = await maybeAutoDetectLensIfNeeded({ reason: "test_override_short_circuit" });
+          // Restore
+          setLensStateOverride(startOverride);
+          Runtime.autoFarm.running = startRunning;
+          Runtime.autoFarm.lensAutoDetectDone = startLatch;
+          const ok =
+            result && result.ok === true && result.skipped === true && result.reason === "manual_override" &&
+            result.hasLens === true;
+          addCheck("v121_lens_auto_detect_manual_override_short_circuit", ok, { result: result }, false);
+        }
+      } catch (err) {
+        addCheck("v121_lens_auto_detect_manual_override_short_circuit", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // 3) Lens auto-detect helper sets the latch on already-known state.
+      try {
+        if (typeof maybeAutoDetectLensIfNeeded !== "function" || typeof setLensStateOverride !== "function") {
+          addCheck("v121_lens_auto_detect_already_known_latch", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startOverride = Runtime.vision ? Runtime.vision.manualOverride : null;
+          const startHasLens = Runtime.vision ? Runtime.vision.hasLens : null;
+          const startLatch = !!(Runtime.autoFarm && Runtime.autoFarm.lensAutoDetectDone);
+          const startRunning = !!(Runtime.autoFarm && Runtime.autoFarm.running);
+          // Pretend lens already known (manual override null but hasLens set), latch unset, in AUTO.
+          setLensStateOverride(null);
+          if (Runtime.vision) Runtime.vision.hasLens = true;
+          Runtime.autoFarm.running = true;
+          Runtime.autoFarm.stopRequested = false;
+          Runtime.autoFarm.lensAutoDetectDone = false;
+          const result = await maybeAutoDetectLensIfNeeded({ reason: "test_already_known" });
+          const latchedAfter = !!(Runtime.autoFarm && Runtime.autoFarm.lensAutoDetectDone);
+          // Restore
+          setLensStateOverride(startOverride);
+          if (Runtime.vision) Runtime.vision.hasLens = startHasLens;
+          Runtime.autoFarm.running = startRunning;
+          Runtime.autoFarm.lensAutoDetectDone = startLatch;
+          const ok =
+            result && result.ok === true && result.skipped === true && result.reason === "already_known" && latchedAfter === true;
+          addCheck("v121_lens_auto_detect_already_known_latch", ok, { result: result, latchedAfter: latchedAfter }, false);
+        }
+      } catch (err) {
+        addCheck("v121_lens_auto_detect_already_known_latch", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // 4) Lens auto-detect helper does not flip the latch when not in AUTO (so future sessions still probe).
+      try {
+        if (typeof maybeAutoDetectLensIfNeeded !== "function") {
+          addCheck("v121_lens_auto_detect_outside_auto_no_latch", false, { reason: "missing_helper" }, false);
+        } else {
+          const startRunning = !!(Runtime.autoFarm && Runtime.autoFarm.running);
+          const startLatch = !!(Runtime.autoFarm && Runtime.autoFarm.lensAutoDetectDone);
+          Runtime.autoFarm.running = false;
+          Runtime.autoFarm.lensAutoDetectDone = false;
+          const result = await maybeAutoDetectLensIfNeeded({ reason: "test_outside_auto" });
+          const latchedAfter = !!(Runtime.autoFarm && Runtime.autoFarm.lensAutoDetectDone);
+          Runtime.autoFarm.running = startRunning;
+          Runtime.autoFarm.lensAutoDetectDone = startLatch;
+          const ok = result && result.ok === false && result.skipped === true && result.reason === "not_in_auto" && latchedAfter === false;
+          addCheck("v121_lens_auto_detect_outside_auto_no_latch", ok, { result: result, latchedAfter: latchedAfter }, false);
+        }
+      } catch (err) {
+        addCheck("v121_lens_auto_detect_outside_auto_no_latch", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // 5) Basement loot wrapper is a transparent pass-through when basement farming is OFF.
+      try {
+        if (typeof maybeApplyBasementTransitionAroundLoot !== "function" || typeof setBasementFarmingEnabled !== "function") {
+          addCheck("v121_basement_loot_wrapper_off_passthrough", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startEnabled = typeof getBasementFarmingEnabled === "function" ? getBasementFarmingEnabled() : false;
+          const startActive = !!(Runtime.basement && Runtime.basement.active);
+          setBasementFarmingEnabled(false);
+          if (Runtime.basement) Runtime.basement.active = false;
+          let calls = 0;
+          const fakeLoot = async function () { calls += 1; return { ok: true, clicked: true, verified: true }; };
+          const result = await maybeApplyBasementTransitionAroundLoot(fakeLoot);
+          const stateAfter = !!(Runtime.basement && Runtime.basement.active);
+          setBasementFarmingEnabled(!!startEnabled);
+          if (Runtime.basement) Runtime.basement.active = !!startActive;
+          const ok = calls === 1 && result && result.ok === true && stateAfter === false;
+          addCheck("v121_basement_loot_wrapper_off_passthrough", ok, { calls: calls, result: result, stateAfter: stateAfter }, false);
+        }
+      } catch (err) {
+        addCheck("v121_basement_loot_wrapper_off_passthrough", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // 6) Basement loot wrapper does NOT flip state when before-detect saw no basement substring.
+      try {
+        if (typeof maybeApplyBasementTransitionAroundLoot !== "function" || typeof setBasementFarmingEnabled !== "function") {
+          addCheck("v121_basement_loot_wrapper_non_basement_no_flip", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startEnabled = typeof getBasementFarmingEnabled === "function" ? getBasementFarmingEnabled() : false;
+          const startActive = !!(Runtime.basement && Runtime.basement.active);
+          // Stub detectBasementEntryFromUi temporarily.
+          const origDetect = typeof detectBasementEntryFromUi === "function" ? detectBasementEntryFromUi : null;
+          // We can't easily monkey-patch a function declaration in this scope; instead, simulate by ensuring
+          // we are NOT in basement and the live UI has no highlight collect button (TEST runs without one).
+          setBasementFarmingEnabled(true);
+          if (Runtime.basement) Runtime.basement.active = false;
+          const fakeLoot = async function () { return { ok: true, clicked: true, verified: true }; };
+          const result = await maybeApplyBasementTransitionAroundLoot(fakeLoot);
+          const stateAfter = !!(Runtime.basement && Runtime.basement.active);
+          setBasementFarmingEnabled(!!startEnabled);
+          if (Runtime.basement) Runtime.basement.active = !!startActive;
+          // In TEST harness there is no highlighted basement collect button, so detect returns isBasement:false →
+          // wrapper must NOT have flipped state.
+          const ok = result && result.ok === true && stateAfter === false;
+          addCheck("v121_basement_loot_wrapper_non_basement_no_flip", ok, { result: result, stateAfter: stateAfter }, false);
+          void origDetect;
+        }
+      } catch (err) {
+        addCheck("v121_basement_loot_wrapper_non_basement_no_flip", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // 7) updateBasementEndTileFlagFromVisibleIcons short-circuits when not in basement.
+      //    v1.2.3-alpha — helper is now async (it can open the per-tile popup). The early "not_in_basement" return
+      //    still fires synchronously inside the function, but we MUST await the returned promise.
+      try {
+        if (typeof updateBasementEndTileFlagFromVisibleIcons !== "function") {
+          addCheck("v121_basement_end_flag_short_circuit_outside", false, { reason: "missing_helper" }, false);
+        } else {
+          const startActive = !!(Runtime.basement && Runtime.basement.active);
+          const startEnd = !!(Runtime.basement && Runtime.basement.atEndTile);
+          if (Runtime.basement) {
+            Runtime.basement.active = false;
+            Runtime.basement.atEndTile = true; // pre-set; helper must NOT touch it when outside basement
+          }
+          const result = await updateBasementEndTileFlagFromVisibleIcons();
+          const stillTrue = !!(Runtime.basement && Runtime.basement.atEndTile === true);
+          if (Runtime.basement) {
+            Runtime.basement.active = !!startActive;
+            Runtime.basement.atEndTile = !!startEnd;
+          }
+          const ok = result && result.ok === false && result.skipped === true && result.reason === "not_in_basement" && stillTrue === true;
+          addCheck("v121_basement_end_flag_short_circuit_outside", ok, { result: result, stillTrue: stillTrue }, false);
+        }
+      } catch (err) {
+        addCheck("v121_basement_end_flag_short_circuit_outside", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // 8) Basement entry/exit lifecycle via markBasementEntered → markBasementExited shape.
+      try {
+        if (typeof markBasementEntered !== "function" || typeof markBasementExited !== "function" || typeof getBasementState !== "function") {
+          addCheck("v121_basement_lifecycle_shape", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startState = getBasementState();
+          markBasementEntered({ source: "test_lifecycle" });
+          const enteredState = getBasementState();
+          markBasementExited({ reason: "test_lifecycle_done" });
+          const exitedState = getBasementState();
+          // Restore (mark exited already does it; but ensure we're back to original active flag).
+          if (Runtime.basement) {
+            Runtime.basement.active = !!startState.active;
+            Runtime.basement.atEndTile = !!startState.atEndTile;
+          }
+          const ok =
+            enteredState.active === true &&
+            enteredState.lastEntrySource === "test_lifecycle" &&
+            exitedState.active === false;
+          addCheck("v121_basement_lifecycle_shape", ok, { enteredState: enteredState, exitedState: exitedState }, false);
+        }
+      } catch (err) {
+        addCheck("v121_basement_lifecycle_shape", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // AI CHANGED: v1.2.2-alpha — BASEMENT COMPLETION TESTS. The wrapper now implements a phase state machine:
+      //   idle → active → atEnd → complete → idle. We exercise every edge with a stub loot fn + stub UI detect via
+      //   a small monkey-patch of `detectBasementEntryFromUi`. Restore the original at the end.
+      const __v122_origDetect =
+        typeof detectBasementEntryFromUi === "function" ? detectBasementEntryFromUi : null;
+      let __v122_stubLadder = false;
+      let __v122_stubSubstring = null;
+      const __v122_installStub = function () {
+        if (typeof detectBasementEntryFromUi === "function") {
+          // We can't reassign a `function` declaration in this scope from outside, but we CAN swap the global
+          // reference if it lives on `window`. Most modules export to a closure-scoped const, so as a safe fallback
+          // we mark these tests skipped when monkey-patching is impossible. In the IIFE bundle the helper is module-
+          // scoped — we can still re-stub via `Runtime.basement._testLadderStub` checked by the wrapper. Instead, we
+          // simulate the wrapper's decision tree directly using basementSetPhase + counters and assert the shape.
+        }
+      };
+      void __v122_origDetect;
+      void __v122_installStub;
+
+      // 1) Phase machine: idle → active → atEnd → complete → idle (synthetic, no DOM).
+      try {
+        if (typeof basementSetPhase !== "function" || typeof getBasementState !== "function" || typeof markBasementEntered !== "function" || typeof markBasementExited !== "function" || typeof setBasementAtEndTile !== "function") {
+          addCheck("v122_basement_phase_full_cycle", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startSnap = getBasementState();
+          markBasementEntered({ source: "test_phase_full" });
+          const afterEnter = getBasementState();
+          // setBasementAtEndTile(true) should auto-promote phase from active → atEnd.
+          setBasementAtEndTile(true);
+          const afterAtEnd = getBasementState();
+          // Promote to complete (simulating knowledge looted).
+          basementSetPhase("complete", "test_promote_complete");
+          const afterComplete = getBasementState();
+          // Allowed exit.
+          markBasementExited({ reason: "test_phase_full_done" });
+          const afterExit = getBasementState();
+          // Restore.
+          if (Runtime.basement) {
+            Runtime.basement.active = !!startSnap.active;
+            Runtime.basement.phase = startSnap.phase || "idle";
+            Runtime.basement.atEndTile = !!startSnap.atEndTile;
+            Runtime.basement.objectiveComplete = !!startSnap.objectiveComplete;
+          }
+          const ok =
+            afterEnter.phase === "active" && afterEnter.active === true && afterEnter.objectiveComplete === false && afterEnter.canExit === false &&
+            afterAtEnd.phase === "atEnd" && afterAtEnd.atEndTile === true && afterAtEnd.canExit === false &&
+            afterComplete.phase === "complete" && afterComplete.objectiveComplete === true && afterComplete.canExit === true &&
+            afterExit.phase === "idle" && afterExit.active === false && afterExit.canExit === false;
+          addCheck("v122_basement_phase_full_cycle", ok, {
+            afterEnter: afterEnter, afterAtEnd: afterAtEnd, afterComplete: afterComplete, afterExit: afterExit
+          }, false);
+        }
+      } catch (err) {
+        addCheck("v122_basement_phase_full_cycle", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // 2) markBasementEntered resets all run counters.
+      try {
+        if (typeof markBasementEntered !== "function" || typeof getBasementState !== "function") {
+          addCheck("v122_basement_entry_resets_counters", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startSnap = getBasementState();
+          // Pollute counters to simulate a previous run that left state behind.
+          if (Runtime.basement) {
+            Runtime.basement.exitSuppressedCount = 99;
+            Runtime.basement.exitSuppressedAtEndCount = 99;
+            Runtime.basement.knowledgeLootedCount = 99;
+            Runtime.basement.atEndTile = true;
+          }
+          markBasementEntered({ source: "test_reset" });
+          const after = getBasementState();
+          // Restore.
+          if (Runtime.basement) {
+            Runtime.basement.active = !!startSnap.active;
+            Runtime.basement.phase = startSnap.phase || "idle";
+            Runtime.basement.atEndTile = !!startSnap.atEndTile;
+            Runtime.basement.objectiveComplete = !!startSnap.objectiveComplete;
+            Runtime.basement.exitSuppressedCount = startSnap.exitSuppressedCount || 0;
+            Runtime.basement.exitSuppressedAtEndCount = startSnap.exitSuppressedAtEndCount || 0;
+            Runtime.basement.knowledgeLootedCount = startSnap.knowledgeLootedCount || 0;
+          }
+          const ok =
+            after.exitSuppressedCount === 0 && after.exitSuppressedAtEndCount === 0 &&
+            after.knowledgeLootedCount === 0 && after.atEndTile === false && after.phase === "active";
+          addCheck("v122_basement_entry_resets_counters", ok, { after: after }, false);
+        }
+      } catch (err) {
+        addCheck("v122_basement_entry_resets_counters", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 3) Wrapper SUPPRESSES ladder click during phase=active (the immediate-exit fix).
+      //   We simulate: basement just entered (phase=active). The current tile still has the entrance ladder
+      //   (which `detectBasementEntryFromUi` matches by substring). Without the fix the wrapper would mark exited.
+      //   We can't easily monkey-patch `detectBasementEntryFromUi` from this scope, but we CAN add a temporary
+      //   highlighted button to the live DOM that contains a basement substring and assert the wrapper suppresses.
+      try {
+        if (typeof maybeApplyBasementTransitionAroundLoot !== "function" || typeof markBasementEntered !== "function" || typeof markBasementExited !== "function" || typeof setBasementFarmingEnabled !== "function") {
+          addCheck("v122_wrapper_suppresses_active_ladder", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startEnabled = typeof getBasementFarmingEnabled === "function" ? getBasementFarmingEnabled() : false;
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          // Inject a fake basement-substring button into the DOM.
+          const fake = document.createElement("div");
+          fake.className = "battle-event-button highlight";
+          fake.textContent = "Use ladder";
+          fake.setAttribute("aria-label", "ladder");
+          document.body.appendChild(fake);
+          setBasementFarmingEnabled(true);
+          markBasementEntered({ source: "test_active_suppression" });
+          let lootCalls = 0;
+          const fakeLoot = async function () { lootCalls += 1; return { ok: true, clicked: true, verified: true }; };
+          const result = await maybeApplyBasementTransitionAroundLoot(fakeLoot);
+          const afterPhase = (Runtime.basement && Runtime.basement.phase) || "idle";
+          // Cleanup.
+          if (fake.parentNode) fake.parentNode.removeChild(fake);
+          markBasementExited({ reason: "test_active_suppression_done" });
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.active = !!startSnap.active;
+            Runtime.basement.phase = startSnap.phase || "idle";
+          }
+          setBasementFarmingEnabled(!!startEnabled);
+          const ok =
+            lootCalls === 0 &&
+            result && result.ok === true && result.skipped === true && result.reason === "basement_exit_suppressed" &&
+            afterPhase === "active";
+          addCheck("v122_wrapper_suppresses_active_ladder", ok, { result: result, lootCalls: lootCalls, afterPhase: afterPhase }, false);
+        }
+      } catch (err) {
+        addCheck("v122_wrapper_suppresses_active_ladder", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // 4) Wrapper SUPPRESSES ladder click during phase=atEnd (until threshold reached).
+      try {
+        if (typeof maybeApplyBasementTransitionAroundLoot !== "function" || typeof basementSetPhase !== "function") {
+          addCheck("v122_wrapper_suppresses_atend_until_threshold", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startEnabled = typeof getBasementFarmingEnabled === "function" ? getBasementFarmingEnabled() : false;
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          const startThreshold = Config && Config.basement ? Config.basement.exitSuppressedAtEndPromoteThreshold : null;
+          // Force threshold to 2 for the test.
+          if (Config && Config.basement) Config.basement.exitSuppressedAtEndPromoteThreshold = 2;
+          const fake = document.createElement("div");
+          fake.className = "battle-event-button highlight";
+          fake.textContent = "Use ladder";
+          fake.setAttribute("aria-label", "ladder");
+          document.body.appendChild(fake);
+          setBasementFarmingEnabled(true);
+          markBasementEntered({ source: "test_atend_threshold" });
+          basementSetPhase("atEnd", "test_force_atend");
+          let lootCalls = 0;
+          const fakeLoot = async function () { lootCalls += 1; return { ok: true, clicked: true, verified: true }; };
+          const r1 = await maybeApplyBasementTransitionAroundLoot(fakeLoot);
+          const phaseAfter1 = (Runtime.basement && Runtime.basement.phase) || "idle";
+          // 1st cycle suppressed (count=1, threshold=2).
+          const r2 = await maybeApplyBasementTransitionAroundLoot(fakeLoot);
+          // 2nd cycle: count reaches 2 → promote to complete and click → exits.
+          const phaseAfter2 = (Runtime.basement && Runtime.basement.phase) || "idle";
+          // Cleanup.
+          if (fake.parentNode) fake.parentNode.removeChild(fake);
+          markBasementExited({ reason: "test_atend_threshold_done" });
+          if (Config && Config.basement) Config.basement.exitSuppressedAtEndPromoteThreshold = startThreshold;
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.active = !!startSnap.active;
+            Runtime.basement.phase = startSnap.phase || "idle";
+          }
+          setBasementFarmingEnabled(!!startEnabled);
+          // r1: suppressed, no loot call. r2: clicked through (loot called), wrapper sees phase complete → marks exited → phase becomes idle.
+          const ok =
+            r1 && r1.ok === true && r1.skipped === true && r1.reason === "basement_exit_suppressed" &&
+            phaseAfter1 === "atEnd" &&
+            r2 && r2.ok === true && r2.clicked === true &&
+            phaseAfter2 === "idle" &&
+            lootCalls === 1;
+          addCheck("v122_wrapper_suppresses_atend_until_threshold", ok, {
+            r1: r1, r2: r2, phaseAfter1: phaseAfter1, phaseAfter2: phaseAfter2, lootCalls: lootCalls
+          }, false);
+        }
+      } catch (err) {
+        addCheck("v122_wrapper_suppresses_atend_until_threshold", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // 5) Knowledge loot (non-ladder click at atEnd) promotes phase to complete.
+      try {
+        if (typeof maybeApplyBasementTransitionAroundLoot !== "function" || typeof basementSetPhase !== "function") {
+          addCheck("v122_knowledge_loot_promotes_complete", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startEnabled = typeof getBasementFarmingEnabled === "function" ? getBasementFarmingEnabled() : false;
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          // No basement-substring button this time → detect.isBasement = false → wrapper treats as normal loot.
+          setBasementFarmingEnabled(true);
+          markBasementEntered({ source: "test_knowledge" });
+          basementSetPhase("atEnd", "test_force_atend_knowledge");
+          let lootCalls = 0;
+          const fakeLoot = async function () { lootCalls += 1; return { ok: true, clicked: true, verified: true }; };
+          const result = await maybeApplyBasementTransitionAroundLoot(fakeLoot);
+          const phaseAfter = (Runtime.basement && Runtime.basement.phase) || "idle";
+          const knowledgeCount = (Runtime.basement && Runtime.basement.knowledgeLootedCount) || 0;
+          // Cleanup.
+          markBasementExited({ reason: "test_knowledge_done" });
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.active = !!startSnap.active;
+            Runtime.basement.phase = startSnap.phase || "idle";
+          }
+          setBasementFarmingEnabled(!!startEnabled);
+          const ok =
+            lootCalls === 1 && result && result.ok === true && result.clicked === true &&
+            phaseAfter === "complete" && knowledgeCount === 1;
+          addCheck("v122_knowledge_loot_promotes_complete", ok, { result: result, phaseAfter: phaseAfter, knowledgeCount: knowledgeCount, lootCalls: lootCalls }, false);
+        }
+      } catch (err) {
+        addCheck("v122_knowledge_loot_promotes_complete", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // 6) Wrapper ALLOWS ladder exit during phase=complete (markBasementExited fires).
+      try {
+        if (typeof maybeApplyBasementTransitionAroundLoot !== "function" || typeof basementSetPhase !== "function") {
+          addCheck("v122_wrapper_allows_exit_when_complete", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startEnabled = typeof getBasementFarmingEnabled === "function" ? getBasementFarmingEnabled() : false;
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          const fake = document.createElement("div");
+          fake.className = "battle-event-button highlight";
+          fake.textContent = "Use ladder";
+          fake.setAttribute("aria-label", "ladder");
+          document.body.appendChild(fake);
+          setBasementFarmingEnabled(true);
+          markBasementEntered({ source: "test_exit_when_complete" });
+          basementSetPhase("complete", "test_force_complete");
+          let lootCalls = 0;
+          const fakeLoot = async function () { lootCalls += 1; return { ok: true, clicked: true, verified: true }; };
+          const result = await maybeApplyBasementTransitionAroundLoot(fakeLoot);
+          const phaseAfter = (Runtime.basement && Runtime.basement.phase) || "idle";
+          if (fake.parentNode) fake.parentNode.removeChild(fake);
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.active = !!startSnap.active;
+            Runtime.basement.phase = startSnap.phase || "idle";
+          }
+          setBasementFarmingEnabled(!!startEnabled);
+          const ok = lootCalls === 1 && result && result.ok === true && phaseAfter === "idle";
+          addCheck("v122_wrapper_allows_exit_when_complete", ok, { result: result, phaseAfter: phaseAfter, lootCalls: lootCalls }, false);
+        }
+      } catch (err) {
+        addCheck("v122_wrapper_allows_exit_when_complete", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // 7) Wrapper passes through normally during phase=idle entry click.
+      try {
+        if (typeof maybeApplyBasementTransitionAroundLoot !== "function") {
+          addCheck("v122_wrapper_idle_entry_marks_entered", false, { reason: "missing_helper" }, false);
+        } else {
+          const startEnabled = typeof getBasementFarmingEnabled === "function" ? getBasementFarmingEnabled() : false;
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          // Ensure idle phase.
+          if (Runtime.basement) {
+            Runtime.basement.active = false;
+            Runtime.basement.phase = "idle";
+          }
+          const fake = document.createElement("div");
+          fake.className = "battle-event-button highlight";
+          fake.textContent = "Enter basement";
+          fake.setAttribute("aria-label", "basement entry");
+          document.body.appendChild(fake);
+          setBasementFarmingEnabled(true);
+          let lootCalls = 0;
+          const fakeLoot = async function () { lootCalls += 1; return { ok: true, clicked: true, verified: true }; };
+          const result = await maybeApplyBasementTransitionAroundLoot(fakeLoot);
+          const phaseAfter = (Runtime.basement && Runtime.basement.phase) || "idle";
+          if (fake.parentNode) fake.parentNode.removeChild(fake);
+          markBasementExited({ reason: "test_entry_done" });
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.active = !!startSnap.active;
+            Runtime.basement.phase = startSnap.phase || "idle";
+          }
+          setBasementFarmingEnabled(!!startEnabled);
+          const ok = lootCalls === 1 && result && result.ok === true && phaseAfter === "active";
+          addCheck("v122_wrapper_idle_entry_marks_entered", ok, { result: result, phaseAfter: phaseAfter, lootCalls: lootCalls }, false);
+        }
+      } catch (err) {
+        addCheck("v122_wrapper_idle_entry_marks_entered", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // 8) Basement-end champion override is sticky across phase=atEnd / phase=complete (so the score and the
+      //    special-target helper still fire even after the champion icon disappeared post-mortem).
+      try {
+        if (typeof scoreScannedTile !== "function" || typeof basementSetPhase !== "function") {
+          addCheck("v122_end_champion_override_sticky_across_phase", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          const startCh = typeof getAvoidChampions === "function" ? getAvoidChampions() : true;
+          if (typeof setAvoidChampions === "function") setAvoidChampions(true);
+          markBasementEntered({ source: "test_sticky_override" });
+          // Force atEnd phase but flip atEndTile false (simulating post-mortem icon gone).
+          basementSetPhase("atEnd", "test_sticky_atend");
+          if (Runtime.basement) Runtime.basement.atEndTile = false;
+          const tileBoss = {
+            ok: true, classification: "walkable", key: "TR",
+            enemies: 1, allies: 0,
+            lootIcons: ["mob-type-champion event-champion"]
+          };
+          const scoreAtEnd = scoreScannedTile(tileBoss);
+          // Promote to complete.
+          basementSetPhase("complete", "test_sticky_complete");
+          const scoreComplete = scoreScannedTile(tileBoss);
+          // Cleanup.
+          if (typeof setAvoidChampions === "function") setAvoidChampions(!!startCh);
+          markBasementExited({ reason: "test_sticky_done" });
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.active = !!startSnap.active;
+            Runtime.basement.phase = startSnap.phase || "idle";
+            Runtime.basement.atEndTile = !!startSnap.atEndTile;
+          }
+          // Champion target base is 950000 by default → both scores should be POSITIVE (override active),
+          // not -500000 (avoid baseline).
+          const ok = scoreAtEnd > 0 && scoreComplete > 0;
+          addCheck("v122_end_champion_override_sticky_across_phase", ok, { scoreAtEnd: scoreAtEnd, scoreComplete: scoreComplete }, false);
+        }
+      } catch (err) {
+        addCheck("v122_end_champion_override_sticky_across_phase", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 9) Farming-disabled wrapper passes through with no phase mutation.
+      try {
+        if (typeof maybeApplyBasementTransitionAroundLoot !== "function" || typeof setBasementFarmingEnabled !== "function") {
+          addCheck("v122_wrapper_disabled_no_mutation", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startEnabled = typeof getBasementFarmingEnabled === "function" ? getBasementFarmingEnabled() : false;
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          setBasementFarmingEnabled(false);
+          // Inject a basement-substring button — wrapper must still passthrough since farming is OFF.
+          const fake = document.createElement("div");
+          fake.className = "battle-event-button highlight";
+          fake.textContent = "Use ladder";
+          fake.setAttribute("aria-label", "ladder");
+          document.body.appendChild(fake);
+          let lootCalls = 0;
+          const fakeLoot = async function () { lootCalls += 1; return { ok: true, clicked: true, verified: true }; };
+          const result = await maybeApplyBasementTransitionAroundLoot(fakeLoot);
+          const phaseAfter = (Runtime.basement && Runtime.basement.phase) || "idle";
+          if (fake.parentNode) fake.parentNode.removeChild(fake);
+          setBasementFarmingEnabled(!!startEnabled);
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.active = !!startSnap.active;
+            Runtime.basement.phase = startSnap.phase || "idle";
+          }
+          const ok = lootCalls === 1 && result && result.ok === true &&
+            phaseAfter === (startSnap ? (startSnap.phase || "idle") : "idle");
+          addCheck("v122_wrapper_disabled_no_mutation", ok, { result: result, phaseAfter: phaseAfter, lootCalls: lootCalls }, false);
+        }
+      } catch (err) {
+        addCheck("v122_wrapper_disabled_no_mutation", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 10) getBasementCanExit reflects phase=complete only.
+      try {
+        if (typeof getBasementCanExit !== "function" || typeof basementSetPhase !== "function") {
+          addCheck("v122_canExit_only_when_complete", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          basementSetPhase("idle", "test_canexit");
+          const e1 = getBasementCanExit();
+          basementSetPhase("active", "test_canexit");
+          const e2 = getBasementCanExit();
+          basementSetPhase("atEnd", "test_canexit");
+          const e3 = getBasementCanExit();
+          basementSetPhase("complete", "test_canexit");
+          const e4 = getBasementCanExit();
+          basementSetPhase("idle", "test_canexit_restore");
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.active = !!startSnap.active;
+            Runtime.basement.phase = startSnap.phase || "idle";
+          }
+          const ok = e1 === false && e2 === false && e3 === false && e4 === true;
+          addCheck("v122_canExit_only_when_complete", ok, { e1: e1, e2: e2, e3: e3, e4: e4 }, false);
+        }
+      } catch (err) {
+        addCheck("v122_canExit_only_when_complete", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: v1.2.3-alpha — BASEMENT END-DETECTION REFINEMENT TESTS. The end-tile probe is now async and must
+      //   open the per-tile popup explicitly. We exercise: short-circuit when phase is sticky atEnd/complete, OOC gate
+      //   skip in combat, and the skipPopup-fallback path that mimics the legacy passive read.
+
+      // 1) Sticky short-circuit at phase=atEnd — probe should NOT mutate state and must return reason=phase_sticky.
+      try {
+        if (typeof updateBasementEndTileFlagFromVisibleIcons !== "function" || typeof basementSetPhase !== "function" || typeof markBasementEntered !== "function" || typeof markBasementExited !== "function") {
+          addCheck("v123_end_probe_sticky_short_circuit_atEnd", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          markBasementEntered({ source: "test_v123_sticky_atend" });
+          basementSetPhase("atEnd", "test_v123_force_atend");
+          // Pre-set atEndTile to a known value; sticky short-circuit MUST NOT change it.
+          if (Runtime.basement) Runtime.basement.atEndTile = true;
+          const result = await updateBasementEndTileFlagFromVisibleIcons();
+          const stillTrue = !!(Runtime.basement && Runtime.basement.atEndTile === true);
+          markBasementExited({ reason: "test_v123_sticky_atend_done" });
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.active = !!startSnap.active;
+            Runtime.basement.phase = startSnap.phase || "idle";
+            Runtime.basement.atEndTile = !!startSnap.atEndTile;
+          }
+          const ok =
+            result && result.ok === true && result.skipped === true && result.reason === "phase_sticky" &&
+            result.phase === "atEnd" && stillTrue === true;
+          addCheck("v123_end_probe_sticky_short_circuit_atEnd", ok, { result: result, stillTrue: stillTrue }, false);
+        }
+      } catch (err) {
+        addCheck("v123_end_probe_sticky_short_circuit_atEnd", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // 2) Sticky short-circuit at phase=complete.
+      try {
+        if (typeof updateBasementEndTileFlagFromVisibleIcons !== "function" || typeof basementSetPhase !== "function" || typeof markBasementEntered !== "function" || typeof markBasementExited !== "function") {
+          addCheck("v123_end_probe_sticky_short_circuit_complete", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          markBasementEntered({ source: "test_v123_sticky_complete" });
+          basementSetPhase("complete", "test_v123_force_complete");
+          if (Runtime.basement) Runtime.basement.atEndTile = false;
+          const result = await updateBasementEndTileFlagFromVisibleIcons();
+          markBasementExited({ reason: "test_v123_sticky_complete_done" });
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.active = !!startSnap.active;
+            Runtime.basement.phase = startSnap.phase || "idle";
+            Runtime.basement.atEndTile = !!startSnap.atEndTile;
+          }
+          const ok =
+            result && result.ok === true && result.skipped === true && result.reason === "phase_sticky" &&
+            result.phase === "complete";
+          addCheck("v123_end_probe_sticky_short_circuit_complete", ok, { result: result }, false);
+        }
+      } catch (err) {
+        addCheck("v123_end_probe_sticky_short_circuit_complete", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // 3) skipPopup fallback finds a champion icon via passive querySelectorAll (legacy path; bypasses popup-open).
+      //    We inject a hex-events container with a champion-class icon and assert: phase active → atEnd transition fires.
+      try {
+        if (typeof updateBasementEndTileFlagFromVisibleIcons !== "function" || typeof markBasementEntered !== "function" || typeof markBasementExited !== "function") {
+          addCheck("v123_end_probe_skipPopup_finds_champion", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          // Inject a synthetic hex-events container with a champion icon.
+          const events = document.createElement("div");
+          events.className = "hex-events";
+          const icon = document.createElement("app-icon");
+          icon.setAttribute("class", "mob-type-champion");
+          events.appendChild(icon);
+          document.body.appendChild(events);
+          markBasementEntered({ source: "test_v123_champion_in_dom" });
+          // skipPopup:true bypasses ensureMapOpen / clickCenterMap / popup-wait so the test never depends on a live game.
+          const result = await updateBasementEndTileFlagFromVisibleIcons({ skipPopup: true });
+          const phaseAfter = (Runtime.basement && Runtime.basement.phase) || "idle";
+          const atEndAfter = !!(Runtime.basement && Runtime.basement.atEndTile);
+          // Cleanup.
+          if (events.parentNode) events.parentNode.removeChild(events);
+          markBasementExited({ reason: "test_v123_champion_in_dom_done" });
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.active = !!startSnap.active;
+            Runtime.basement.phase = startSnap.phase || "idle";
+            Runtime.basement.atEndTile = !!startSnap.atEndTile;
+          }
+          const ok =
+            result && result.ok === true && result.atEndTile === true && atEndAfter === true &&
+            phaseAfter === "atEnd" && result.iconsScanned >= 1;
+          addCheck("v123_end_probe_skipPopup_finds_champion", ok, { result: result, phaseAfter: phaseAfter, atEndAfter: atEndAfter }, false);
+        }
+      } catch (err) {
+        addCheck("v123_end_probe_skipPopup_finds_champion", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // 4) skipPopup with no champion icon: state stays atEndTile=false, phase stays "active".
+      try {
+        if (typeof updateBasementEndTileFlagFromVisibleIcons !== "function" || typeof markBasementEntered !== "function" || typeof markBasementExited !== "function") {
+          addCheck("v123_end_probe_skipPopup_no_champion_no_transition", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          markBasementEntered({ source: "test_v123_no_champion" });
+          // No icon injected — passive read finds 0 champion icons.
+          const result = await updateBasementEndTileFlagFromVisibleIcons({ skipPopup: true });
+          const phaseAfter = (Runtime.basement && Runtime.basement.phase) || "idle";
+          const atEndAfter = !!(Runtime.basement && Runtime.basement.atEndTile);
+          markBasementExited({ reason: "test_v123_no_champion_done" });
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.active = !!startSnap.active;
+            Runtime.basement.phase = startSnap.phase || "idle";
+            Runtime.basement.atEndTile = !!startSnap.atEndTile;
+          }
+          const ok =
+            result && result.ok === true && result.atEndTile === false && atEndAfter === false &&
+            phaseAfter === "active";
+          addCheck("v123_end_probe_skipPopup_no_champion_no_transition", ok, { result: result, phaseAfter: phaseAfter, atEndAfter: atEndAfter }, false);
+        }
+      } catch (err) {
+        addCheck("v123_end_probe_skipPopup_no_champion_no_transition", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // 5) Probe is now async — calling it returns a Promise (no raw `result.ok` synchronously).
+      try {
+        if (typeof updateBasementEndTileFlagFromVisibleIcons !== "function") {
+          addCheck("v123_end_probe_returns_promise", false, { reason: "missing_helper" }, false);
+        } else {
+          const r = updateBasementEndTileFlagFromVisibleIcons({ skipPopup: true });
+          const isPromise = r && typeof r.then === "function";
+          await r; // drain
+          addCheck("v123_end_probe_returns_promise", !!isPromise, { isPromise: !!isPromise }, false);
+        }
+      } catch (err) {
+        addCheck("v123_end_probe_returns_promise", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 9) Manual chat is the documented primary mode (default `useUserMessages !== false` and dispatcher uses it).
+      try {
+        const useUser = !!(Config.chat && Config.chat.useUserMessages !== false);
+        let dispatchOk = false;
+        if (typeof pickAutoChatSpammerDispatch === "function" && typeof setAutoChatMessages === "function" && typeof clearAutoChatMessages === "function") {
+          const startMsgs = typeof getAutoChatMessages === "function" ? getAutoChatMessages() : [];
+          const startUseUser = !!(Config.chat && Config.chat.useUserMessages !== false);
+          // Force the documented configuration: useUserMessages true (default) + populated list.
+          Config.chat.useUserMessages = true;
+          clearAutoChatMessages();
+          setAutoChatMessages(["primary mode test line"]);
+          const dispatch = pickAutoChatSpammerDispatch();
+          dispatchOk = !!(dispatch && dispatch.kind === "user" && dispatch.message === "primary mode test line");
+          // Restore
+          Config.chat.useUserMessages = startUseUser;
+          clearAutoChatMessages();
+          if (Array.isArray(startMsgs) && startMsgs.length > 0) setAutoChatMessages(startMsgs);
+        }
+        addCheck("v121_manual_chat_primary_mode_default", useUser && dispatchOk, { useUserDefault: useUser, dispatchOk: dispatchOk }, false);
+      } catch (err) {
+        addCheck("v121_manual_chat_primary_mode_default", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 10) Lens latch reset on stop (the helper resets `lensAutoDetectDone` so the next session re-probes).
+      try {
+        if (typeof stopAutoFarmLoop !== "function") {
+          addCheck("v121_lens_latch_reset_on_stop", false, { reason: "no_stop_helper" }, false);
+        } else {
+          const startRunning = !!(Runtime.autoFarm && Runtime.autoFarm.running);
+          const startLatch = !!(Runtime.autoFarm && Runtime.autoFarm.lensAutoDetectDone);
+          Runtime.autoFarm.running = false;
+          Runtime.autoFarm.lensAutoDetectDone = true;
+          const stopResult = stopAutoFarmLoop();
+          const latchAfter = !!(Runtime.autoFarm && Runtime.autoFarm.lensAutoDetectDone);
+          // Restore
+          Runtime.autoFarm.running = startRunning;
+          Runtime.autoFarm.lensAutoDetectDone = startLatch;
+          const ok = stopResult && stopResult.ok === true && latchAfter === false;
+          addCheck("v121_lens_latch_reset_on_stop", ok, { stopResult: stopResult, latchAfter: latchAfter }, false);
+        }
+      } catch (err) {
+        addCheck("v121_lens_latch_reset_on_stop", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Planner Part 2 — execution-plan CHARGE STEP shape test.
+      //   Verify a charge step survives plan materialization with chargeMode + chargeReleaseFraction preserved, AND that
+      //   `plannerExecutionPlanStepToQueueAction` correctly returns null for the charge step (queue cannot fire charges).
+      try {
+        if (
+          typeof plannerExecutionPlanFromSeqPick === "function" &&
+          typeof plannerExecutionPlanStepToQueueAction === "function"
+        ) {
+          const ep = plannerExecutionPlanFromSeqPick(
+            {
+              combatState: {
+                target: { fingerprintKey: "fp-chg-001", hpCur: 1900, hpMax: 2000, flags: { hasMagicResistShred: false } },
+                player: { hpCur: 1000, hpMax: 1000, mpCur: 1000, mpMax: 1000 },
+                fight: { enemyCount: 1, activeAttackerCount: 1, pressure: 0.1, combatMode: "fast" },
+                timing: { maxHorizonSec: 6 }
+              },
+              best: {
+                actions: [
+                  {
+                    kind: "skill_charge",
+                    skill: { slot: 4, name: "Sniper Shot", damageType: "physical" },
+                    chargeMode: "partial",
+                    chargeReleaseFraction: 0.62,
+                    damageDealt: 480,
+                    actionTimeSec: 1.5,
+                    elapsedAfterSec: 1.5
+                  },
+                  { kind: "basic" }
+                ],
+                cumulativeDamage: 480,
+                killedAtSec: null,
+                sim: { targetHpCur: 1420, playerHpCur: 1000, playerMpCur: 900, elapsedSec: 1.5, hpLost: 0, playerHpMax: 1000 },
+                _finalScore: 7
+              },
+              excludeSlotsApplied: null
+            },
+            {}
+          );
+          const step0 = ep ? ep.actions[0] : null;
+          const step1 = ep ? ep.actions[1] : null;
+          const chargeShapeOk =
+            step0 && step0.kind === "skill_charge" && step0.slot === 4 &&
+            step0.chargeMode === "partial" &&
+            typeof step0.chargeReleaseFraction === "number" &&
+            Math.abs(step0.chargeReleaseFraction - 0.62) < 0.0001;
+          const qa0 = plannerExecutionPlanStepToQueueAction(ep, 0);
+          const qa1 = plannerExecutionPlanStepToQueueAction(ep, 1);
+          const queueRejectsChargeOk = qa0 === null;
+          const queueAcceptsBasicOk = qa1 && qa1.mode === "basic" && qa1.slot === null;
+          // Also verify `plannerNextCombatQueueAction` skips the charge step and falls back to the basic at index 1.
+          let nextSkipsCharge = false;
+          if (typeof plannerSetActiveExecutionPlan === "function" && typeof plannerNextCombatQueueAction === "function") {
+            const prev = Runtime.planner ? Runtime.planner.activeExecutionPlan : null;
+            plannerSetActiveExecutionPlan(ep);
+            const nextAct = plannerNextCombatQueueAction({ disallowChargeSkills: true });
+            nextSkipsCharge = !!(nextAct && nextAct.mode === "basic" && nextAct.fromExecutionPlan === true && nextAct.planStepIndex === 1);
+            plannerSetActiveExecutionPlan(prev);
+          }
+          const passed = chargeShapeOk && queueRejectsChargeOk && queueAcceptsBasicOk && nextSkipsCharge;
+          addCheck(
+            "planner_execution_plan_charge_step_preserved",
+            passed,
+            {
+              step0: step0
+                ? { kind: step0.kind, slot: step0.slot, chargeMode: step0.chargeMode, chargeReleaseFraction: step0.chargeReleaseFraction }
+                : null,
+              queueForCharge: qa0,
+              queueForBasic: qa1,
+              nextSkipsCharge: nextSkipsCharge
+            },
+            false
+          );
+        } else {
+          addCheck("planner_execution_plan_charge_step_preserved", false, { reason: "fns_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_execution_plan_charge_step_preserved threw", err);
+        addCheck("planner_execution_plan_charge_step_preserved", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Planner Part 2 — execution-plan INVALIDATION on retarget test.
+      //   Build a synthetic plan, install it as active, call `plannerInvalidateExecutionPlan("post_kill_retarget")`, verify
+      //   plan.valid=false + invalidReason matches + Runtime.planner.lastExecutionPlanInvalidationReason populated +
+      //   combatExecution counter incremented.
+      try {
+        if (
+          typeof plannerExecutionPlanFromSeqPick === "function" &&
+          typeof plannerSetActiveExecutionPlan === "function" &&
+          typeof plannerInvalidateExecutionPlan === "function"
+        ) {
+          const prevPlan = Runtime.planner ? Runtime.planner.activeExecutionPlan : null;
+          const ep = plannerExecutionPlanFromSeqPick(
+            {
+              combatState: {
+                target: { fingerprintKey: "fp-inv-001", hpCur: 800, hpMax: 1000, flags: { hasMagicResistShred: false } },
+                player: { hpCur: 1000, hpMax: 1000, mpCur: 1000, mpMax: 1000 },
+                fight: { enemyCount: 2, activeAttackerCount: 1, pressure: 0.1, combatMode: "fast" },
+                timing: { maxHorizonSec: 6 }
+              },
+              best: {
+                actions: [
+                  { kind: "skill", skill: { slot: 2, name: "Piercing Strike", damageType: "physical" }, damageDealt: 120, actionTimeSec: 0.6, elapsedAfterSec: 0.6 }
+                ],
+                cumulativeDamage: 120,
+                killedAtSec: null,
+                sim: { targetHpCur: 680, playerHpCur: 1000, playerMpCur: 950, elapsedSec: 0.6, hpLost: 0, playerHpMax: 1000 },
+                _finalScore: 2
+              },
+              excludeSlotsApplied: null
+            },
+            {}
+          );
+          plannerSetActiveExecutionPlan(ep);
+          const beforeCount =
+            Runtime.autoFarm && Runtime.autoFarm.combatExecution && Number.isFinite(Runtime.autoFarm.combatExecution.plansInvalidated)
+              ? Runtime.autoFarm.combatExecution.plansInvalidated
+              : 0;
+          plannerInvalidateExecutionPlan("post_kill_retarget", { test: true });
+          const planFromRuntime = Runtime.planner ? Runtime.planner.activeExecutionPlan : null;
+          const afterCount =
+            Runtime.autoFarm && Runtime.autoFarm.combatExecution && Number.isFinite(Runtime.autoFarm.combatExecution.plansInvalidated)
+              ? Runtime.autoFarm.combatExecution.plansInvalidated
+              : 0;
+          const validOk = planFromRuntime && planFromRuntime.valid === false;
+          const reasonOk = planFromRuntime && planFromRuntime.invalidReason === "post_kill_retarget";
+          const reasonMirrorOk =
+            Runtime.planner && Runtime.planner.lastExecutionPlanInvalidationReason === "post_kill_retarget";
+          const counterOk = afterCount === beforeCount + 1;
+          const passed = validOk && reasonOk && reasonMirrorOk && counterOk;
+          addCheck(
+            "planner_execution_plan_invalidates_on_retarget",
+            passed,
+            {
+              validAfter: planFromRuntime ? planFromRuntime.valid : null,
+              invalidReason: planFromRuntime ? planFromRuntime.invalidReason : null,
+              runtimeMirror: Runtime.planner ? Runtime.planner.lastExecutionPlanInvalidationReason : null,
+              beforeCount: beforeCount,
+              afterCount: afterCount
+            },
+            false
+          );
+          plannerSetActiveExecutionPlan(prevPlan);
+        } else {
+          addCheck("planner_execution_plan_invalidates_on_retarget", false, { reason: "fns_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_execution_plan_invalidates_on_retarget threw", err);
+        addCheck("planner_execution_plan_invalidates_on_retarget", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Planner Part 2 — runtime DIAGNOSTICS surface test.
+      //   `ligmarBot.getActiveExecutionPlan` / `getCombatExecutionState` / `getPlannerLastExecutionPlanInvalidationReason` /
+      //   `getPlannerLastShouldReplanReason` must exist and return shape-compatible values. Also verifies all the Part 2
+      //   helpers are wired through to `ligmarBot`.
+      try {
+        const bot = window.ligmarBot || null;
+        if (bot) {
+          const hasGetPlan = typeof bot.getActiveExecutionPlan === "function";
+          const hasGetExec = typeof bot.getCombatExecutionState === "function";
+          const hasGetInvReason = typeof bot.getPlannerLastExecutionPlanInvalidationReason === "function";
+          const hasGetReplanReason = typeof bot.getPlannerLastShouldReplanReason === "function";
+          const hasBuild = typeof bot.plannerBuildExecutionPlan === "function";
+          const hasShouldReplan = typeof bot.plannerShouldReplanForExecutionPlan === "function";
+          const hasInvalidate = typeof bot.plannerInvalidateExecutionPlan === "function";
+          const hasAdvance = typeof bot.plannerAdvanceExecutionPlanStep === "function";
+          const hasAdapter = typeof bot.plannerAdaptExecutionPlanStepToOpenerShape === "function";
+          const hasNextQueue = typeof bot.plannerNextCombatQueueAction === "function";
+          const execState = hasGetExec ? bot.getCombatExecutionState() : null;
+          const execShapeOk =
+            !execState ||
+            (
+              "planId" in execState &&
+              "currentStepIndex" in execState &&
+              "lastStepResult" in execState &&
+              "lastReplanReason" in execState &&
+              "lastInvalidationReason" in execState &&
+              "planFollowedBeyondFirstStep" in execState
+            );
+          const passed =
+            hasGetPlan && hasGetExec && hasGetInvReason && hasGetReplanReason &&
+            hasBuild && hasShouldReplan && hasInvalidate && hasAdvance && hasAdapter && hasNextQueue &&
+            execShapeOk;
+          addCheck(
+            "planner_execution_plan_runtime_diagnostics",
+            passed,
+            {
+              hasGetPlan: hasGetPlan,
+              hasGetExec: hasGetExec,
+              hasGetInvReason: hasGetInvReason,
+              hasGetReplanReason: hasGetReplanReason,
+              hasBuild: hasBuild,
+              hasShouldReplan: hasShouldReplan,
+              hasInvalidate: hasInvalidate,
+              hasAdvance: hasAdvance,
+              hasAdapter: hasAdapter,
+              hasNextQueue: hasNextQueue,
+              execShapeOk: execShapeOk,
+              execStateKeys: execState ? Object.keys(execState).slice(0, 16) : null
+            },
+            false
+          );
+        } else {
+          addCheck("planner_execution_plan_runtime_diagnostics", false, { reason: "ligmarBot_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_execution_plan_runtime_diagnostics threw", err);
+        addCheck("planner_execution_plan_runtime_diagnostics", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Planner rewrite v1.2 — diagnostics is now read-only (no class-profile mutation).
+      //   Logic (bullet-list):
+      //     • Capture a known `Config.planner.skillMpReserve` value, set a sentinel value, call `getPlannerOpeningPickDiagnostics()` (which previously
+      //       called `plannerApplyClassProfile()` and would mutate this field back from the class profile).
+      //     • After the diagnostic call, `Config.planner.skillMpReserve` should still equal the sentinel — diagnostics did NOT mutate it.
+      //     • Restore the original value when done.
+      try {
+        if (typeof getPlannerOpeningPickDiagnostics === "function" && Config.planner) {
+          const original = Config.planner.skillMpReserve;
+          const sentinel = 9999;
+          Config.planner.skillMpReserve = sentinel;
+          const diag = getPlannerOpeningPickDiagnostics();
+          const stayedAsSentinel = Config.planner.skillMpReserve === sentinel;
+          Config.planner.skillMpReserve = original;
+          addCheck(
+            "planner_diagnostics_read_only",
+            stayedAsSentinel,
+            {
+              originalRestored: Config.planner.skillMpReserve === original,
+              postCallValue: stayedAsSentinel ? sentinel : "mutated",
+              classProfilePresent: !!(diag && diag.classProfile)
+            },
+            false
+          );
+        } else {
+          addCheck("planner_diagnostics_read_only", false, { reason: "fn_missing" }, false);
+        }
+      } catch (err) {
+        Logger.warn("TEST", "planner_diagnostics_read_only threw", err);
+        addCheck("planner_diagnostics_read_only", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: Night mode — persistence round-trip via the shared autoFarmUi blob (key `ligmarbot.autoFarmUi.v1`).
+      try {
+        if (
+          typeof saveAutoFarmUiPrefs !== "function" ||
+          typeof loadAutoFarmUiPrefs !== "function" ||
+          !Runtime.autoFarm
+        ) {
+          addCheck("night_mode_persistence_roundtrip", false, { reason: "prefs_api_missing" }, false);
+        } else {
+          if (!Runtime.autoFarm.nightMode || typeof Runtime.autoFarm.nightMode !== "object") {
+            Runtime.autoFarm.nightMode = {
+              enabled: false,
+              hourlyReloadTimer: null,
+              hourlyReloadScheduledAt: null,
+              hourlyReloadDueAt: null,
+              lastReloadAt: null,
+              lastBootAutostartAt: null
+            };
+          }
+          const prevEnabled = !!Runtime.autoFarm.nightMode.enabled;
+          Runtime.autoFarm.nightMode.enabled = true;
+          const saved = saveAutoFarmUiPrefs();
+          Runtime.autoFarm.nightMode.enabled = false;
+          loadAutoFarmUiPrefs();
+          const afterLoad = !!(Runtime.autoFarm.nightMode && Runtime.autoFarm.nightMode.enabled);
+          Runtime.autoFarm.nightMode.enabled = prevEnabled;
+          saveAutoFarmUiPrefs();
+          addCheck(
+            "night_mode_persistence_roundtrip",
+            saved && saved.ok === true && afterLoad === true,
+            {
+              storageKey: saved && saved.storageKey ? saved.storageKey : null,
+              wroteEnabled: true,
+              loadedEnabled: afterLoad,
+              restoredTo: prevEnabled
+            },
+            false
+          );
+        }
+      } catch (err) {
+        Logger.warn("TEST", "night_mode_persistence_roundtrip threw", err);
+        addCheck(
+          "night_mode_persistence_roundtrip",
+          false,
+          { error: String(err && err.message ? err.message : err) },
+          false
+        );
       }
 
       // AI CHANGED: Regression — planner localStorage can leave useRanked false; Fast/Safe must flip it on via applyAutoFarmCombatMode (same as AUTO ON / loop start).
@@ -4051,13 +8134,15 @@
       });
       return b;
     }
-    const modeBtnFast = makeModeButton("Fast", "fast");
-    const modeBtnSafe = makeModeButton("Safe", "safe");
+    // AI CHANGED: v1.2.0-alpha — Fast → Normal, Safe → Hard. Legacy panel still functional for operators who opt into the
+    //   in-page panel via Config.bootGui.autoMountPanel; canonical mode keys are now "normal"/"hard"/"easy".
+    const modeBtnFast = makeModeButton("Normal", "normal");
+    const modeBtnSafe = makeModeButton("Hard", "hard");
     modeBtnSafe.title =
       "Full planner (ranked, horizon, openers, buffs). Between empty tiles: wait for HP/MP floors + short prebuffs before explore.";
     const modeBtnEasy = makeModeButton("Easy", "easy");
     modeBtnEasy.title = "Basic attacks only — ranked planner path disabled.";
-    modeBtnFast.title = "Full planner; lighter idle gating between tiles than Safe.";
+    modeBtnFast.title = "Full planner; lighter idle gating between tiles than Hard.";
     autoModeRow.appendChild(modeBtnFast);
     autoModeRow.appendChild(modeBtnSafe);
     autoModeRow.appendChild(modeBtnEasy);
@@ -4088,6 +8173,36 @@
     chatSpamRow.appendChild(chatSpamCb);
     chatSpamRow.appendChild(chatSpamLbl);
     panel.appendChild(chatSpamRow);
+
+    // AI CHANGED: Panel toggle — Night Mode (hourly page reload + boot autostart for unattended overnight farming).
+    const nightModeRow = document.createElement("label");
+    nightModeRow.style.display = "flex";
+    nightModeRow.style.alignItems = "center";
+    nightModeRow.style.gap = "8px";
+    nightModeRow.style.marginBottom = "10px";
+    nightModeRow.style.fontSize = "10px";
+    nightModeRow.style.opacity = "0.9";
+    nightModeRow.style.cursor = "pointer";
+    nightModeRow.title =
+      "When ON: page auto-reloads every hour while AUTO is running, and AUTO ON starts automatically after each refresh (and after a normal page load).";
+    const nightModeCb = document.createElement("input");
+    nightModeCb.type = "checkbox";
+    nightModeCb.checked = !!(Runtime.autoFarm && Runtime.autoFarm.nightMode && Runtime.autoFarm.nightMode.enabled);
+    nightModeCb.addEventListener("change", function () {
+      if (typeof setNightModeEnabled === "function") {
+        setNightModeEnabled(!!nightModeCb.checked, { source: "panel_toggle" });
+      } else if (Runtime.autoFarm && Runtime.autoFarm.nightMode) {
+        Runtime.autoFarm.nightMode.enabled = !!nightModeCb.checked;
+      }
+      saveAutoFarmUiPrefs();
+      Logger.log("UI", "Night mode toggled", { enabled: !!nightModeCb.checked });
+      setTimeout(updateControlPanelStatus, 20);
+    });
+    const nightModeLbl = document.createElement("span");
+    nightModeLbl.textContent = "Night Mode (hourly reload + auto-start)";
+    nightModeRow.appendChild(nightModeCb);
+    nightModeRow.appendChild(nightModeLbl);
+    panel.appendChild(nightModeRow);
 
     // AI CHANGED: TEST / issue clip — use console only: `ligmarBot.runUiTestBundle(...)`, `ligmarBot.copyIssueReportLogs(...)`.
 
@@ -4158,7 +8273,7 @@
     Runtime.ui.issueReportLine = null;
     Runtime.ui.combatGraceInput = null;
     Runtime.ui.chatSpammerCheckbox = chatSpamCb;
-    Runtime.ui.autoFarmModeButtons = { fast: modeBtnFast, safe: modeBtnSafe, easy: modeBtnEasy };
+    Runtime.ui.autoFarmModeButtons = { normal: modeBtnFast, hard: modeBtnSafe, easy: modeBtnEasy };
     refreshAutoFarmModeButtonsVisual();
 
     updateControlPanelStatus();

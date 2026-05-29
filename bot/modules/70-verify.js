@@ -3,6 +3,11 @@
     const timeoutMs = options && options.timeoutMs ? options.timeoutMs : Config.verification.timeoutMs;
     const pollMs = options && options.pollMs ? options.pollMs : Config.verification.pollMs;
     const start = Date.now();
+    // AI CHANGED: Audit fix #11 — throttle the per-poll health evaluation (`evaluateAutoFarmHealth(readBasicState())` reads ~15 DOM selectors). Predicate still runs every `pollMs`; health eval runs at most every `healthEvalThrottleMs` (default 250 ms — much slower than typical 25–90 ms polls).
+    const healthEvalThrottleMs = Number.isFinite(Config.verification && Config.verification.healthEvalThrottleMs)
+      ? Math.max(50, Config.verification.healthEvalThrottleMs)
+      : 250;
+    let lastHealthEvalAt = 0;
     return new Promise((resolve) => {
       const tick = () => {
         // AI CHANGED: slice 21 — cooperative stop so verify waits don’t block Stop.
@@ -11,7 +16,14 @@
           resolve(false);
           return;
         }
-        if (Runtime.autoFarm.running && typeof evaluateAutoFarmHealth === "function" && typeof shouldAbortWaitForSessionRisk === "function") {
+        const nowEvalCheck = Date.now();
+        if (
+          Runtime.autoFarm.running &&
+          typeof evaluateAutoFarmHealth === "function" &&
+          typeof shouldAbortWaitForSessionRisk === "function" &&
+          nowEvalCheck - lastHealthEvalAt >= healthEvalThrottleMs
+        ) {
+          lastHealthEvalAt = nowEvalCheck;
           const healthSummary = evaluateAutoFarmHealth(readBasicState(), {
             reason: label
           });
@@ -186,6 +198,148 @@
     return { ok: verified, clicked: true, verified: verified };
   }
 
+  // AI CHANGED: v1.2.0-alpha — When champion/goblin avoidance is OFF and the current tile shows a champion or goblin
+  //   event icon, the bot must ACTIVELY target it.
+  //   v1.2.1-alpha — REWRITTEN to follow the exact required flow (the previous version relied on `clickCenterMap()` alone,
+  //   which only re-centers the camera and does NOT open the per-tile event popup, so the hex-events DOM was usually empty).
+  //   Correct flow:
+  //     1. `ensureMapOpen()` — make sure the map is visible.
+  //     2. `clickCenterMapVerified()` — re-center so the camera origin matches our current tile.
+  //     3. `clickMapCenterTile()` — single-click the canvas center to OPEN the hex tile popup (the same primitive
+  //        `scanNeighborRing` uses to scan the local tile).
+  //     4. Wait for the popup to actually appear via `readTilePopupDetails()` returning a result whose `isCurrentTile`
+  //        flag is true (we want OUR tile's event icons, not a neighbor's).
+  //     5. Query `Config.selectors.hexEventIcons` (same selector the scan path uses) and filter to champion / goblin.
+  //        Champion has priority over goblin when both are present and both are not avoided. The basement-end override
+  //        permits champion engagement even when global champion avoidance is ON, but only when `Runtime.basement.atEndTile`.
+  //     6. Dispatch a click on the matching icon. Game selects that mob as the active target.
+  //   Soft-fail: if any step fails (popup never opens, no matching icon, etc.) the helper returns `ok:false` with a clear
+  //   `reason`. Callers (specifically `secureTileAndLootOnce`) ignore the failure and continue with `clickFindEnemyVerified()`
+  //   so combat is never stalled by a special-target miss.
+  async function selectSpecialTileTargetIfDesired() {
+    const avoidChampions = typeof getAvoidChampions === "function" ? getAvoidChampions() : true;
+    const avoidGoblins = typeof getAvoidGoblins === "function" ? getAvoidGoblins() : false;
+    // Basement-end override permits champion engagement even when avoidChampions is true.
+    //   v1.2.2-alpha — accept either the live `atEndTile` UI flag OR the sticky "atEnd"/"complete" phase so the
+    //   override stays valid throughout the end-tile fight (champion icon disappears mid-fight).
+    const basementEndOverride = !!(
+      typeof isInBasement === "function" && isInBasement() &&
+      Runtime && Runtime.basement &&
+      (Runtime.basement.atEndTile === true || Runtime.basement.phase === "atEnd" || Runtime.basement.phase === "complete") &&
+      Config && Config.basement && Config.basement.endChampionOverride !== false
+    );
+    const wantChampion = !avoidChampions || basementEndOverride;
+    const wantGoblin = !avoidGoblins;
+    if (!wantChampion && !wantGoblin) {
+      return { ok: false, skipped: true, reason: "both_avoided", wantChampion: wantChampion, wantGoblin: wantGoblin };
+    }
+    try {
+      // Step 1: map open.
+      if (typeof ensureMapOpen === "function") {
+        const mapResult = await ensureMapOpen();
+        if (!mapResult || mapResult.ok === false) {
+          return { ok: false, reason: "map_not_open", map: mapResult };
+        }
+      }
+      // Step 2: recenter so canvas center == our tile.
+      if (typeof clickCenterMapVerified === "function") {
+        try {
+          const centerResult = await clickCenterMapVerified();
+          if (!centerResult || centerResult.ok === false) {
+            return { ok: false, reason: "center_failed", center: centerResult };
+          }
+        } catch (err) {
+          return { ok: false, reason: "center_threw", error: String(err && err.message ? err.message : err) };
+        }
+      }
+      // Step 3: open the current tile's popup by clicking the canvas center (this is the SAME primitive
+      //   scanNeighborRing uses to scan the local tile).
+      let popupClicked = false;
+      if (typeof clickMapCenterTile === "function") {
+        try {
+          popupClicked = !!clickMapCenterTile();
+        } catch (err) {
+          return { ok: false, reason: "center_tile_click_threw", error: String(err && err.message ? err.message : err) };
+        }
+      }
+      if (!popupClicked) {
+        return { ok: false, reason: "center_tile_click_failed" };
+      }
+      // Step 4: wait for the popup to show OUR tile's details.
+      const popupVisible = await waitForCondition(
+        "select-special tile popup",
+        () => {
+          if (typeof readTilePopupDetails !== "function") return !!(typeof readCurrentCoordsFromPopup === "function" ? readCurrentCoordsFromPopup() : null);
+          const det = readTilePopupDetails();
+          // Prefer isCurrentTile=true; if the "You are here" string is missing/localized, fall back to coords-only.
+          return !!(det && det.coords);
+        },
+        { timeoutMs: 1500, pollMs: 100 }
+      );
+      if (!popupVisible) {
+        return { ok: false, reason: "popup_timeout" };
+      }
+      let det = typeof readTilePopupDetails === "function" ? readTilePopupDetails() : null;
+      if (det && det.isCurrentTile === false) {
+        // Wrong tile in popup — try ONE more re-click.
+        if (typeof clickMapCenterTile === "function") {
+          try { clickMapCenterTile(); } catch (err) {}
+        }
+        await sleep(180);
+        det = typeof readTilePopupDetails === "function" ? readTilePopupDetails() : null;
+        if (det && det.isCurrentTile === false) {
+          return { ok: false, reason: "popup_not_current_tile", details: { isCurrentTile: det.isCurrentTile } };
+        }
+      }
+      // Step 5: pick matching icon from THIS popup (it is the active visible popup; querySelectorAll returns
+      //   only the open popup's icons because closed popups remove their hex-events containers).
+      const sel = Config && Config.selectors && Config.selectors.hexEventIcons
+        ? Config.selectors.hexEventIcons
+        : "div.hex-events app-icon, div.hex-events img";
+      const icons = Array.from(document.querySelectorAll(sel));
+      if (icons.length === 0) {
+        return { ok: false, reason: "no_event_icons" };
+      }
+      const champIcon = icons.find((el) => {
+        const blob = ((el.getAttribute("class") || "") + " " + (el.getAttribute("src") || "") + " " + (el.outerHTML || "")).toLowerCase();
+        return blob.indexOf("mob-type-champion") !== -1 || blob.indexOf("event-champion") !== -1;
+      });
+      const gobIcon = icons.find((el) => {
+        const blob = ((el.getAttribute("class") || "") + " " + (el.getAttribute("src") || "") + " " + (el.outerHTML || "")).toLowerCase();
+        return blob.indexOf("event-goblin") !== -1 || blob.indexOf("goblin") !== -1;
+      });
+      let pick = null;
+      let kind = null;
+      if (wantChampion && champIcon) { pick = champIcon; kind = "champion"; }
+      else if (wantGoblin && gobIcon) { pick = gobIcon; kind = "goblin"; }
+      if (!pick) {
+        return {
+          ok: false,
+          reason: "no_matching_icon",
+          wantChampion: wantChampion,
+          wantGoblin: wantGoblin,
+          championPresent: !!champIcon,
+          goblinPresent: !!gobIcon,
+          iconCount: icons.length
+        };
+      }
+      // Step 6: click the matching icon.
+      try {
+        pick.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window }));
+        pick.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, view: window }));
+        pick.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+      } catch (err) {
+        return { ok: false, reason: "icon_click_threw", error: String(err && err.message ? err.message : err) };
+      }
+      Logger.log("TARGET", "selectSpecialTileTargetIfDesired clicked icon", { kind: kind, basementEndOverride: basementEndOverride });
+      // Brief settle so the game can register the target.
+      await sleep(160);
+      return { ok: true, clicked: true, kind: kind, basementEndOverride: basementEndOverride };
+    } catch (err) {
+      return { ok: false, error: String(err && err.message ? err.message : err) };
+    }
+  }
+
   // AI CHANGED: Fast retarget via attackers popup after one kill in a multi-mob pull; falls back elsewhere if popup path is unavailable.
   async function clickAttackersRetargetVerified() {
     if (Config.combat && Config.combat.useAttackersPanelRetargetAfterKill === false) {
@@ -339,6 +493,27 @@
     if (centerAlreadyVisible) {
       Logger.log("MAP", "Map already open");
       return { ok: true, action: "already_open" };
+    }
+    // AI CHANGED: Audit fix #6 — center button may be momentarily hidden (animation, popup) while the map canvas is still mounted. Clicking the toggle in that state would close the map. If the canvas is already in the DOM, treat as already-open and wait briefly for the center button to reappear instead of toggling.
+    const mapCanvasSelector =
+      Config.selectors && typeof Config.selectors.mapCanvas === "string" ? Config.selectors.mapCanvas : null;
+    if (mapCanvasSelector) {
+      const canvas = document.querySelector(mapCanvasSelector);
+      if (canvas && isElementVisible(canvas)) {
+        const reappear = await waitForCondition(
+          "map center button reappear",
+          function () {
+            const cb = document.querySelector(Config.selectors.centerMapButton);
+            return !!cb && isElementVisible(cb);
+          },
+          { timeoutMs: 600, pollMs: 80 }
+        );
+        if (reappear) {
+          Logger.log("MAP", "Map already open (center button was transiently hidden)");
+          return { ok: true, action: "already_open_canvas" };
+        }
+        Logger.warn("MAP", "Map canvas visible but center button missing — toggling anyway");
+      }
     }
     const attempts = Number.isFinite(Config.recovery && Config.recovery.mapOpenRetryCount)
       ? Math.max(1, Config.recovery.mapOpenRetryCount)

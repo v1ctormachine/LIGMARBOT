@@ -2,7 +2,8 @@
 # then concatenates bot/modules/*.js (sorted by filename) into bot/bot.user.js.
 #
 # Usage:
-#   .\bot\build.ps1 -Description "short summary of what changed"   # bump + rebuild (normal flow)
+#   .\bot\build.ps1 -Description "short summary of what changed"   # bump patch + rebuild (normal flow)
+#   .\bot\build.ps1 -SetVersion "1.0.0-alpha" -Description "…"     # set exact version (milestone / prerelease)
 #   .\bot\build.ps1 -NoBump                                        # rebuild only, no version bump
 #
 # After every successful build, refresh the ligmar.io game tab in the browser. Tampermonkey
@@ -10,8 +11,30 @@
 
 param(
     [string]$Description = "",
+    [string]$SetVersion = "",
     [switch]$NoBump
 )
+
+function Split-LigmarSemVer([string]$v) {
+    if ($v -match '^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z][0-9A-Za-z.-]*))?$') {
+        return @{
+            Major      = [int]$Matches[1]
+            Minor      = [int]$Matches[2]
+            Patch      = [int]$Matches[3]
+            Prerelease = $Matches[4]
+        }
+    }
+    throw "version must be MAJOR.MINOR.PATCH or MAJOR.MINOR.PATCH-prerelease (e.g. 1.0.0-alpha); got '$v'"
+}
+
+function Format-LigmarSemVer($parsed, [int]$patchOverride) {
+    $patch = if ($null -ne $patchOverride) { $patchOverride } else { $parsed.Patch }
+    $out = "$($parsed.Major).$($parsed.Minor).$patch"
+    if ($parsed.Prerelease) {
+        $out += "-$($parsed.Prerelease)"
+    }
+    return $out
+}
 
 $ErrorActionPreference = "Stop"
 
@@ -48,14 +71,13 @@ if (-not $NoBump) {
         throw "Description is required for a version bump. Use: .\bot\build.ps1 -Description 'short summary'  OR  .\bot\build.ps1 -NoBump"
     }
 
-    $parts = $versionState.version -split '\.'
-    if ($parts.Count -ne 3) {
-        throw "version.json 'version' must be MAJOR.MINOR.PATCH; got '$($versionState.version)'"
+    if (-not [string]::IsNullOrWhiteSpace($SetVersion)) {
+        $parsedSet = Split-LigmarSemVer $SetVersion.Trim()
+        $newVersion = Format-LigmarSemVer $parsedSet $parsedSet.Patch
+    } else {
+        $parsed = Split-LigmarSemVer $versionState.version
+        $newVersion = Format-LigmarSemVer $parsed ($parsed.Patch + 1)
     }
-    $major = [int]$parts[0]
-    $minor = [int]$parts[1]
-    $patch = [int]$parts[2] + 1
-    $newVersion = "$major.$minor.$patch"
 
     $now = (Get-Date).ToString("o")
 

@@ -1,8 +1,108 @@
 ﻿{
-    "version":  "0.3.223",
-    "description":  "Panel: remove TEST and STOP+COPY LOGS; trim status footer (console TEST unchanged)",
-    "builtAt":  "2026-05-14T19:54:45.3628437+03:00",
+    "version":  "1.2.3-alpha",
+    "description":  "basement refinement: explicit current-tile popup for end-champion detection",
+    "builtAt":  "2026-05-29T22:57:28.6787698+03:00",
     "history":  [
+                    {
+                        "version":  "1.2.3-alpha",
+                        "description":  "basement refinement: explicit current-tile popup for end-champion detection",
+                        "date":  "2026-05-29T22:57:28.6787698+03:00"
+                    },
+                    {
+                        "version":  "1.2.2-alpha",
+                        "description":  "basement completion: prevent immediate exit, require objective completion, preserve end champion override",
+                        "date":  "2026-05-29T22:37:46.3484453+03:00"
+                    },
+                    {
+                        "version":  "1.2.1-alpha",
+                        "description":  "feature completion: special target select flow, automatic lens detection, real basement farming",
+                        "date":  "2026-05-29T22:07:19.8425638+03:00"
+                    },
+                    {
+                        "version":  "1.2.0-alpha",
+                        "description":  "desktop-app oriented controls: avoidance toggles, lense scan, basement farming, manual chat API, mode rename",
+                        "date":  "2026-05-29T21:26:23.2660722+03:00"
+                    },
+                    {
+                        "version":  "1.1.4-alpha",
+                        "description":  "desktop-app oriented controls: avoidance toggles, lense scan, basement farming, manual chat API, mode rename",
+                        "date":  "2026-05-29T21:26:09.1243912+03:00"
+                    },
+                    {
+                        "version":  "1.1.3-alpha",
+                        "description":  "retarget runtime fix: cancel auto-basic after retarget and stop Sniper overcommit",
+                        "date":  "2026-05-23T10:46:24.8361677+03:00"
+                    },
+                    {
+                        "version":  "1.1.2-alpha",
+                        "description":  "planner tactical tuning: better Sniper, Distracting Shot, Fan Volley, Piercing Strike, Ice Shard decisions",
+                        "date":  "2026-05-22T21:18:03.5911365+03:00"
+                    },
+                    {
+                        "version":  "1.1.1-alpha",
+                        "description":  "planner part 2.1: fix active-attacker replan bug and wire shouldReplan into combat loop",
+                        "date":  "2026-05-22T20:35:05.8132815+03:00"
+                    },
+                    {
+                        "version":  "1.1.0-alpha",
+                        "description":  "planner part 2: execute short sequence plans with replanning and charge integration",
+                        "date":  "2026-05-22T20:10:16.6115985+03:00"
+                    },
+                    {
+                        "version":  "1.0.9-alpha",
+                        "description":  "planner correction pass v1.3: active basic timing model, typed runtime path, simulated-state semantics clarity",
+                        "date":  "2026-05-22T19:24:16.3678301+03:00"
+                    },
+                    {
+                        "version":  "1.0.8-alpha",
+                        "description":  "planner correction pass v1.2: conservative basic timing, typed shred (physical vs magic), Sniper Shot charge guarantee, simulated semantic tie-breaks, read-only diagnostics",
+                        "date":  "2026-05-22T18:52:10.0244183+03:00"
+                    },
+                    {
+                        "version":  "1.0.7-alpha",
+                        "description":  "Planner rewrite v1.1: excludeSlots honored inside sequence search + simBasicSwingsBetweenActions implemented + latent flat-state bug fixed",
+                        "date":  "2026-05-22T18:17:10.7668769+03:00"
+                    },
+                    {
+                        "version":  "1.0.6-alpha",
+                        "description":  "planner foundation rewrite: sequence state, debuff-aware semantics, Archer tactical model",
+                        "date":  "2026-05-22T17:08:32.9665623+03:00"
+                    },
+                    {
+                        "version":  "1.0.5-alpha",
+                        "description":  "buff policy split: OOC longbuffs, tile prebuffs, safer support cast wait",
+                        "date":  "2026-05-22T14:14:20.0770225+03:00"
+                    },
+                    {
+                        "version":  "1.0.4-alpha",
+                        "description":  "audit fixes: sleep yield, target-swap progress, charge race, HP-spike, potion CD, map open, ring scan, health throttle, log dedup",
+                        "date":  "2026-05-22T10:12:40.3777735+03:00"
+                    },
+                    {
+                        "version":  "1.0.3-alpha",
+                        "description":  "AUTO: ensure-skills once per session; Easy disables all buffs",
+                        "date":  "2026-05-21T23:58:06.0992669+03:00"
+                    },
+                    {
+                        "version":  "1.0.2-alpha",
+                        "description":  "night mode: hourly reload + boot autostart, persisted toggle",
+                        "date":  "2026-05-21T23:47:03.0399856+03:00"
+                    },
+                    {
+                        "version":  "1.0.1-alpha",
+                        "description":  "input: use pointer/mouse sequence for appsmartclick actions",
+                        "date":  "2026-05-21T23:29:55.1630238+03:00"
+                    },
+                    {
+                        "version":  "1.0.0-alpha",
+                        "description":  "game-stable baseline: bot semver from 1.0.0-alpha (replaces 0.3.x line)",
+                        "date":  "2026-05-15T14:52:04.3483513+03:00"
+                    },
+                    {
+                        "version":  "0.3.224",
+                        "description":  "action bar: scan and click app-skill-button slots in bar order",
+                        "date":  "2026-05-15T11:30:39.7283605+03:00"
+                    },
                     {
                         "version":  "0.3.223",
                         "description":  "Panel: remove TEST and STOP+COPY LOGS; trim status footer (console TEST unchanged)",
@@ -152,106 +252,6 @@
                         "version":  "0.3.194",
                         "description":  "queue v3: plannerBuildCombatQueueAction uses openerFollowUpSkillDepth lookahead; TEST queueScoreDepth",
                         "date":  "2026-05-13T19:06:34.0289400+03:00"
-                    },
-                    {
-                        "version":  "0.3.193",
-                        "description":  "retarget: no cancel; queue first skill on game basic cast; post-retarget burst allowCombatQueue",
-                        "date":  "2026-05-13T18:56:26.2566231+03:00"
-                    },
-                    {
-                        "version":  "0.3.192",
-                        "description":  "horizon: typed paper mob blend physical vs magic; instant arrow-tier regex; TEST Horizon typed paper mob calibration",
-                        "date":  "2026-05-13T18:22:48.6304947+03:00"
-                    },
-                    {
-                        "version":  "0.3.191",
-                        "description":  "horizon: blend mobFactor on instant/dot paper; full mf on basic_proc/channel; TEST Horizon paper mob calibration",
-                        "date":  "2026-05-13T18:13:40.7827949+03:00"
-                    },
-                    {
-                        "version":  "0.3.190",
-                        "description":  "horizon: DoT paper scales with mob calibration; TEST Horizon DoT calibration",
-                        "date":  "2026-05-13T17:52:38.3933158+03:00"
-                    },
-                    {
-                        "version":  "0.3.189",
-                        "description":  "calibration pressure v2: spread confidence, ratio ease, charge hold hard-only",
-                        "date":  "2026-05-13T17:45:02.0473454+03:00"
-                    },
-                    {
-                        "version":  "0.3.188",
-                        "description":  "calibration: hp_drop ratio adds opener pressure + charge hold when harder than paper",
-                        "date":  "2026-05-13T17:35:16.5609473+03:00"
-                    },
-                    {
-                        "version":  "0.3.187",
-                        "description":  "charge hold: incoming sustain penalty; pullTier on danger pressure; TEST channel hold risk",
-                        "date":  "2026-05-13T17:22:56.9835142+03:00"
-                    },
-                    {
-                        "version":  "0.3.186",
-                        "description":  "opener danger: sustain HP loss in pressure model, fresh sustain before opener pick, TEST + fieldValidation sample",
-                        "date":  "2026-05-13T17:13:27.3439974+03:00"
-                    },
-                    {
-                        "version":  "0.3.185",
-                        "description":  "horizon: unified live-target overkill cap helper for opener and charge",
-                        "date":  "2026-05-13T16:55:18.3884536+03:00"
-                    },
-                    {
-                        "version":  "0.3.184",
-                        "description":  "horizon: unify charge hold risk in opener context; reuse cooldown in scored rows",
-                        "date":  "2026-05-13T16:43:50.5405355+03:00"
-                    },
-                    {
-                        "version":  "0.3.183",
-                        "description":  "combat episode v1: snapshot opener+queue per burst, TEST + getCombatEpisode",
-                        "date":  "2026-05-13T16:31:58.2726428+03:00"
-                    },
-                    {
-                        "version":  "0.3.182",
-                        "description":  "Config: tighter verify + 25ms retarget/ranked settle",
-                        "date":  "2026-05-13T16:15:32.3290222+03:00"
-                    },
-                    {
-                        "version":  "0.3.181",
-                        "description":  "Combat: post-retarget cancel after find-enemy retarget too",
-                        "date":  "2026-05-13T15:55:19.9721273+03:00"
-                    },
-                    {
-                        "version":  "0.3.180",
-                        "description":  "TEST: Natural Sniper pass when fresh window picks other opener",
-                        "date":  "2026-05-13T15:45:44.2481895+03:00"
-                    },
-                    {
-                        "version":  "0.3.179",
-                        "description":  "Combat: widen tiny cancel_release first verify + shorter tiny late cap",
-                        "date":  "2026-05-13T15:21:00.4862376+03:00"
-                    },
-                    {
-                        "version":  "0.3.178",
-                        "description":  "Combat: shorter charge late-wait + tiny cancel_release cap",
-                        "date":  "2026-05-13T14:12:24.8105758+03:00"
-                    },
-                    {
-                        "version":  "0.3.177",
-                        "description":  "Combat: charge release late wait + queue tick + per-opener queue arm",
-                        "date":  "2026-05-13T14:01:18.5465236+03:00"
-                    },
-                    {
-                        "version":  "0.3.176",
-                        "description":  "Soak: STOP+COPY last 30 log lines, Logger ring buffer, TEST Logger ring check",
-                        "date":  "2026-05-13T13:49:01.7652840+03:00"
-                    },
-                    {
-                        "version":  "0.3.175",
-                        "description":  "Field validation: gameSnapshotEnd.fieldValidation + getFieldValidationSnapshot + TEST check",
-                        "date":  "2026-05-13T13:39:27.2610495+03:00"
-                    },
-                    {
-                        "version":  "0.3.174",
-                        "description":  "Remove DOM miss scan, miss_text, snapFloatingMissOnce; merge DB on hp_drop only; summary v5",
-                        "date":  "2026-05-13T13:27:01.4319703+03:00"
                     }
                 ]
 }

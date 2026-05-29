@@ -388,6 +388,164 @@
     return Number.isFinite(value) ? value : null;
   }
 
+  // AI CHANGED: Planner rewrite v1 — active-attacker reader. The red "attackers" badge value indicates how many enemies are CURRENTLY
+  // attacking the hero (distinct from `enemyCount`, which counts enemies present). Returns:
+  //   - integer count when readable
+  //   - 0 when the attackers button exists but no badge / hidden / not visible (no active attackers)
+  //   - null when no attackers button is present at all (unknown state, e.g. out of combat UI)
+  // Best-effort: tries badge value selector first; falls back to scanning numeric tokens inside the button; falls back to counting cards
+  // when the attackers popup happens to be already open.
+  function readActiveAttackerCount() {
+    const buttonSel = Config.selectors && Config.selectors.attackersButton ? Config.selectors.attackersButton : null;
+    const badgeSel = Config.selectors && Config.selectors.attackersBadgeValue ? Config.selectors.attackersBadgeValue : null;
+    const popupListSel = Config.selectors && Config.selectors.attackersPopupList ? Config.selectors.attackersPopupList : null;
+    const popupCardSel = Config.selectors && Config.selectors.attackersPopupCard ? Config.selectors.attackersPopupCard : null;
+    const buttonNode = buttonSel ? document.querySelector(buttonSel) : null;
+    if (!buttonNode) {
+      return null;
+    }
+    const buttonVisible = isElementVisible(buttonNode);
+    let count = null;
+    let source = "unknown";
+    if (badgeSel) {
+      const candidates = buttonNode.querySelectorAll(badgeSel);
+      for (let i = 0; i < candidates.length; i += 1) {
+        const node = candidates[i];
+        if (!node) {
+          continue;
+        }
+        const txt = (node.textContent || "").trim();
+        if (!txt) {
+          continue;
+        }
+        const m = txt.match(/(\d{1,3})/);
+        if (m) {
+          const v = Number.parseInt(m[1], 10);
+          if (Number.isFinite(v) && v >= 0 && v <= 99) {
+            count = v;
+            source = "badge_value";
+            break;
+          }
+        }
+      }
+    }
+    if (count === null) {
+      const fullTxt = (buttonNode.textContent || "").trim();
+      if (fullTxt) {
+        const m = fullTxt.match(/(\d{1,3})/);
+        if (m) {
+          const v = Number.parseInt(m[1], 10);
+          if (Number.isFinite(v) && v >= 0 && v <= 99) {
+            count = v;
+            source = "button_text";
+          }
+        }
+      }
+    }
+    if (count === null && popupListSel && popupCardSel) {
+      const popupList = document.querySelector(popupListSel);
+      if (popupList && isElementVisible(popupList)) {
+        const cards = popupList.querySelectorAll(popupCardSel);
+        let visibleCards = 0;
+        for (let j = 0; j < cards.length; j += 1) {
+          if (isElementVisible(cards[j])) {
+            visibleCards += 1;
+          }
+        }
+        count = visibleCards;
+        source = "popup_card_count";
+      }
+    }
+    if (count === null) {
+      count = buttonVisible ? 0 : 0;
+      source = "button_present_no_badge";
+    }
+    return {
+      count: count,
+      buttonVisible: buttonVisible,
+      source: source
+    };
+  }
+
+  // AI CHANGED: Planner rewrite v1 — best-effort visible target effects reader. Parses `.profile-effects > app-effect-card` cards.
+  // Returns array of { id, label, remainingSec, raw, iconHint } when target effect cards are present; empty array otherwise.
+  // `id` is best-effort from icon class/src; never trust as authoritative. `remainingSec` parsed from `.effect-time` ("5s", "12s").
+  function readTargetVisibleEffects() {
+    const rootSel = Config.selectors && Config.selectors.targetEffectsRoot ? Config.selectors.targetEffectsRoot : null;
+    const cardSel = Config.selectors && Config.selectors.targetEffectCard ? Config.selectors.targetEffectCard : null;
+    const timeSel = Config.selectors && Config.selectors.targetEffectTime ? Config.selectors.targetEffectTime : null;
+    const iconSel = Config.selectors && Config.selectors.targetEffectIcon ? Config.selectors.targetEffectIcon : null;
+    if (!rootSel || !cardSel) {
+      return [];
+    }
+    const out = [];
+    const roots = document.querySelectorAll(rootSel);
+    for (let r = 0; r < roots.length; r += 1) {
+      const root = roots[r];
+      if (!root || !isElementVisible(root)) {
+        continue;
+      }
+      const cards = root.querySelectorAll(cardSel);
+      for (let i = 0; i < cards.length; i += 1) {
+        const card = cards[i];
+        if (!card || !isElementVisible(card)) {
+          continue;
+        }
+        const raw = (card.textContent || "").replace(/\s+/g, " ").trim();
+        let remainingSec = null;
+        if (timeSel) {
+          const tNode = card.querySelector(timeSel);
+          if (tNode) {
+            const tTxt = (tNode.textContent || "").trim();
+            const m = tTxt.match(/(\d+(?:\.\d+)?)\s*s/i);
+            if (m) {
+              const v = Number.parseFloat(m[1]);
+              if (Number.isFinite(v)) {
+                remainingSec = v;
+              }
+            } else {
+              const m2 = tTxt.match(/(\d+(?:\.\d+)?)/);
+              if (m2) {
+                const v2 = Number.parseFloat(m2[1]);
+                if (Number.isFinite(v2)) {
+                  remainingSec = v2;
+                }
+              }
+            }
+          }
+        }
+        let iconHint = "";
+        let id = "";
+        if (iconSel) {
+          const iconNode = card.querySelector(iconSel);
+          if (iconNode) {
+            const cls = (iconNode.className || "").toString();
+            const src = iconNode.getAttribute ? (iconNode.getAttribute("src") || "") : "";
+            iconHint = `${cls} ${src}`.trim();
+            const mClass = cls.match(/\bicon-src-([a-z0-9_-]+)\b/i);
+            if (mClass && mClass[1]) {
+              id = mClass[1].toLowerCase();
+            }
+            if (!id && src) {
+              const mSrc = src.match(/([A-Za-z0-9_\-]+)(?:\.[A-Za-z]+)?$/);
+              if (mSrc && mSrc[1]) {
+                id = mSrc[1].toLowerCase();
+              }
+            }
+          }
+        }
+        out.push({
+          id: id || "",
+          label: raw,
+          remainingSec: remainingSec,
+          raw: raw,
+          iconHint: iconHint
+        });
+      }
+    }
+    return out;
+  }
+
   // AI CHANGED: Added coordinate reader independent of "You are here" so neighbor tile scans can parse coords.
   function readCurrentCoordsFromPopup() {
     const coordsNode = document.querySelector(Config.selectors.hexTitleCoords);

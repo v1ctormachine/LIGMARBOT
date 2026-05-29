@@ -9,12 +9,20 @@
       startedAt: null,
       // AI CHANGED: Last completed ON session summary (duration/cycles/failures/stop reason).
       lastSessionSummary: null,
-      // AI CHANGED: Panel AUTO combat style — Fast / Safe / Easy. `applyAutoFarmCombatMode` syncs planner whenever the mode changes or prefs load; AUTO start still snapshots planner for restore on loop exit.
-      combatMode: "fast",
+      // AI CHANGED: v1.2.0-alpha — combat mode renamed Fast→Normal, Safe→Hard. Internal canonical values: "normal" / "hard" / "easy".
+      //   The setter / mode helpers accept legacy "fast" / "safe" as aliases (they normalize to "normal" / "hard" on assignment)
+      //   so persisted prefs from prior versions still load. Old localStorage values are migrated transparently by `loadAutoFarmUiPrefs()`.
+      combatMode: "normal",
       // AI CHANGED: Snapshot of planner combat flags taken when AUTO starts; restored on loop exit.
       plannerSnapshotBeforeAuto: null,
       // AI CHANGED: One-shot per AUTO session — first OOC cycle can run TEST-like prep (`Config.farmLoop.autoLikeTest`); cleared when the loop ends.
       autoLikeTestPrepDone: false,
+      // AI CHANGED: One-shot per AUTO session — once `ensureSkillsAndHeroDataForAutoFarm` lands usable skills, subsequent OOC cycles skip the cache reload + scan log.
+      skillEnsureDone: false,
+      // AI CHANGED: v1.2.1-alpha — One-shot per AUTO session — the first safe OOC cycle calls `maybeAutoDetectLensIfNeeded`,
+      //   which runs the destructive `detectLensState` probe IF lens state is unknown and probing is enabled. Subsequent
+      //   cycles skip without further dispatch. Reset on `startAutoFarmLoop` and `stopAutoFarmLoop`.
+      lensAutoDetectDone: false,
       // AI CHANGED: Reliability counters for repeated combat no-progress loops.
       reliability: {
         noProgressStreak: 0,
@@ -59,11 +67,46 @@
         postRetargetGuarded: false,
         lastMatchedCastText: null,
         advanceCount: 0,
-        anchorNeedsReset: false
+        anchorNeedsReset: false,
+        // AI CHANGED: Planner Part 2 — true when the currently queued action originated from the active execution plan.
+        fromExecutionPlan: false,
+        planStepIndex: null
       },
       // AI CHANGED: Combat episode v1 — last burst’s ordered opener + follow-up plan snapshot (`86-planner` + `85-combat`); cleared on target change / secure cycle / post-kill retarget.
       combatEpisode: null,
+      // AI CHANGED: Planner Part 2 — runtime telemetry of plan-driven execution (which plan step ran, replan/invalidation reasons, plan-followed counter).
+      //   Used by 85-combat.js to record what actually happened during the burst, exposed for diagnostics (`getCombatExecutionState()`).
+      combatExecution: {
+        planId: null,
+        currentStepIndex: null,
+        lastStepKind: null,
+        lastStepSlot: null,
+        lastStepName: null,
+        lastStepResult: null,
+        lastStepAt: null,
+        lastReplanReason: null,
+        lastInvalidationReason: null,
+        planFollowedBeyondFirstStep: 0,
+        plansBuilt: 0,
+        plansReused: 0,
+        plansInvalidated: 0,
+        queueAdvancesFromPlan: 0,
+        queueAdvancesFromLegacy: 0,
+        // AI CHANGED: Planner Part 2 retarget fix v1.1.3 — last post-retarget cancel attempt + dispatch counter.
+        //   `lastPostRetargetCancel` shape: { at, method, cancelled, reason? }. `postRetargetCancelDispatches` counts only successful dispatches.
+        lastPostRetargetCancel: null,
+        postRetargetCancelDispatches: 0,
+        // AI CHANGED: Planner Part 2 retarget fix v1.1.3 — last lethal guard event observed by the runtime when arming/chaining queue.
+        //   Shape: { at, site: "opener" | "fire_chain", wouldKill, predictedDamage, targetHpCur, source, reason, ... }.
+        //   Counter increments only when the guard actually skipped queueing a follow-up.
+        lastLethalGuardEvent: null,
+        lethalGuardSkips: 0
+      },
       // AI CHANGED: AUTO ON chat spammer — next due time, last sent line, and recent send/fail telemetry.
+      //   v1.2.0-alpha — `userMessages` is the new manual chat list (set by `setAutoChatMessages([...])`). When non-empty
+      //   AND `Config.chat.useUserMessages === true` (default) the spammer cycles through this list instead of the legacy
+      //   time-of-day banks. `intervalOverrides` lets the operator set custom min/max in ms via `setAutoChatIntervalRange()`;
+      //   when null the scheduler falls back to `Config.chat.messageIntervalMin/Max`.
       chatSpammer: {
         nextSendAt: null,
         lastDelayMs: null,
@@ -73,14 +116,30 @@
         lastMessageIndex: null,
         sends: 0,
         failures: 0,
-        lastResult: null
+        lastResult: null,
+        userMessages: [],
+        userMessageCursor: 0,
+        intervalOverrides: null
       },
-      // AI CHANGED: Support-buff line — `longSelfTracked` = assumed buff expiry by normalized skill name (permanent self renew + prebuff casts when `buffDurationTracking` is on); safety cast spacing; prebuff telemetry.
+      // AI CHANGED: Support-buff line — buff system rewrite (v1.0.5-alpha):
+      //   `longSelfTracked` = assumed-expiry map (long buffs >=60s, timer-driven, recast when remaining low)
+      //   `prebuff` = per-tile gate so a newly entered mob tile is prebuffed exactly once (tile-keyed, NOT duration-tracked)
+      //   `longbuff` = per-session flag for first OOC pass + bookkeeping
+      //   `safetyHpSpike*` = HP spike → safety skill (set by sustain observations)
       supportBuffLine: {
         longSelfTracked: {},
         lastSafetyBuffCastAt: 0,
         prebuffCastCount: 0,
-        // AI CHANGED: HP spike → safety skill — set by sustain observations, cleared when safety fires or fails.
+        prebuff: {
+          tileKey: null,
+          tileAt: null,
+          lastResult: null
+        },
+        longbuff: {
+          initialPassDone: false,
+          lastPassAt: null,
+          lastResult: null
+        },
         safetyHpSpikePending: false,
         safetyHpSpikeLost: null,
         safetyHpSpikeAt: null
@@ -108,6 +167,15 @@
         lastRefreshAt: null,
         lastRefreshReason: null,
         lastRefreshToken: null
+      },
+      // AI CHANGED: Night mode — unattended long-run reliability (hourly refresh + boot autostart). `enabled` persists in ligmarbot.autoFarmUi.v1.
+      nightMode: {
+        enabled: false,
+        hourlyReloadTimer: null,
+        hourlyReloadScheduledAt: null,
+        hourlyReloadDueAt: null,
+        lastReloadAt: null,
+        lastBootAutostartAt: null
       }
     },
     // AI CHANGED: Added exploration state so idle movement rotates through nearby directions.
@@ -118,7 +186,64 @@
       // AI CHANGED: Stores latest 1-ring scan snapshot for GUI/debug use.
       lastRingScan: null,
       // AI CHANGED: Stores latest 2-ring visual scan snapshot (yellow-die detection) for GUI/debug use.
-      lastSecondRingScan: null
+      lastSecondRingScan: null,
+      // AI CHANGED: v1.2.0-alpha — last 2-ring CHAMPION-RED scan snapshot (only populated when champion avoidance is off).
+      lastSecondRingChampionScan: null,
+      // AI CHANGED: v1.2.0-alpha — last 3-ring pixel scan snapshot (only populated when lens equipped + 1+2-ring empty).
+      lastThirdRingScan: null,
+      // AI CHANGED: v1.2.0-alpha — last direction the bot moved IN. Used by basement forward-objective scoring to penalize
+      //   the reverse direction. Set by `exploreByScan()` after a verified move.
+      lastMoveDir: null
+    },
+    // AI CHANGED: v1.2.0-alpha — User-controllable preferences exposed by the desktop app via `window.ligmarBot` setters.
+    //   These mirror Config.* defaults at boot but are the real runtime source of truth (Config defaults are only consulted
+    //   on first load). Persisted to `ligmarbot.botPreferences.v1` localStorage by `saveBotPreferencesToStorage()`.
+    preferences: {
+      avoidChampions: true,
+      avoidGoblins: false,
+      basementFarmingEnabled: false
+    },
+    // AI CHANGED: v1.2.0-alpha — vision / lens detection state. `hasLens` starts null (unknown); set to true/false by
+    //   `detectLensState()` or by `setLensStateOverride(bool)`. When true, exploration scans expand to 2-ring click-scan +
+    //   3-ring pixel-scan fallback (see `exploreByScan` lens path).
+    vision: {
+      hasLens: null,
+      lastDetectAt: null,
+      lastDetectResult: null,
+      detectAttempts: 0,
+      manualOverride: null
+    },
+    // AI CHANGED: v1.2.0-alpha — basement farming runtime state.
+    //   v1.2.2-alpha — Promoted to a real phase state machine to fix the immediate-exit bug. Phases:
+    //     "idle"     — not in a basement (default).
+    //     "active"   — inside basement, exploring forward. Ladder click is SUPPRESSED in this phase so the bot does
+    //                  not exit on the first cycle after entering.
+    //     "atEnd"    — current tile is (or was) showing a champion icon — we have reached the end of the run. Set on
+    //                  the rising edge by `updateBasementEndTileFlagFromVisibleIcons`. Sticky once set this run.
+    //     "complete" — objective is done (knowledge looted at end tile, OR ladder-only at end after enough suppressed
+    //                  cycles). Ladder click is now ALLOWED and exits the basement.
+    //   `active` boolean is kept in sync (`phase !== "idle"`) for backward compatibility. `atEndTile` boolean still
+    //   tracks live UI state ("champion icon visible NOW") but the phase machine takes the rising edge so `phase`
+    //   stays at "atEnd" / "complete" even after the champion dies and its icon disappears.
+    basement: {
+      active: false,
+      phase: "idle",
+      objectiveComplete: false,
+      enteredAt: null,
+      exitedAt: null,
+      lastEntrySource: null,
+      lastDirection: null,
+      atEndTile: false,
+      mobsKilledHere: 0,
+      tilesAdvanced: 0,
+      // Diagnostic counters reset on entry. `exitSuppressedAtEndCount` doubles as a fallback completion signal:
+      //   when it crosses `Config.basement.exitSuppressedAtEndPromoteThreshold` we promote phase to "complete"
+      //   even without a knowledge-loot click (covers basements where the only highlighted button is the ladder).
+      exitSuppressedCount: 0,
+      exitSuppressedAtEndCount: 0,
+      knowledgeLootedCount: 0,
+      lastPhaseTransitionAt: null,
+      lastPhaseTransitionReason: null
     },
     // AI CHANGED: Track whether we've already zoomed the map to minimum so scans use calibrated step distances.
     zoom: {
@@ -229,6 +354,22 @@
       lastEnemyAdaptiveThreshold: null,
       // AI CHANGED: TEST/debug-only opener override — force a named skill when present/feasible, without changing normal combat policy.
       forcedOpenerSkillName: null,
-      forcedOpenerReason: null
+      forcedOpenerReason: null,
+      // AI CHANGED: Planner rewrite v1 — last sequence-planner decision snapshot (combat state + normalized skills + top sequences + chosen first/second actions).
+      //   Populated by plannerSelectSequencePick(); read by `getPlannerLastSequencePlan()` / `previewPlannerSequences()` / runUiTestBundle checks.
+      lastSequencePlan: null,
+      // AI CHANGED: Planner Part 2 — active execution plan that combat runtime CONSUMES (not just diagnostic).
+      //   Built by `plannerBuildExecutionPlan()` (which wraps `plannerSelectSequencePick()`), hydrated with skill records + per-step
+      //   adapter shapes, has step cursor (`currentIndex`) and validity (`valid` + `invalidReason`). Read by `getActiveExecutionPlan()`.
+      //   Shape: {
+      //     planId, builtAt, targetFingerprint, combatStateAtBuild, actions[], totalActions,
+      //     currentIndex, selectionReason, predictedKillAtSec, score, valid, invalidReason,
+      //     replanReason, stepHistory[], excludeSlotsApplied, version
+      //   }
+      activeExecutionPlan: null,
+      // AI CHANGED: Planner Part 2 — last reason an execution plan was invalidated (target_fingerprint_changed, target_died, no_progress, post_kill_retarget, plan_exhausted, ...).
+      lastExecutionPlanInvalidationReason: null,
+      // AI CHANGED: Planner Part 2 — last reason the should-replan helper voted to replan ahead of the next burst.
+      lastShouldReplanReason: null
     }
   };

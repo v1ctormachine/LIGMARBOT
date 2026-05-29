@@ -349,14 +349,18 @@
     return { ok: closed, closed: closed, reason: closed ? "closed" : "close_click_failed" };
   }
 
-  // AI CHANGED: Phase C4 slice 8 — click one battle-bar slot by index (same ordering as scanSkills / app-action-button list).
+  // AI CHANGED: Phase C4 slice 8 — click one battle-bar slot by index (same ordering as scanSkills unified list).
   function clickActionBarSlot(slotIndex) {
     const bar = document.querySelector(Config.selectors.actionBar);
     if (!bar) {
       Logger.warn("ACTION", "action-bar slot click skipped: no action bar");
       return false;
     }
-    const buttons = bar.querySelectorAll("app-action-button");
+    const slotSel =
+      Config.selectors && Config.selectors.actionBarSlot
+        ? Config.selectors.actionBarSlot
+        : "app-action-button, app-skill-button";
+    const buttons = bar.querySelectorAll(slotSel);
     const n = buttons ? buttons.length : 0;
     if (!buttons || typeof slotIndex !== "number" || slotIndex < 0 || slotIndex >= n) {
       Logger.warn("ACTION", "action-bar slot click skipped: bad index", { slotIndex: slotIndex, count: n });
@@ -371,7 +375,11 @@
     if (!bar) {
       return false;
     }
-    const buttons = bar.querySelectorAll("app-action-button");
+    const slotSel =
+      Config.selectors && Config.selectors.actionBarSlot
+        ? Config.selectors.actionBarSlot
+        : "app-action-button, app-skill-button";
+    const buttons = bar.querySelectorAll(slotSel);
     const n = buttons ? buttons.length : 0;
     if (typeof slotIndex !== "number" || slotIndex < 0 || slotIndex >= n) {
       return false;
@@ -387,7 +395,9 @@
     if (aria === "true") {
       return true;
     }
+    const elTag = (el.tagName || el.localName || "").toLowerCase();
     const clsFull = (el.className || "").toString().toLowerCase();
+    const isSkillSlot = elTag === "app-skill-button" || clsFull.includes("type-skill");
     for (let i = 0; i < el.classList.length; i += 1) {
       const token = el.classList[i].toLowerCase();
       if (
@@ -402,10 +412,14 @@
         return true;
       }
     }
-    if (clsFull.includes("type-skill")) {
+    if (isSkillSlot) {
       try {
         const st = window.getComputedStyle(el);
         if (st.pointerEvents === "none") {
+          return true;
+        }
+        const op = parseFloat(st.opacity);
+        if (Number.isFinite(op) && op < 0.35) {
           return true;
         }
       } catch (err) {
