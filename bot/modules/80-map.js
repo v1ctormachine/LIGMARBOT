@@ -1759,42 +1759,143 @@
     return lootResult;
   }
 
-  // AI CHANGED: v1.2.1-alpha — Heuristic refresh of `Runtime.basement.atEndTile`. Only mutates state when basement
-  //   farming is enabled AND we're currently inside a basement. Reads visible hex event icons (the active center-tile
-  //   popup OR any visible event icons — basements only show one tile's events at a time so this is unambiguous in
-  //   practice). If a champion-class icon is visible, sets atEndTile=true; otherwise resets to false. Safe to call
-  //   repeatedly (idempotent).
-  function updateBasementEndTileFlagFromVisibleIcons() {
+  // AI CHANGED: v1.2.1-alpha / v1.2.2-alpha / v1.2.3-alpha — Refresh `Runtime.basement.atEndTile` by EXPLICITLY opening
+  //   the current tile popup and reading its event icons. Live game behavior is that the champion / end icon is only
+  //   reliably available inside the per-tile popup — assuming a popup is already open is fragile (it depends on a
+  //   recent ring scan or a manual click), so v1.2.3 makes this an active probe.
+  //
+  //   Flow (uses the same primitives as `selectSpecialTileTargetIfDesired` and `scanNeighborRing`):
+  //     1. `ensureMapOpen()` — guarantee the map view is live.
+  //     2. `clickCenterMapVerified()` — recenter so the canvas center matches our current tile.
+  //     3. `clickMapCenterTile()` — single-click the center to OPEN the per-tile popup.
+  //     4. `waitForCondition` on `readTilePopupDetails()` returning a popup with coords (bounded ~1.5s, `pollMs=100`).
+  //     5. Read `det.lootIcons` (popup-derived) and look for a champion-class icon.
+  //
+  //   Safety / non-destabilization rules:
+  //     - Short-circuits when phase is already "atEnd" or "complete" (sticky — no need to re-probe).
+  //     - Short-circuits when not in a basement.
+  //     - If `opts.skipPopup === true`, falls back to the legacy passive `querySelectorAll` read (used by tests AND
+  //       by callers that already have a popup open; e.g. wrappers that snapshot the DOM mid-flow).
+  //     - If `opts.requireOoc === true` and the bot is in combat, returns `{ ok: false, skipped: true, reason: "in_combat" }`
+  //       without touching the popup. Combat callers pass this so the destructive probe never runs while fighting.
+  //     - Every step soft-fails to a structured `{ ok: false, skipped: true, reason: ... }` so a transient probe
+  //       failure NEVER mutates `atEndTile` in either direction. The phase machine's sticky-once-set invariant means
+  //       a failed probe cannot regress phase; combined with the no-mutation-on-fail rule, transient probe issues
+  //       are fully contained.
+  //
+  //   Phase transition: rising edge (active → atEnd) ONLY when the probe succeeds and finds a champion icon.
+  //   Returns `{ ok, atEndTile, phase, iconsScanned, viaPopup }` on success.
+  async function updateBasementEndTileFlagFromVisibleIcons(opts) {
     if (!isInBasement()) return { ok: false, skipped: true, reason: "not_in_basement" };
     if (!Runtime.basement) return { ok: false, skipped: true, reason: "no_state" };
-    const sel = Config && Config.selectors && Config.selectors.hexEventIcons
-      ? Config.selectors.hexEventIcons
-      : "div.hex-events app-icon, div.hex-events img";
-    let icons = [];
-    try {
-      icons = Array.from(document.querySelectorAll(sel));
-    } catch (err) {
-      return { ok: false, error: String(err && err.message ? err.message : err) };
+    const cfg = (opts && typeof opts === "object") ? opts : {};
+    // Sticky: once at "atEnd" / "complete", further probes are unnecessary and could introduce side effects.
+    if (Runtime.basement.phase === "atEnd" || Runtime.basement.phase === "complete") {
+      return { ok: true, skipped: true, reason: "phase_sticky", phase: Runtime.basement.phase, atEndTile: !!Runtime.basement.atEndTile };
     }
-    let hasChampion = false;
-    for (let i = 0; i < icons.length; i += 1) {
-      const el = icons[i];
-      const blob = ((el.getAttribute("class") || "") + " " + (el.getAttribute("src") || "") + " " + (el.outerHTML || "")).toLowerCase();
-      if (blob.indexOf("mob-type-champion") !== -1 || blob.indexOf("event-champion") !== -1) {
-        hasChampion = true;
-        break;
+    // Optional OOC gate — combat callers pass requireOoc:true so the popup probe never runs mid-fight.
+    if (cfg.requireOoc === true) {
+      let oocState = null;
+      try { oocState = typeof readBasicState === "function" ? readBasicState() : null; } catch (err) { oocState = null; }
+      if (!oocState || !oocState.combat || typeof oocState.combat.enemyCount !== "number") {
+        return { ok: false, skipped: true, reason: "state_unavailable" };
+      }
+      if (oocState.combat.enemyCount > 0) {
+        return { ok: false, skipped: true, reason: "in_combat" };
       }
     }
+
+    const skipPopup = cfg.skipPopup === true;
+
+    // STEP 1-4: open + recenter + click center tile + wait for popup. Each step soft-fails.
+    if (!skipPopup) {
+      if (typeof ensureMapOpen === "function") {
+        try {
+          const m = await ensureMapOpen();
+          if (!m || m.ok === false) return { ok: false, skipped: true, reason: "map_not_open" };
+        } catch (err) {
+          return { ok: false, skipped: true, reason: "map_open_threw", error: String(err && err.message ? err.message : err) };
+        }
+      }
+      if (typeof clickCenterMapVerified === "function") {
+        try {
+          const c = await clickCenterMapVerified();
+          if (!c || c.ok === false) return { ok: false, skipped: true, reason: "center_failed" };
+        } catch (err) {
+          return { ok: false, skipped: true, reason: "center_threw", error: String(err && err.message ? err.message : err) };
+        }
+      }
+      if (typeof clickMapCenterTile === "function") {
+        try {
+          const ok = clickMapCenterTile();
+          if (!ok) return { ok: false, skipped: true, reason: "center_tile_click_failed" };
+        } catch (err) {
+          return { ok: false, skipped: true, reason: "center_tile_click_threw", error: String(err && err.message ? err.message : err) };
+        }
+      }
+      const popupVisible = await waitForCondition(
+        "basement end-tile popup",
+        () => {
+          if (typeof readTilePopupDetails === "function") {
+            const d = readTilePopupDetails();
+            return !!(d && d.coords);
+          }
+          return !!(typeof readCurrentCoordsFromPopup === "function" ? readCurrentCoordsFromPopup() : null);
+        },
+        { timeoutMs: 1500, pollMs: 100 }
+      );
+      if (!popupVisible) return { ok: false, skipped: true, reason: "popup_timeout" };
+    }
+
+    // STEP 5: read icons. Prefer the popup-derived `det.lootIcons` when available (canonical source); fall back
+    // to a passive `querySelectorAll` for the `skipPopup` path.
+    let hasChampion = false;
+    let iconsScanned = 0;
+    let viaPopup = false;
+
+    if (typeof readTilePopupDetails === "function") {
+      const det = readTilePopupDetails();
+      if (det && Array.isArray(det.lootIcons) && det.lootIcons.length > 0) {
+        viaPopup = true;
+        iconsScanned = det.lootIcons.length;
+        for (let i = 0; i < det.lootIcons.length; i += 1) {
+          const blob = String(det.lootIcons[i] || "").toLowerCase();
+          if (blob.indexOf("mob-type-champion") !== -1 || blob.indexOf("event-champion") !== -1) {
+            hasChampion = true;
+            break;
+          }
+        }
+      }
+    }
+    if (!viaPopup) {
+      const sel = Config && Config.selectors && Config.selectors.hexEventIcons
+        ? Config.selectors.hexEventIcons
+        : "div.hex-events app-icon, div.hex-events img";
+      let icons = [];
+      try {
+        icons = Array.from(document.querySelectorAll(sel));
+      } catch (err) {
+        return { ok: false, skipped: true, reason: "selector_threw", error: String(err && err.message ? err.message : err) };
+      }
+      iconsScanned = icons.length;
+      for (let i = 0; i < icons.length; i += 1) {
+        const el = icons[i];
+        const blob = ((el.getAttribute("class") || "") + " " + (el.getAttribute("src") || "") + " " + (el.outerHTML || "")).toLowerCase();
+        if (blob.indexOf("mob-type-champion") !== -1 || blob.indexOf("event-champion") !== -1) {
+          hasChampion = true;
+          break;
+        }
+      }
+    }
+
     const previous = !!Runtime.basement.atEndTile;
     Runtime.basement.atEndTile = hasChampion;
     if (hasChampion !== previous) {
-      Logger.log("BASEMENT", "atEndTile flag updated", { previous: previous, current: hasChampion, iconsScanned: icons.length });
+      Logger.log("BASEMENT", "atEndTile flag updated", { previous: previous, current: hasChampion, iconsScanned: iconsScanned, viaPopup: viaPopup });
     }
-    // AI CHANGED: v1.2.2-alpha — Rising edge into "atEnd" phase only happens FROM "active" so atEnd / complete are sticky.
-    //   This means once we've reached the basement end tile, even after the champion dies and its icon disappears,
-    //   the phase machine does NOT regress.
+    // Rising edge (active → atEnd) — sticky thereafter.
     if (Runtime.basement.phase === "active" && previous === false && hasChampion === true) {
       basementSetPhase("atEnd", "champion_icon_visible_in_basement");
     }
-    return { ok: true, atEndTile: hasChampion, phase: Runtime.basement.phase, iconsScanned: icons.length };
+    return { ok: true, atEndTile: hasChampion, phase: Runtime.basement.phase, iconsScanned: iconsScanned, viaPopup: viaPopup };
   }

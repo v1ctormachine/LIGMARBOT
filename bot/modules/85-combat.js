@@ -5467,11 +5467,15 @@
       Logger.warn("LOOP", "Cannot start secure loop: enemyCount unavailable");
       return { ok: false, stage: "precheck", reason: "enemy_count_unavailable" };
     }
-    // AI CHANGED: v1.2.1-alpha — While inside a basement, refresh the at-end-tile flag from the currently visible hex event
-    //   icons. This drives the basement-end champion override in `scoreScannedTile()` AND the active-targeting helper.
-    //   No-op when basement farming is OFF or we are not currently in a basement.
+    // AI CHANGED: v1.2.1-alpha / v1.2.3-alpha — While inside a basement and OOC, explicitly open the current tile popup
+    //   and refresh the at-end-tile flag. This drives the basement-end champion override in `scoreScannedTile()` AND
+    //   the active-targeting helper. Skipped when the cycle starts in combat (`requireOoc:true`) so the destructive
+    //   popup probe never fires mid-fight. The phase machine's sticky-once-set invariant means a transient probe
+    //   miss never regresses phase. No-op when basement farming is OFF or we are not currently in a basement.
     if (typeof updateBasementEndTileFlagFromVisibleIcons === "function" && typeof getBasementFarmingEnabled === "function" && getBasementFarmingEnabled() === true) {
-      try { updateBasementEndTileFlagFromVisibleIcons(); } catch (basementEndErr) {
+      try {
+        await updateBasementEndTileFlagFromVisibleIcons({ requireOoc: true });
+      } catch (basementEndErr) {
         Logger.warn("BASEMENT", "updateBasementEndTileFlagFromVisibleIcons threw", basementEndErr);
       }
     }

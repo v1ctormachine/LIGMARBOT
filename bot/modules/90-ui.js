@@ -4845,6 +4845,8 @@
       }
 
       // 7) updateBasementEndTileFlagFromVisibleIcons short-circuits when not in basement.
+      //    v1.2.3-alpha — helper is now async (it can open the per-tile popup). The early "not_in_basement" return
+      //    still fires synchronously inside the function, but we MUST await the returned promise.
       try {
         if (typeof updateBasementEndTileFlagFromVisibleIcons !== "function") {
           addCheck("v121_basement_end_flag_short_circuit_outside", false, { reason: "missing_helper" }, false);
@@ -4855,7 +4857,7 @@
             Runtime.basement.active = false;
             Runtime.basement.atEndTile = true; // pre-set; helper must NOT touch it when outside basement
           }
-          const result = updateBasementEndTileFlagFromVisibleIcons();
+          const result = await updateBasementEndTileFlagFromVisibleIcons();
           const stillTrue = !!(Runtime.basement && Runtime.basement.atEndTile === true);
           if (Runtime.basement) {
             Runtime.basement.active = !!startActive;
@@ -5269,6 +5271,138 @@
         }
       } catch (err) {
         addCheck("v122_canExit_only_when_complete", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // AI CHANGED: v1.2.3-alpha — BASEMENT END-DETECTION REFINEMENT TESTS. The end-tile probe is now async and must
+      //   open the per-tile popup explicitly. We exercise: short-circuit when phase is sticky atEnd/complete, OOC gate
+      //   skip in combat, and the skipPopup-fallback path that mimics the legacy passive read.
+
+      // 1) Sticky short-circuit at phase=atEnd — probe should NOT mutate state and must return reason=phase_sticky.
+      try {
+        if (typeof updateBasementEndTileFlagFromVisibleIcons !== "function" || typeof basementSetPhase !== "function" || typeof markBasementEntered !== "function" || typeof markBasementExited !== "function") {
+          addCheck("v123_end_probe_sticky_short_circuit_atEnd", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          markBasementEntered({ source: "test_v123_sticky_atend" });
+          basementSetPhase("atEnd", "test_v123_force_atend");
+          // Pre-set atEndTile to a known value; sticky short-circuit MUST NOT change it.
+          if (Runtime.basement) Runtime.basement.atEndTile = true;
+          const result = await updateBasementEndTileFlagFromVisibleIcons();
+          const stillTrue = !!(Runtime.basement && Runtime.basement.atEndTile === true);
+          markBasementExited({ reason: "test_v123_sticky_atend_done" });
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.active = !!startSnap.active;
+            Runtime.basement.phase = startSnap.phase || "idle";
+            Runtime.basement.atEndTile = !!startSnap.atEndTile;
+          }
+          const ok =
+            result && result.ok === true && result.skipped === true && result.reason === "phase_sticky" &&
+            result.phase === "atEnd" && stillTrue === true;
+          addCheck("v123_end_probe_sticky_short_circuit_atEnd", ok, { result: result, stillTrue: stillTrue }, false);
+        }
+      } catch (err) {
+        addCheck("v123_end_probe_sticky_short_circuit_atEnd", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // 2) Sticky short-circuit at phase=complete.
+      try {
+        if (typeof updateBasementEndTileFlagFromVisibleIcons !== "function" || typeof basementSetPhase !== "function" || typeof markBasementEntered !== "function" || typeof markBasementExited !== "function") {
+          addCheck("v123_end_probe_sticky_short_circuit_complete", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          markBasementEntered({ source: "test_v123_sticky_complete" });
+          basementSetPhase("complete", "test_v123_force_complete");
+          if (Runtime.basement) Runtime.basement.atEndTile = false;
+          const result = await updateBasementEndTileFlagFromVisibleIcons();
+          markBasementExited({ reason: "test_v123_sticky_complete_done" });
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.active = !!startSnap.active;
+            Runtime.basement.phase = startSnap.phase || "idle";
+            Runtime.basement.atEndTile = !!startSnap.atEndTile;
+          }
+          const ok =
+            result && result.ok === true && result.skipped === true && result.reason === "phase_sticky" &&
+            result.phase === "complete";
+          addCheck("v123_end_probe_sticky_short_circuit_complete", ok, { result: result }, false);
+        }
+      } catch (err) {
+        addCheck("v123_end_probe_sticky_short_circuit_complete", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // 3) skipPopup fallback finds a champion icon via passive querySelectorAll (legacy path; bypasses popup-open).
+      //    We inject a hex-events container with a champion-class icon and assert: phase active → atEnd transition fires.
+      try {
+        if (typeof updateBasementEndTileFlagFromVisibleIcons !== "function" || typeof markBasementEntered !== "function" || typeof markBasementExited !== "function") {
+          addCheck("v123_end_probe_skipPopup_finds_champion", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          // Inject a synthetic hex-events container with a champion icon.
+          const events = document.createElement("div");
+          events.className = "hex-events";
+          const icon = document.createElement("app-icon");
+          icon.setAttribute("class", "mob-type-champion");
+          events.appendChild(icon);
+          document.body.appendChild(events);
+          markBasementEntered({ source: "test_v123_champion_in_dom" });
+          // skipPopup:true bypasses ensureMapOpen / clickCenterMap / popup-wait so the test never depends on a live game.
+          const result = await updateBasementEndTileFlagFromVisibleIcons({ skipPopup: true });
+          const phaseAfter = (Runtime.basement && Runtime.basement.phase) || "idle";
+          const atEndAfter = !!(Runtime.basement && Runtime.basement.atEndTile);
+          // Cleanup.
+          if (events.parentNode) events.parentNode.removeChild(events);
+          markBasementExited({ reason: "test_v123_champion_in_dom_done" });
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.active = !!startSnap.active;
+            Runtime.basement.phase = startSnap.phase || "idle";
+            Runtime.basement.atEndTile = !!startSnap.atEndTile;
+          }
+          const ok =
+            result && result.ok === true && result.atEndTile === true && atEndAfter === true &&
+            phaseAfter === "atEnd" && result.iconsScanned >= 1;
+          addCheck("v123_end_probe_skipPopup_finds_champion", ok, { result: result, phaseAfter: phaseAfter, atEndAfter: atEndAfter }, false);
+        }
+      } catch (err) {
+        addCheck("v123_end_probe_skipPopup_finds_champion", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // 4) skipPopup with no champion icon: state stays atEndTile=false, phase stays "active".
+      try {
+        if (typeof updateBasementEndTileFlagFromVisibleIcons !== "function" || typeof markBasementEntered !== "function" || typeof markBasementExited !== "function") {
+          addCheck("v123_end_probe_skipPopup_no_champion_no_transition", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          markBasementEntered({ source: "test_v123_no_champion" });
+          // No icon injected — passive read finds 0 champion icons.
+          const result = await updateBasementEndTileFlagFromVisibleIcons({ skipPopup: true });
+          const phaseAfter = (Runtime.basement && Runtime.basement.phase) || "idle";
+          const atEndAfter = !!(Runtime.basement && Runtime.basement.atEndTile);
+          markBasementExited({ reason: "test_v123_no_champion_done" });
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.active = !!startSnap.active;
+            Runtime.basement.phase = startSnap.phase || "idle";
+            Runtime.basement.atEndTile = !!startSnap.atEndTile;
+          }
+          const ok =
+            result && result.ok === true && result.atEndTile === false && atEndAfter === false &&
+            phaseAfter === "active";
+          addCheck("v123_end_probe_skipPopup_no_champion_no_transition", ok, { result: result, phaseAfter: phaseAfter, atEndAfter: atEndAfter }, false);
+        }
+      } catch (err) {
+        addCheck("v123_end_probe_skipPopup_no_champion_no_transition", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // 5) Probe is now async — calling it returns a Promise (no raw `result.ok` synchronously).
+      try {
+        if (typeof updateBasementEndTileFlagFromVisibleIcons !== "function") {
+          addCheck("v123_end_probe_returns_promise", false, { reason: "missing_helper" }, false);
+        } else {
+          const r = updateBasementEndTileFlagFromVisibleIcons({ skipPopup: true });
+          const isPromise = r && typeof r.then === "function";
+          await r; // drain
+          addCheck("v123_end_probe_returns_promise", !!isPromise, { isPromise: !!isPromise }, false);
+        }
+      } catch (err) {
+        addCheck("v123_end_probe_returns_promise", false, { error: String(err && err.message ? err.message : err) }, false);
       }
 
       // 9) Manual chat is the documented primary mode (default `useUserMessages !== false` and dispatcher uses it).
