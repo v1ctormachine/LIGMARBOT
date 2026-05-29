@@ -173,6 +173,31 @@
       scanSecondRingForColor: scanSecondRingForColor,
       getSecondRingOffsets: getSecondRingOffsets,
       ringHasUsefulLoot: ringHasUsefulLoot,
+      // AI CHANGED: v1.2.0-alpha — DESKTOP APP API. Champion red 2-ring scan + 3-ring scan + lens helpers.
+      scanSecondRingForChampion: scanSecondRingForChampion,
+      scanThirdRingForColor: scanThirdRingForColor,
+      getThirdRingOffsets: getThirdRingOffsets,
+      detectLensState: detectLensState,
+      getLensState: getLensState,
+      setLensStateOverride: setLensStateOverride,
+      // AI CHANGED: v1.2.0-alpha — DESKTOP APP API. Avoidance / basement preference setters/getters.
+      getAvoidChampions: getAvoidChampions,
+      setAvoidChampions: setAvoidChampions,
+      getAvoidGoblins: getAvoidGoblins,
+      setAvoidGoblins: setAvoidGoblins,
+      getBasementFarmingEnabled: getBasementFarmingEnabled,
+      setBasementFarmingEnabled: setBasementFarmingEnabled,
+      getBotPreferencesSnapshot: getBotPreferencesSnapshot,
+      saveBotPreferencesToStorage: saveBotPreferencesToStorage,
+      loadBotPreferencesFromStorage: loadBotPreferencesFromStorage,
+      detectBasementEntryFromUi: detectBasementEntryFromUi,
+      markBasementEntered: markBasementEntered,
+      markBasementExited: markBasementExited,
+      setBasementAtEndTile: setBasementAtEndTile,
+      getBasementState: getBasementState,
+      isInBasement: isInBasement,
+      // AI CHANGED: v1.2.0-alpha — DESKTOP APP API. Active special-target click on current tile.
+      selectSpecialTileTargetIfDesired: selectSpecialTileTargetIfDesired,
       // AI CHANGED: Expose overlay control so user can manually clear / re-render from console.
       renderSecondRingOverlay: renderSecondRingOverlay,
       clearSecondRingOverlay: clearSecondRingOverlay,
@@ -191,8 +216,23 @@
       getAutoFarmStatus: getAutoFarmStatus,
       setAutoFarmCombatMode: setAutoFarmCombatMode,
       applyAutoFarmCombatMode: applyAutoFarmCombatMode,
+      // AI CHANGED: v1.2.0-alpha — DESKTOP APP API. Canonical mode getter returns "normal"/"hard"/"easy".
+      getAutoFarmCombatMode: typeof getAutoFarmCombatMode === "function" ? getAutoFarmCombatMode : null,
+      normalizeCombatModeName: typeof normalizeCombatModeName === "function" ? normalizeCombatModeName : null,
       // AI CHANGED: Easy-mode predicate exposed for console debugging of buff/scan suppression.
       isAutoFarmEasyMode: typeof isAutoFarmEasyMode === "function" ? isAutoFarmEasyMode : null,
+      // AI CHANGED: v1.2.0-alpha — DESKTOP APP API. Manual chat message + interval API.
+      getAutoChatMessages: typeof getAutoChatMessages === "function" ? getAutoChatMessages : null,
+      setAutoChatMessages: typeof setAutoChatMessages === "function" ? setAutoChatMessages : null,
+      addAutoChatMessage: typeof addAutoChatMessage === "function" ? addAutoChatMessage : null,
+      removeAutoChatMessage: typeof removeAutoChatMessage === "function" ? removeAutoChatMessage : null,
+      clearAutoChatMessages: typeof clearAutoChatMessages === "function" ? clearAutoChatMessages : null,
+      getAutoChatIntervalRange: typeof getAutoChatIntervalRange === "function" ? getAutoChatIntervalRange : null,
+      setAutoChatIntervalRange: typeof setAutoChatIntervalRange === "function" ? setAutoChatIntervalRange : null,
+      getAutoChatEnabled: typeof getAutoChatEnabled === "function" ? getAutoChatEnabled : null,
+      setAutoChatEnabled: typeof setAutoChatEnabled === "function" ? setAutoChatEnabled : null,
+      saveAutoChatPrefsToStorage: typeof saveAutoChatPrefsToStorage === "function" ? saveAutoChatPrefsToStorage : null,
+      loadAutoChatPrefsFromStorage: typeof loadAutoChatPrefsFromStorage === "function" ? loadAutoChatPrefsFromStorage : null,
       getCombatEpisode: function () {
         return Runtime.autoFarm && Runtime.autoFarm.combatEpisode ? Runtime.autoFarm.combatEpisode : null;
       },
@@ -423,8 +463,32 @@
     };
 
     Logger.log("BOOT", "Debug API exposed as window.ligmarBot");
-    // AI CHANGED: Auto-create GUI control panel at startup. createControlPanel() also calls loadAutoFarmUiPrefs(), so Night Mode is restored before we check whether to autostart.
-    createControlPanel();
+    // AI CHANGED: v1.2.0-alpha — DESKTOP APP CONTROL SURFACE. The in-page Tampermonkey control panel is no longer auto-mounted.
+    //   The desktop companion app drives the bot through `window.ligmarBot.*` (start/stop, mode, toggles, chat). Persisted prefs
+    //   are loaded directly so Runtime.autoFarm.combatMode + chat / night-mode prefs are still restored at boot. Operators can
+    //   still mount the legacy in-page panel by calling `ligmarBot.createControlPanel()` manually OR by setting
+    //   `Config.bootGui.autoMountPanel = true` BEFORE the script runs (e.g. via a Tampermonkey storage tweak).
+    if (typeof loadAutoFarmUiPrefs === "function") {
+      try { loadAutoFarmUiPrefs(); } catch (err) { Logger.warn("BOOT", "loadAutoFarmUiPrefs threw at boot", err); }
+    }
+    if (typeof loadPlannerUiPrefs === "function") {
+      try { loadPlannerUiPrefs(); } catch (err) { Logger.warn("BOOT", "loadPlannerUiPrefs threw at boot", err); }
+    }
+    if (typeof loadCombatUiPrefs === "function") {
+      try { loadCombatUiPrefs(); } catch (err) { Logger.warn("BOOT", "loadCombatUiPrefs threw at boot", err); }
+    }
+    if (typeof loadAutoChatPrefsFromStorage === "function") {
+      try { loadAutoChatPrefsFromStorage(); } catch (err) { Logger.warn("BOOT", "loadAutoChatPrefsFromStorage threw at boot", err); }
+    }
+    if (typeof loadBotPreferencesFromStorage === "function") {
+      try { loadBotPreferencesFromStorage(); } catch (err) { Logger.warn("BOOT", "loadBotPreferencesFromStorage threw at boot", err); }
+    }
+    if (Config && Config.bootGui && Config.bootGui.autoMountPanel === true) {
+      Logger.log("BOOT", "In-page control panel mounted (Config.bootGui.autoMountPanel === true)");
+      try { createControlPanel(); } catch (err) { Logger.warn("BOOT", "createControlPanel threw", err); }
+    } else {
+      Logger.log("BOOT", "In-page control panel auto-mount disabled — desktop app drives window.ligmarBot");
+    }
     // AI CHANGED: Night mode — if persisted ON and no recovery token is pending, write a boot-autostart resume token so the existing health-check path drives AUTO start.
     if (typeof writeNightModeBootAutostartTokenIfNeeded === "function") {
       writeNightModeBootAutostartTokenIfNeeded();

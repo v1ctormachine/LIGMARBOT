@@ -198,6 +198,76 @@
     return { ok: verified, clicked: true, verified: verified };
   }
 
+  // AI CHANGED: v1.2.0-alpha — When champion/goblin avoidance is OFF and the current tile shows a champion or goblin
+  //   event icon, the bot must ACTIVELY target it. Flow:
+  //     1. Ensure map is open and centered (re-uses existing primitives).
+  //     2. Click the center / current tile to open its hex event popup (clickCenterMap dispatches this).
+  //     3. Locate the special-target event icon via `Config.selectors.hexEventIcons` (the same selector used during scan).
+  //     4. Filter to champion when `avoidChampions === false`, else to goblin when `avoidGoblins === false`. Champion has
+  //        priority over goblin when both are present and both are not avoided.
+  //     5. Dispatch a click on that icon (game then selects that mob as the active target).
+  //   Returns `{ ok, clicked, kind, reason }`. Safe to call when no special targets are present (returns ok=false, reason).
+  async function selectSpecialTileTargetIfDesired() {
+    const avoidChampions = typeof getAvoidChampions === "function" ? getAvoidChampions() : true;
+    const avoidGoblins = typeof getAvoidGoblins === "function" ? getAvoidGoblins() : false;
+    if (avoidChampions && avoidGoblins) {
+      return { ok: false, skipped: true, reason: "both_avoided" };
+    }
+    // Basement-end override allows champion engagement even when avoidChampions is true.
+    const basementEndOverride = !!(
+      typeof isInBasement === "function" && isInBasement() &&
+      Runtime && Runtime.basement && Runtime.basement.atEndTile === true &&
+      Config && Config.basement && Config.basement.endChampionOverride !== false
+    );
+    if (avoidChampions && !basementEndOverride && avoidGoblins) {
+      return { ok: false, skipped: true, reason: "no_active_targets_allowed" };
+    }
+    try {
+      if (typeof ensureMapOpen === "function") {
+        const mapResult = await ensureMapOpen();
+        if (!mapResult || mapResult.ok === false) {
+          return { ok: false, reason: "map_not_open" };
+        }
+      }
+      // Open the center-tile popup so we can read the per-tile event icons.
+      if (typeof clickCenterMap === "function") {
+        try { clickCenterMap(); } catch (err) {}
+      }
+      const settleMs = Config && Config.scan && Number.isFinite(Config.scan.tileRetrySettleMs) ? Config.scan.tileRetrySettleMs : 100;
+      await sleep(settleMs);
+      const sel = Config && Config.selectors && Config.selectors.hexEventIcons
+        ? Config.selectors.hexEventIcons
+        : "div.hex-events app-icon, div.hex-events img";
+      const icons = Array.from(document.querySelectorAll(sel));
+      if (icons.length === 0) {
+        return { ok: false, reason: "no_event_icons" };
+      }
+      const wantChampion = !avoidChampions || basementEndOverride;
+      const wantGoblin = !avoidGoblins;
+      const champIcon = icons.find((el) => {
+        const blob = ((el.getAttribute("class") || "") + " " + (el.getAttribute("src") || "") + " " + (el.outerHTML || "")).toLowerCase();
+        return blob.indexOf("mob-type-champion") !== -1 || blob.indexOf("event-champion") !== -1;
+      });
+      const gobIcon = icons.find((el) => {
+        const blob = ((el.getAttribute("class") || "") + " " + (el.getAttribute("src") || "") + " " + (el.outerHTML || "")).toLowerCase();
+        return blob.indexOf("event-goblin") !== -1 || blob.indexOf("goblin") !== -1;
+      });
+      let pick = null;
+      let kind = null;
+      if (wantChampion && champIcon) { pick = champIcon; kind = "champion"; }
+      else if (wantGoblin && gobIcon) { pick = gobIcon; kind = "goblin"; }
+      if (!pick) {
+        return { ok: false, reason: "no_matching_icon", wantChampion: wantChampion, wantGoblin: wantGoblin, championPresent: !!champIcon, goblinPresent: !!gobIcon };
+      }
+      pick.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+      Logger.log("TARGET", "selectSpecialTileTargetIfDesired clicked icon", { kind: kind });
+      await sleep(120);
+      return { ok: true, clicked: true, kind: kind };
+    } catch (err) {
+      return { ok: false, error: String(err && err.message ? err.message : err) };
+    }
+  }
+
   // AI CHANGED: Fast retarget via attackers popup after one kill in a multi-mob pull; falls back elsewhere if popup path is unavailable.
   async function clickAttackersRetargetVerified() {
     if (Config.combat && Config.combat.useAttackersPanelRetargetAfterKill === false) {

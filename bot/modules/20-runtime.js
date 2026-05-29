@@ -9,8 +9,10 @@
       startedAt: null,
       // AI CHANGED: Last completed ON session summary (duration/cycles/failures/stop reason).
       lastSessionSummary: null,
-      // AI CHANGED: Panel AUTO combat style — Fast / Safe / Easy. `applyAutoFarmCombatMode` syncs planner whenever the mode changes or prefs load; AUTO start still snapshots planner for restore on loop exit.
-      combatMode: "fast",
+      // AI CHANGED: v1.2.0-alpha — combat mode renamed Fast→Normal, Safe→Hard. Internal canonical values: "normal" / "hard" / "easy".
+      //   The setter / mode helpers accept legacy "fast" / "safe" as aliases (they normalize to "normal" / "hard" on assignment)
+      //   so persisted prefs from prior versions still load. Old localStorage values are migrated transparently by `loadAutoFarmUiPrefs()`.
+      combatMode: "normal",
       // AI CHANGED: Snapshot of planner combat flags taken when AUTO starts; restored on loop exit.
       plannerSnapshotBeforeAuto: null,
       // AI CHANGED: One-shot per AUTO session — first OOC cycle can run TEST-like prep (`Config.farmLoop.autoLikeTest`); cleared when the loop ends.
@@ -97,6 +99,10 @@
         lethalGuardSkips: 0
       },
       // AI CHANGED: AUTO ON chat spammer — next due time, last sent line, and recent send/fail telemetry.
+      //   v1.2.0-alpha — `userMessages` is the new manual chat list (set by `setAutoChatMessages([...])`). When non-empty
+      //   AND `Config.chat.useUserMessages === true` (default) the spammer cycles through this list instead of the legacy
+      //   time-of-day banks. `intervalOverrides` lets the operator set custom min/max in ms via `setAutoChatIntervalRange()`;
+      //   when null the scheduler falls back to `Config.chat.messageIntervalMin/Max`.
       chatSpammer: {
         nextSendAt: null,
         lastDelayMs: null,
@@ -106,7 +112,10 @@
         lastMessageIndex: null,
         sends: 0,
         failures: 0,
-        lastResult: null
+        lastResult: null,
+        userMessages: [],
+        userMessageCursor: 0,
+        intervalOverrides: null
       },
       // AI CHANGED: Support-buff line — buff system rewrite (v1.0.5-alpha):
       //   `longSelfTracked` = assumed-expiry map (long buffs >=60s, timer-driven, recast when remaining low)
@@ -173,7 +182,44 @@
       // AI CHANGED: Stores latest 1-ring scan snapshot for GUI/debug use.
       lastRingScan: null,
       // AI CHANGED: Stores latest 2-ring visual scan snapshot (yellow-die detection) for GUI/debug use.
-      lastSecondRingScan: null
+      lastSecondRingScan: null,
+      // AI CHANGED: v1.2.0-alpha — last 2-ring CHAMPION-RED scan snapshot (only populated when champion avoidance is off).
+      lastSecondRingChampionScan: null,
+      // AI CHANGED: v1.2.0-alpha — last 3-ring pixel scan snapshot (only populated when lens equipped + 1+2-ring empty).
+      lastThirdRingScan: null,
+      // AI CHANGED: v1.2.0-alpha — last direction the bot moved IN. Used by basement forward-objective scoring to penalize
+      //   the reverse direction. Set by `exploreByScan()` after a verified move.
+      lastMoveDir: null
+    },
+    // AI CHANGED: v1.2.0-alpha — User-controllable preferences exposed by the desktop app via `window.ligmarBot` setters.
+    //   These mirror Config.* defaults at boot but are the real runtime source of truth (Config defaults are only consulted
+    //   on first load). Persisted to `ligmarbot.botPreferences.v1` localStorage by `saveBotPreferencesToStorage()`.
+    preferences: {
+      avoidChampions: true,
+      avoidGoblins: false,
+      basementFarmingEnabled: false
+    },
+    // AI CHANGED: v1.2.0-alpha — vision / lens detection state. `hasLens` starts null (unknown); set to true/false by
+    //   `detectLensState()` or by `setLensStateOverride(bool)`. When true, exploration scans expand to 2-ring click-scan +
+    //   3-ring pixel-scan fallback (see `exploreByScan` lens path).
+    vision: {
+      hasLens: null,
+      lastDetectAt: null,
+      lastDetectResult: null,
+      detectAttempts: 0,
+      manualOverride: null
+    },
+    // AI CHANGED: v1.2.0-alpha — basement farming runtime state. `active` flips true when the bot enters a basement; the
+    //   forward-objective scorer uses `lastDirection` to penalize backtracking and `atEndTile` to allow the end-champion
+    //   override (kill basement-end champion even when global champion avoidance is ON).
+    basement: {
+      active: false,
+      enteredAt: null,
+      lastEntrySource: null,
+      lastDirection: null,
+      atEndTile: false,
+      mobsKilledHere: 0,
+      tilesAdvanced: 0
     },
     // AI CHANGED: Track whether we've already zoomed the map to minimum so scans use calibrated step distances.
     zoom: {

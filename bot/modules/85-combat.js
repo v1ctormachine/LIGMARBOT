@@ -81,16 +81,187 @@
   }
 
   function pickAutoChatSpammerDelayMs() {
-    const minRaw = Number.isFinite(Config.chat && Config.chat.messageIntervalMinMs)
-      ? Math.max(0, Math.round(Config.chat.messageIntervalMinMs))
-      : 5 * 60 * 1000;
-    const maxRaw = Number.isFinite(Config.chat && Config.chat.messageIntervalMaxMs)
-      ? Math.max(minRaw, Math.round(Config.chat.messageIntervalMaxMs))
-      : 15 * 60 * 1000;
+    // AI CHANGED: v1.2.0-alpha — runtime override range takes precedence over Config defaults.
+    const rt = getAutoChatSpammerRuntime();
+    const override = rt.intervalOverrides;
+    const overrideMin = override && Number.isFinite(override.minMs) ? Math.max(0, Math.round(override.minMs)) : null;
+    const overrideMax = override && Number.isFinite(override.maxMs) ? Math.max(0, Math.round(override.maxMs)) : null;
+    const minRaw = overrideMin != null
+      ? overrideMin
+      : Number.isFinite(Config.chat && Config.chat.messageIntervalMinMs)
+        ? Math.max(0, Math.round(Config.chat.messageIntervalMinMs))
+        : 5 * 60 * 1000;
+    const maxRaw = overrideMax != null
+      ? Math.max(minRaw, overrideMax)
+      : Number.isFinite(Config.chat && Config.chat.messageIntervalMaxMs)
+        ? Math.max(minRaw, Math.round(Config.chat.messageIntervalMaxMs))
+        : 15 * 60 * 1000;
     if (maxRaw <= minRaw) {
       return minRaw;
     }
     return minRaw + Math.floor(Math.random() * (maxRaw - minRaw + 1));
+  }
+
+  // AI CHANGED: v1.2.0-alpha — App-facing manual chat message API.
+  function getAutoChatMessages() {
+    const rt = getAutoChatSpammerRuntime();
+    return Array.isArray(rt.userMessages) ? rt.userMessages.slice() : [];
+  }
+
+  function setAutoChatMessages(messages) {
+    const rt = getAutoChatSpammerRuntime();
+    const norm = [];
+    if (Array.isArray(messages)) {
+      for (let i = 0; i < messages.length; i += 1) {
+        const s = messages[i];
+        if (typeof s === "string" && s.trim()) {
+          norm.push(s.trim());
+        }
+      }
+    }
+    rt.userMessages = norm;
+    if (!Number.isFinite(rt.userMessageCursor) || rt.userMessageCursor >= norm.length) {
+      rt.userMessageCursor = 0;
+    }
+    saveAutoChatPrefsToStorage({ reason: "set_messages" });
+    Logger.log("CHAT", "userMessages updated", { count: norm.length });
+    return { ok: true, count: norm.length, messages: norm.slice() };
+  }
+
+  function addAutoChatMessage(message) {
+    if (typeof message !== "string" || !message.trim()) {
+      return { ok: false, reason: "empty_message" };
+    }
+    const rt = getAutoChatSpammerRuntime();
+    if (!Array.isArray(rt.userMessages)) {
+      rt.userMessages = [];
+    }
+    rt.userMessages.push(message.trim());
+    saveAutoChatPrefsToStorage({ reason: "add_message" });
+    return { ok: true, count: rt.userMessages.length, added: message.trim() };
+  }
+
+  function removeAutoChatMessage(indexOrText) {
+    const rt = getAutoChatSpammerRuntime();
+    if (!Array.isArray(rt.userMessages) || rt.userMessages.length === 0) {
+      return { ok: false, reason: "empty_list" };
+    }
+    let removedIndex = -1;
+    if (Number.isInteger(indexOrText)) {
+      if (indexOrText < 0 || indexOrText >= rt.userMessages.length) {
+        return { ok: false, reason: "index_out_of_range", index: indexOrText };
+      }
+      rt.userMessages.splice(indexOrText, 1);
+      removedIndex = indexOrText;
+    } else if (typeof indexOrText === "string") {
+      const target = indexOrText.trim();
+      const idx = rt.userMessages.indexOf(target);
+      if (idx === -1) {
+        return { ok: false, reason: "not_found", text: target };
+      }
+      rt.userMessages.splice(idx, 1);
+      removedIndex = idx;
+    } else {
+      return { ok: false, reason: "invalid_argument" };
+    }
+    if (rt.userMessageCursor >= rt.userMessages.length) {
+      rt.userMessageCursor = 0;
+    }
+    saveAutoChatPrefsToStorage({ reason: "remove_message" });
+    return { ok: true, removedIndex: removedIndex, count: rt.userMessages.length };
+  }
+
+  function clearAutoChatMessages() {
+    const rt = getAutoChatSpammerRuntime();
+    rt.userMessages = [];
+    rt.userMessageCursor = 0;
+    saveAutoChatPrefsToStorage({ reason: "clear_messages" });
+    return { ok: true, count: 0 };
+  }
+
+  function getAutoChatIntervalRange() {
+    const rt = getAutoChatSpammerRuntime();
+    const override = rt.intervalOverrides;
+    if (override && Number.isFinite(override.minMs) && Number.isFinite(override.maxMs)) {
+      return { source: "override", minMs: override.minMs, maxMs: override.maxMs };
+    }
+    return {
+      source: "config",
+      minMs: Config.chat && Number.isFinite(Config.chat.messageIntervalMinMs) ? Config.chat.messageIntervalMinMs : 5 * 60 * 1000,
+      maxMs: Config.chat && Number.isFinite(Config.chat.messageIntervalMaxMs) ? Config.chat.messageIntervalMaxMs : 15 * 60 * 1000
+    };
+  }
+
+  function setAutoChatIntervalRange(minMs, maxMs) {
+    const rt = getAutoChatSpammerRuntime();
+    const minRaw = Number.isFinite(minMs) ? Math.max(0, Math.round(minMs)) : null;
+    const maxRaw = Number.isFinite(maxMs) ? Math.max(minRaw == null ? 0 : minRaw, Math.round(maxMs)) : null;
+    if (minRaw == null && maxRaw == null) {
+      rt.intervalOverrides = null;
+      saveAutoChatPrefsToStorage({ reason: "clear_interval_override" });
+      return { ok: true, cleared: true };
+    }
+    if (minRaw == null || maxRaw == null) {
+      return { ok: false, reason: "both_required" };
+    }
+    if (maxRaw < minRaw) {
+      return { ok: false, reason: "max_lt_min" };
+    }
+    rt.intervalOverrides = { minMs: minRaw, maxMs: maxRaw };
+    saveAutoChatPrefsToStorage({ reason: "set_interval_override" });
+    return { ok: true, minMs: minRaw, maxMs: maxRaw };
+  }
+
+  function getAutoChatEnabled() {
+    return !!(Config.chat && Config.chat.autoLocalPromocodeSpammerEnabled === true);
+  }
+
+  function setAutoChatEnabled(enabled) {
+    if (!Config.chat) Config.chat = {};
+    Config.chat.autoLocalPromocodeSpammerEnabled = !!enabled;
+    saveAutoChatPrefsToStorage({ reason: "toggle" });
+    return { ok: true, enabled: Config.chat.autoLocalPromocodeSpammerEnabled };
+  }
+
+  // AI CHANGED: v1.2.0-alpha — persist user chat prefs separately from the legacy autoFarmUi blob.
+  function saveAutoChatPrefsToStorage(meta) {
+    try {
+      const rt = getAutoChatSpammerRuntime();
+      const payload = {
+        enabled: !!(Config.chat && Config.chat.autoLocalPromocodeSpammerEnabled === true),
+        useUserMessages: !!(Config.chat && Config.chat.useUserMessages === true),
+        userMessages: Array.isArray(rt.userMessages) ? rt.userMessages.slice() : [],
+        intervalOverrides: rt.intervalOverrides && Number.isFinite(rt.intervalOverrides.minMs) && Number.isFinite(rt.intervalOverrides.maxMs)
+          ? { minMs: rt.intervalOverrides.minMs, maxMs: rt.intervalOverrides.maxMs }
+          : null
+      };
+      window.localStorage.setItem("ligmarbot.autoChat.v1", JSON.stringify(payload));
+      return { ok: true, payload: payload, reason: meta && meta.reason ? meta.reason : null };
+    } catch (err) {
+      return { ok: false, error: String(err && err.message ? err.message : err) };
+    }
+  }
+
+  function loadAutoChatPrefsFromStorage() {
+    try {
+      const raw = window.localStorage.getItem("ligmarbot.autoChat.v1");
+      if (!raw) return { ok: true, fromStorage: false };
+      const p = JSON.parse(raw);
+      if (typeof p.enabled === "boolean") Config.chat.autoLocalPromocodeSpammerEnabled = p.enabled;
+      if (typeof p.useUserMessages === "boolean") Config.chat.useUserMessages = p.useUserMessages;
+      const rt = getAutoChatSpammerRuntime();
+      if (Array.isArray(p.userMessages)) {
+        rt.userMessages = p.userMessages.filter((s) => typeof s === "string" && s.trim()).map((s) => s.trim());
+      }
+      if (p.intervalOverrides && Number.isFinite(p.intervalOverrides.minMs) && Number.isFinite(p.intervalOverrides.maxMs)) {
+        rt.intervalOverrides = { minMs: p.intervalOverrides.minMs, maxMs: p.intervalOverrides.maxMs };
+      } else {
+        rt.intervalOverrides = null;
+      }
+      return { ok: true, fromStorage: true };
+    } catch (err) {
+      return { ok: false, error: String(err && err.message ? err.message : err) };
+    }
   }
 
   function scheduleNextAutoChatSpammer(reason, userOpts) {
@@ -224,8 +395,28 @@
     };
   }
 
-  // AI CHANGED: Each due window rolls uniform 1/6 — smart pair (universal) vs five time-slot bank lines (same odds each).
+  // AI CHANGED: v1.2.0-alpha — When `Config.chat.useUserMessages === true` (default), pick from `Runtime.autoFarm.chatSpammer.userMessages`
+  //   in round-robin order; do NOT consult time-of-day banks or smart-line. Returns null when user list is empty.
+  //   Legacy 6-way roll path is preserved when `useUserMessages === false`.
   function pickAutoChatSpammerDispatch() {
+    if (Config.chat && Config.chat.useUserMessages === true) {
+      const rt = getAutoChatSpammerRuntime();
+      const list = Array.isArray(rt.userMessages) ? rt.userMessages : [];
+      if (list.length === 0) {
+        return null;
+      }
+      const cursor = Number.isFinite(rt.userMessageCursor) ? rt.userMessageCursor : 0;
+      const idx = ((cursor % list.length) + list.length) % list.length;
+      rt.userMessageCursor = (idx + 1) % list.length;
+      return {
+        kind: "user",
+        index: idx,
+        message: list[idx],
+        bankSize: list.length,
+        pickRoll: idx,
+        pickOutcomes: list.length
+      };
+    }
     const slot = getTimeOfDayChatSlot();
     const rawMessages = getChatSpammerMessagesForSlot(slot);
     const bankFive = normalizeChatBankToFive(rawMessages);
@@ -289,10 +480,20 @@
     }
     const now = Date.now();
     const slotNow = getTimeOfDayChatSlot({ nowMs: now });
-    const messages = getChatSpammerMessagesForSlot(slotNow);
-    const smartConfigured = isChatSmartLineConfigured();
-    if (messages.length <= 0 && !smartConfigured) {
-      return { ok: false, skipped: true, reason: "no_messages" };
+    // AI CHANGED: v1.2.0-alpha — when user-mode is on, only the user list matters; legacy banks are bypassed.
+    if (Config.chat && Config.chat.useUserMessages === true) {
+      const userList = Array.isArray((getAutoChatSpammerRuntime()).userMessages)
+        ? getAutoChatSpammerRuntime().userMessages
+        : [];
+      if (userList.length === 0) {
+        return { ok: false, skipped: true, reason: "no_user_messages" };
+      }
+    } else {
+      const messages = getChatSpammerMessagesForSlot(slotNow);
+      const smartConfigured = isChatSmartLineConfigured();
+      if (messages.length <= 0 && !smartConfigured) {
+        return { ok: false, skipped: true, reason: "no_messages" };
+      }
     }
     const rt = getAutoChatSpammerRuntime();
     if (!Number.isFinite(rt.nextSendAt)) {
@@ -492,10 +693,10 @@
     if (!picked.message) {
       return { ok: false, skipped: true, reason: "message_pick_failed" };
     }
-    const bankDenom = picked.bankSize || messages.length;
+    const bankDenom = picked.bankSize || (Array.isArray((getAutoChatSpammerRuntime()).userMessages) ? getAutoChatSpammerRuntime().userMessages.length : 0) || 1;
     setBotStatus("waiting", `auto local chat send (msg ${picked.index + 1}/${bankDenom})`);
     Logger.log("CHAT", "Auto local chat send due", {
-      kind: "bank",
+      kind: picked.kind || "bank",
       messageIndex: picked.index,
       messageLength: picked.message.length,
       timeSlot: picked.slot || null,
@@ -2557,11 +2758,8 @@
   // AI CHANGED: Sync safety fire — HP spike flag from sustain observations; cancel+Windy Dome when available.
   // AI CHANGED: Single source of truth for "is AUTO running in Easy mode" — used by Easy-mode buff suppression + ensureSkills skip.
   function isAutoFarmEasyMode() {
-    return !!(
-      Runtime.autoFarm &&
-      Runtime.autoFarm.combatMode &&
-      String(Runtime.autoFarm.combatMode).toLowerCase() === "easy"
-    );
+    if (!Runtime.autoFarm) return false;
+    return normalizeCombatModeName(Runtime.autoFarm.combatMode) === "easy";
   }
 
   function processCombatSafetyHpSpikeIfNeeded(liveState) {
@@ -2907,13 +3105,11 @@
       rt.prebuff.lastResult = { used: 0, planned: 0, reason: "no_prebuff_targets" };
       return { used: 0, skipped: true, reason: "no_prebuff_targets", tileKey: tileKey };
     }
-    const mode =
-      Runtime.autoFarm && Runtime.autoFarm.combatMode
-        ? String(Runtime.autoFarm.combatMode).toLowerCase()
-        : "fast";
+    // AI CHANGED: v1.2.0-alpha — accept canonical "hard" alongside legacy "safe".
+    const mode = normalizeCombatModeName(Runtime.autoFarm && Runtime.autoFarm.combatMode);
     rt.prebuffCastCount = 0;
-    // Safe mode: wait for all targets ready, longest-first cast order. Bounded by safeModeWaitAllReadyMs.
-    if (mode === "safe") {
+    // Hard mode: wait for all targets ready, longest-first cast order. Bounded by safeModeWaitAllReadyMs.
+    if (mode === "hard") {
       const waitAllMs = Number.isFinite(pb.safeModeWaitAllReadyMs)
         ? Math.max(2000, pb.safeModeWaitAllReadyMs)
         : 60000;
@@ -3090,9 +3286,10 @@
   //   Short-prebuff casting was REMOVED from this gate (it was running in the wrong place before combat moved to the new tile). HP/MP top-off remains useful while idle.
   //   Prebuff waiting (Safe mode = wait all ready, longest-first) now happens inside `maybeApplyPrebuffsForNewMobTile` on the new mob tile.
   async function waitForSafeModeExploreResourcesAndShortPrebuffs() {
-    const mode = Runtime.autoFarm && Runtime.autoFarm.combatMode ? String(Runtime.autoFarm.combatMode).toLowerCase() : "fast";
-    if (mode !== "safe") {
-      return { skipped: true, reason: "not_safe_mode" };
+    // AI CHANGED: v1.2.0-alpha — accept canonical "hard" alongside legacy "safe".
+    const mode = normalizeCombatModeName(Runtime.autoFarm && Runtime.autoFarm.combatMode);
+    if (mode !== "hard") {
+      return { skipped: true, reason: "not_hard_mode" };
     }
     if (isAutoFarmEasyMode()) {
       return { skipped: true, reason: "easy_mode" };
@@ -5298,6 +5495,19 @@
       setBotStatus("finding", `attempt ${findAttempts}/${Config.combat.maxFindEnemyAttempts} (enemies=${current.combat.enemyCount})`);
       Logger.log("LOOP", "Find-enemy attempt", { attempt: findAttempts, enemyCount: current.combat.enemyCount });
 
+      // AI CHANGED: v1.2.0-alpha — If avoidance is OFF for champions or goblins, try to actively target the special icon
+      //   on the current tile before find-enemy. Failures are logged but do not block the standard find-enemy fallback.
+      if (findAttempts === 1) {
+        try {
+          const special = await selectSpecialTileTargetIfDesired();
+          if (special && special.ok && special.clicked) {
+            Logger.log("LOOP", "Active special target selected before find-enemy", { kind: special.kind });
+          }
+        } catch (err) {
+          Logger.warn("LOOP", "selectSpecialTileTargetIfDesired threw", err);
+        }
+      }
+
       const findResult = await clickFindEnemyVerified();
       if (!findResult.ok) {
         if (Runtime.autoFarm.stopRequested) {
@@ -5659,11 +5869,26 @@
     };
   }
 
-  // AI CHANGED: AUTO panel combat mode — Fast and Safe both run the full planner (horizon, ranked openers, buffs, queue, episode); Safe adds OOC tile-to-tile HP/MP + short prebuff gates only. Easy = basics only (ranked off).
+  // AI CHANGED: v1.2.0-alpha — Combat mode aliases. Canonical names are "normal" / "hard" / "easy". Legacy "fast"/"safe"
+  //   accepted everywhere so old persisted prefs and old-style API calls still work; they normalize to the canonical name
+  //   on assignment. Mapping: fast → normal, safe → hard.
+  function normalizeCombatModeName(rawValue) {
+    const raw = (rawValue == null ? "normal" : String(rawValue)).toLowerCase().trim();
+    if (raw === "easy") return "easy";
+    if (raw === "fast" || raw === "normal") return "normal";
+    if (raw === "safe" || raw === "hard") return "hard";
+    return "normal";
+  }
+
+  function isCombatModeAlias(rawValue) {
+    const raw = (rawValue == null ? "" : String(rawValue)).toLowerCase().trim();
+    return raw === "fast" || raw === "safe";
+  }
+
+  // AI CHANGED: AUTO combat mode — Normal (formerly Fast) and Hard (formerly Safe) both run the full planner (horizon, ranked
+  // openers, buffs, queue, episode); Hard adds OOC tile-to-tile HP/MP + short prebuff gates only. Easy = basics only (ranked off).
   function applyAutoFarmCombatMode() {
-    const raw =
-      Runtime.autoFarm && Runtime.autoFarm.combatMode ? String(Runtime.autoFarm.combatMode).toLowerCase() : "fast";
-    const mode = raw === "easy" || raw === "safe" || raw === "fast" ? raw : "fast";
+    const mode = normalizeCombatModeName(Runtime.autoFarm && Runtime.autoFarm.combatMode);
     Runtime.autoFarm.combatMode = mode;
     if (mode === "easy") {
       Config.planner.useRankedAttackSkillsInCombat = false;
@@ -5671,25 +5896,35 @@
       return;
     }
     Config.planner.useRankedAttackSkillsInCombat = true;
-    // AI CHANGED: Safe used to throttle ranked to first burst + skillMpReserve 5 — that hid horizon/openers for most bursts; Safe now matches Fast in-fight and differs only on idle explore (see startAutoFarmLoop).
+    // AI CHANGED: Hard used to throttle ranked to first burst + skillMpReserve 5 — that hid horizon/openers for most bursts; Hard now matches Normal in-fight and differs only on idle explore (see startAutoFarmLoop).
     Config.planner.useRankedSkillOnlyFirstBurstAfterFind = false;
     Config.planner.skillMpReserve = 0;
-    if (mode === "fast") {
-      Logger.log("AUTO", "combat mode fast: full planner pipeline every burst; minimal idle gating between tiles");
+    if (mode === "normal") {
+      Logger.log("AUTO", "combat mode normal: full planner pipeline every burst; minimal idle gating between tiles");
     } else {
       Logger.log(
         "AUTO",
-        "combat mode safe: same ranked/horizon/openers as Fast; idle explore still waits HP/MP (combat.safeModeExplore*) + short prebuffs before next tile"
+        "combat mode hard: same ranked/horizon/openers as Normal; idle explore still waits HP/MP (combat.safeModeExplore*) + short prebuffs before next tile"
       );
     }
   }
 
   function setAutoFarmCombatMode(mode) {
-    const raw = String(mode || "fast").toLowerCase();
-    const norm = raw === "easy" || raw === "safe" || raw === "fast" ? raw : "fast";
+    const norm = normalizeCombatModeName(mode);
     Runtime.autoFarm.combatMode = norm;
     applyAutoFarmCombatMode();
-    return { ok: true, combatMode: norm };
+    return { ok: true, combatMode: norm, alias: isCombatModeAlias(mode) ? String(mode).toLowerCase() : null };
+  }
+
+  // AI CHANGED: v1.2.0-alpha — explicit getter for app-facing API. Returns canonical mode + a boolean `easyMode` shortcut.
+  function getAutoFarmCombatMode() {
+    const mode = normalizeCombatModeName(Runtime.autoFarm && Runtime.autoFarm.combatMode);
+    return {
+      mode: mode,
+      isEasy: mode === "easy",
+      isNormal: mode === "normal",
+      isHard: mode === "hard"
+    };
   }
 
   function restorePlannerAfterAutoFarmLoop() {
@@ -6203,12 +6438,11 @@
           // AI CHANGED: Renew long self-support buffs on empty tiles before heal gate / explore (OOC only).
           await maybeMaintainLongSelfSupportBuffsOutOfCombat(readBasicState());
           await tryUseOutOfCombatIdleLowManaPotion(readBasicState());
-          const modeIdle =
-            Runtime.autoFarm && Runtime.autoFarm.combatMode ? String(Runtime.autoFarm.combatMode).toLowerCase() : "fast";
-          if (modeIdle === "safe") {
+          const modeIdle = normalizeCombatModeName(Runtime.autoFarm && Runtime.autoFarm.combatMode);
+          if (modeIdle === "hard") {
             const safeGate = await waitForSafeModeExploreResourcesAndShortPrebuffs();
             if (safeGate && safeGate.ok === false && safeGate.reason === "safe_mode_gate_timeout") {
-              Logger.warn("AUTO", "Safe mode tile gate timed out — continuing toward explore", safeGate);
+              Logger.warn("AUTO", "Hard mode tile gate timed out — continuing toward explore", safeGate);
             }
           }
           // AI CHANGED: enemyCount===0 — top off to outOfCombatHealWaitHpPct with HP potions + passive regen before exploreByScan.

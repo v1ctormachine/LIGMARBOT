@@ -5,6 +5,52 @@
     boot: {
       warnNonUnityDevicePixelRatio: true
     },
+    // AI CHANGED: v1.2.0-alpha — DESKTOP APP CONTROL SURFACE.
+    //   The legacy Tampermonkey in-page control panel is OFF by default — the desktop companion app drives the bot through
+    //   `window.ligmarBot.*`. Operators can still mount the legacy panel by setting `Config.bootGui.autoMountPanel = true`
+    //   BEFORE the script runs, or by calling `ligmarBot.createControlPanel()` manually from the console.
+    bootGui: {
+      autoMountPanel: false
+    },
+    // AI CHANGED: v1.2.0-alpha — Toggleable exploration policy. Avoidance defaults preserve previous behavior
+    //   (champions hard-avoided, goblins allowed). When `avoidChampions === false` the bot ACTIVELY targets champions on
+    //   the current tile (see `selectSpecialTileTargetIfDesired` in 85-combat.js + ranked-up scoring in 80-map.js).
+    exploration: {
+      avoidChampions: true,
+      avoidGoblins: false,
+      // Score boost given to a tile that contains a non-avoided champion (overrides loot-tier base when present).
+      championTargetScoreBase: 950000,
+      // Score boost given to a tile that contains a non-avoided goblin event (above current 350000 default to make the
+      //  bot prefer goblins when they aren't avoided AND no higher-tier loot is on the same ring).
+      goblinTargetScoreBase: 850000
+    },
+    // AI CHANGED: v1.2.0-alpha — Vision / lens detection. Lens is an item that adds +1 vision range so the second ring
+    //   becomes click-scannable and we can pixel-scan the third ring for yellow/champion-red. Detection is best-effort and
+    //   tries one second-ring tile click; if the game accepts the move (coords change to a 2-step delta) we treat the lens
+    //   as equipped. The runtime-side override `setLensStateOverride(true|false|null)` lets operators force the assumption.
+    vision: {
+      lensProbeEnabled: true,
+      lensProbeMaxAttempts: 1,
+      lensProbeSettleMs: 240,
+      // Number of CSS pixels we expect coords delta to register before the game accepts a 2-step move. Pure heuristic;
+      //  the actual signal is `Runtime.exploration.lastKnownCoords` changing across the probe.
+      lensProbeCoordsCheckSettleMs: 600
+    },
+    // AI CHANGED: v1.2.0-alpha — Basement farming. Toggleable forward-objective dungeon mode. When the bot is inside a
+    //   basement, the previous tile direction is heavily penalized so the bot moves forward toward the end. The end-tile
+    //   champion override allows the bot to engage a champion at the basement end EVEN WHEN `avoidChampions === true`
+    //   globally (basement-end-specific, not a global avoidance bypass).
+    basement: {
+      enabled: false,
+      // Backtrack penalty applied during scoreScannedTile to the direction matching the last entry/move-from direction.
+      backtrackPenalty: 800000,
+      // Selectors reused for entrance/exit collect-button click. The current loot/activate button highlight pattern (battle-event-button.highlight)
+      //  is sufficient for both "enter basement via collect" AND "exit via the same ladder".
+      collectButtonSelector: "div.battle-event-button.highlight",
+      endChampionOverride: true,
+      // Heuristic: a basement is detected when a battle-event-button.highlight exists AND its accessible name includes one of these substrings.
+      entryDetectSubstrings: ["basement", "ladder", "stairs", "stair", "cellar", "underground", "подвал", "лестница"]
+    },
     // AI CHANGED: Added action verification timing config for click+confirm flows.
     verification: {
       // AI CHANGED: Tighter generic verify polling (retarget / target-acquired / find-enemy caps).
@@ -228,8 +274,13 @@
       }
     },
     chat: {
-      // AI CHANGED: AUTO ON mode — periodically send one random local promocode line when the loop is at a safe boundary.
-      autoLocalPromocodeSpammerEnabled: true,
+      // AI CHANGED: v1.2.0-alpha — Auto-spammer is OFF by default. The desktop app must explicitly enable it with
+      //   `setAutoChatEnabled(true)` after populating user messages via `setAutoChatMessages([...])`. The old built-in
+      //   message pool is no longer the runtime model: when `useUserMessages === true` (the new default) the spammer
+      //   only sends from `Runtime.autoFarm.chatSpammer.userMessages`. If the user list is empty the spammer skips with
+      //   `reason: "no_user_messages"`. Set `useUserMessages = false` to revert to the legacy time-of-day banks below.
+      autoLocalPromocodeSpammerEnabled: false,
+      useUserMessages: true,
       // AI CHANGED: Randomized delay window between local chat sends (5–15 minutes local clock).
       messageIntervalMinMs: 5 * 60 * 1000,
       messageIntervalMaxMs: 15 * 60 * 1000,
@@ -740,7 +791,19 @@
         // Keeping 0.005 (0.5%) -- with looser tolerance + hex mask, real-die ratios should rise
         // comfortably above this. False-positive risk stays low because reaching 0.5% needs ~4-5
         // yellow-ish pixels clustered in the hex (random terrain almost never does that).
-        minMatchRatio: 0.005
+        minMatchRatio: 0.005,
+        // AI CHANGED: v1.2.0-alpha — champion red marker (#aa4040). Used by `scanSecondRingForChampion()` ONLY when
+        //  `Config.exploration.avoidChampions === false`. Tolerance defaults to the same 75 used by yellow.
+        championRedColor: { r: 0xaa, g: 0x40, b: 0x40 },
+        championRedTolerance: 75,
+        championRedMinMatchRatio: 0.005
+      },
+      // AI CHANGED: v1.2.0-alpha — third-ring pixel scan offsets + colors. Only consulted when `Runtime.vision.hasLens === true`
+      //   (lens equipped → +1 vision range → 2-ring becomes click-scannable AND 3-ring becomes pixel-scannable).
+      thirdRing: {
+        sampleHalfSizePx: 16,
+        useHexMask: true,
+        minMatchRatio: 0.004
       }
     },
     // AI CHANGED: Phase C1 -- hero profile / combat stats overlay (console API opens UI and parses rows).

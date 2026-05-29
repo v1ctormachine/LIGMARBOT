@@ -468,7 +468,43 @@
     return kinds;
   }
 
+  // AI CHANGED: v1.2.0-alpha — exposed avoidance / basement preference accessors so scoring + scan paths share one truth.
+  function getAvoidChampions() {
+    if (Runtime && Runtime.preferences && typeof Runtime.preferences.avoidChampions === "boolean") {
+      return Runtime.preferences.avoidChampions;
+    }
+    return Config && Config.exploration && Config.exploration.avoidChampions === false ? false : true;
+  }
+
+  function getAvoidGoblins() {
+    if (Runtime && Runtime.preferences && typeof Runtime.preferences.avoidGoblins === "boolean") {
+      return Runtime.preferences.avoidGoblins;
+    }
+    return !!(Config && Config.exploration && Config.exploration.avoidGoblins === true);
+  }
+
+  function getBasementFarmingEnabled() {
+    if (Runtime && Runtime.preferences && typeof Runtime.preferences.basementFarmingEnabled === "boolean") {
+      return Runtime.preferences.basementFarmingEnabled;
+    }
+    return !!(Config && Config.basement && Config.basement.enabled === true);
+  }
+
+  function isInBasement() {
+    return !!(Runtime && Runtime.basement && Runtime.basement.active === true);
+  }
+
+  // AI CHANGED: v1.2.0-alpha — direction reverse mapping for forward-objective scoring inside basements.
+  function reverseDirection(dir) {
+    const map = { TL: "BR", TR: "BL", L: "R", R: "L", BL: "TR", BR: "TL" };
+    return dir && map[dir] ? map[dir] : null;
+  }
+
   // AI CHANGED: Added deterministic priority score matching user-defined rank order with avoid rules.
+  //   v1.2.0-alpha — boss/goblin avoidance is now driven by Runtime.preferences. When `avoidChampions === false` the
+  //   champion-only tile becomes a top-priority TARGET (above all loot tiers). When `avoidGoblins === true` goblin tiles
+  //   are hard-avoided. Basement forward-objective: while `Runtime.basement.active === true` the tile direction matching
+  //   the REVERSE of `Runtime.exploration.lastMoveDir` receives a heavy backtrack penalty.
   function scoreScannedTile(tile) {
     if (!tile || !tile.ok || tile.classification !== "walkable") {
       return -9999;
@@ -476,10 +512,43 @@
     const lootKinds = parseLootKindsFromMarkers(tile.lootIcons);
     const enemies = Number.isFinite(tile.enemies) ? tile.enemies : 0;
     const allies = Number.isFinite(tile.allies) ? tile.allies : 0;
+    const avoidChampions = getAvoidChampions();
+    const avoidGoblins = getAvoidGoblins();
+    const inBasement = isInBasement();
+    // Basement-end override: if we're at the basement end tile, allow champion engagement even when global avoidance is ON.
+    const basementEndChampOverride =
+      inBasement &&
+      Runtime.basement &&
+      Runtime.basement.atEndTile === true &&
+      Config &&
+      Config.basement &&
+      Config.basement.endChampionOverride !== false;
 
-    // AI CHANGED: Hard-avoid boss (champion) tiles only — goblin events are walkable targets like other loot.
-    if (lootKinds.includes("boss")) {
+    // AI CHANGED: Champion / goblin avoidance.
+    if (lootKinds.includes("boss") && avoidChampions && !basementEndChampOverride) {
       return -500000;
+    }
+    if (lootKinds.includes("goblin") && avoidGoblins) {
+      return -400000;
+    }
+
+    // AI CHANGED: When champions/goblins are NOT avoided, treat their tiles as top-priority TARGETS
+    //   (above any loot tier). Basement-end override also routes here so the end champion is engaged.
+    if (lootKinds.includes("boss") && (!avoidChampions || basementEndChampOverride)) {
+      const championBase = Config && Config.exploration && Number.isFinite(Config.exploration.championTargetScoreBase)
+        ? Config.exploration.championTargetScoreBase
+        : 950000;
+      // Mob multiplier and ally penalty still apply.
+      const champAllies = lootKinds.includes("purple_chest") ? 0 : allies * 2000;
+      let champScore = championBase + enemies * 250 - champAllies;
+      if (inBasement) {
+        const reverse = reverseDirection(Runtime.exploration ? Runtime.exploration.lastMoveDir : null);
+        const penalty = Config && Config.basement && Number.isFinite(Config.basement.backtrackPenalty)
+          ? Config.basement.backtrackPenalty
+          : 800000;
+        if (reverse && tile.key === reverse) champScore -= penalty;
+      }
+      return champScore;
     }
 
     // AI CHANGED: Apply exact loot ranking:
@@ -502,9 +571,11 @@
       base = 450000;
     } else if (lootKinds.includes("contract")) {
       base = 400000;
-    } else if (lootKinds.includes("goblin")) {
-      // AI CHANGED: Goblin events are allowed — rank above plain empty / mob-only neighbors so scan picks them when visible.
-      base = 350000;
+    } else if (lootKinds.includes("goblin") && !avoidGoblins) {
+      // AI CHANGED: When goblins are NOT avoided, rank as a TARGET tier above loot fallback (configurable).
+      base = Config && Config.exploration && Number.isFinite(Config.exploration.goblinTargetScoreBase)
+        ? Config.exploration.goblinTargetScoreBase
+        : 850000;
     } else if (enemies > 0) {
       base = 300000;
     } else {
@@ -524,7 +595,20 @@
 
     // AI CHANGED: Per-enemy bonus bumped 50 -> 200 so mob count is a meaningful tiebreak between
     // walkable tiles in the same loot tier (e.g. 2 mobs > 1 mob > 0 mobs).
-    return base + enemies * 200 - alliesPenalty;
+    let score = base + enemies * 200 - alliesPenalty;
+
+    // AI CHANGED: v1.2.0-alpha — Basement forward objective. While inside a basement, penalize the tile that lies in the
+    //   REVERSE direction of the last verified move. This stops the bot from oscillating back toward the entry/ladder.
+    if (inBasement) {
+      const reverse = reverseDirection(Runtime.exploration ? Runtime.exploration.lastMoveDir : null);
+      const penalty = Config && Config.basement && Number.isFinite(Config.basement.backtrackPenalty)
+        ? Config.basement.backtrackPenalty
+        : 800000;
+      if (reverse && tile.key === reverse) {
+        score -= penalty;
+      }
+    }
+    return score;
   }
 
   // AI CHANGED: Build the 12 second-ring tile offsets (6 corners + 6 edges) plus the 1-ring directions
@@ -765,6 +849,303 @@
     return result;
   }
 
+  // AI CHANGED: v1.2.0-alpha — Scans the 2-ring for the champion red marker (#aa4040). ONLY safe to call when
+  //   `Runtime.preferences.avoidChampions === false`. Caller MUST gate on that — this helper does NOT enforce the gate
+  //   itself so tests can exercise it directly. Returns the same shape as `scanSecondRingForColor`.
+  async function scanSecondRingForChampion() {
+    const cfg = Config.scan.secondRing;
+    const color = (cfg && cfg.championRedColor) || { r: 0xaa, g: 0x40, b: 0x40 };
+    const tol = Number.isFinite(cfg && cfg.championRedTolerance) ? cfg.championRedTolerance : 75;
+    const ratio = Number.isFinite(cfg && cfg.championRedMinMatchRatio) ? cfg.championRedMinMatchRatio : (cfg && cfg.minMatchRatio) || 0.005;
+    const result = await scanSecondRingForColor(color, {
+      tolerance: tol,
+      minMatchRatio: ratio,
+      halfSize: cfg && cfg.sampleHalfSizePx ? cfg.sampleHalfSizePx : 18,
+      label: "champion_red"
+    });
+    Runtime.exploration.lastSecondRingChampionScan = result;
+    return result;
+  }
+
+  // AI CHANGED: v1.2.0-alpha — Build the 18 third-ring tile offsets (6 corners + 12 edges) plus the 1-ring directions
+  //   that step toward each. Mirror of `getSecondRingOffsets()`; consumed only when lens equipped.
+  function getThirdRingOffsets() {
+    const step = Config.movement.neighborStepPx;
+    const h = Math.round(step * 0.86);
+    const halfStep = Math.round(step / 2);
+    const oneAndHalf = step + halfStep;
+    const twoAndHalf = step * 2 + halfStep;
+    return [
+      // Top row (y = -3h)
+      { key: "TL3",   dx: -oneAndHalf,  dy: -3 * h, dirs: ["TL"]       },
+      { key: "T3a",   dx: -halfStep,    dy: -3 * h, dirs: ["TL", "TR"] },
+      { key: "T3b",   dx:  halfStep,    dy: -3 * h, dirs: ["TL", "TR"] },
+      { key: "TR3",   dx:  oneAndHalf,  dy: -3 * h, dirs: ["TR"]       },
+      // Upper-edge (y = -2h)
+      { key: "TR-R3", dx:  twoAndHalf,  dy: -2 * h, dirs: ["TR", "R"]  },
+      { key: "TL-L3", dx: -twoAndHalf,  dy: -2 * h, dirs: ["TL", "L"]  },
+      // Side row (y = -h)
+      { key: "R3a",   dx:  3 * step,    dy: -h,     dirs: ["R"]        },
+      { key: "L3a",   dx: -3 * step,    dy: -h,     dirs: ["L"]        },
+      // Side row (y = 0)
+      { key: "R3",    dx:  3 * step,    dy:  0,     dirs: ["R"]        },
+      { key: "L3",    dx: -3 * step,    dy:  0,     dirs: ["L"]        },
+      // Lower-side (y = +h)
+      { key: "R3b",   dx:  3 * step,    dy:  h,     dirs: ["R"]        },
+      { key: "L3b",   dx: -3 * step,    dy:  h,     dirs: ["L"]        },
+      // Lower-edge (y = +2h)
+      { key: "BR-R3", dx:  twoAndHalf,  dy:  2 * h, dirs: ["BR", "R"]  },
+      { key: "BL-L3", dx: -twoAndHalf,  dy:  2 * h, dirs: ["BL", "L"]  },
+      // Bottom row (y = +3h)
+      { key: "BL3",   dx: -oneAndHalf,  dy:  3 * h, dirs: ["BL"]       },
+      { key: "B3a",   dx: -halfStep,    dy:  3 * h, dirs: ["BL", "BR"] },
+      { key: "B3b",   dx:  halfStep,    dy:  3 * h, dirs: ["BL", "BR"] },
+      { key: "BR3",   dx:  oneAndHalf,  dy:  3 * h, dirs: ["BR"]       }
+    ];
+  }
+
+  // AI CHANGED: v1.2.0-alpha — Pixel-scan the third ring for arbitrary color. Implementation mirrors
+  //   `scanSecondRingForColor()` but consults `Config.scan.thirdRing` defaults and reads its own offsets.
+  async function scanThirdRingForColor(targetColor, options) {
+    const opts = options || {};
+    const cfg = Config.scan.thirdRing || {};
+    const cfg2 = Config.scan.secondRing || {};
+    const tolerance = typeof opts.tolerance === "number" ? opts.tolerance : (cfg2.yellowDieTolerance || 75);
+    const minMatchRatio = typeof opts.minMatchRatio === "number"
+      ? opts.minMatchRatio
+      : (Number.isFinite(cfg.minMatchRatio) ? cfg.minMatchRatio : 0.004);
+    const halfSize = typeof opts.halfSize === "number"
+      ? opts.halfSize
+      : (Number.isFinite(cfg.sampleHalfSizePx) ? cfg.sampleHalfSizePx : 16);
+    const label = typeof opts.label === "string" ? opts.label : "color3";
+    const logTag = "SCAN3";
+
+    const canvas = getMapCanvas();
+    if (!canvas) {
+      Logger.warn(logTag, "scanThirdRingForColor: map canvas not visible");
+      return { ok: false, reason: "no_canvas" };
+    }
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) {
+      return { ok: false, reason: "zero_canvas_size" };
+    }
+
+    const scaleX = (canvas.width || rect.width) / rect.width;
+    const scaleY = (canvas.height || rect.height) / rect.height;
+    const cssCenterX = rect.width / 2;
+    const cssCenterY = rect.height / 2;
+    const patchW = halfSize * 2;
+    const patchH = halfSize * 2;
+    const tempCanvas = document.createElement("canvas");
+    tempCanvas.width = Math.max(1, Math.round(patchW * scaleX));
+    tempCanvas.height = Math.max(1, Math.round(patchH * scaleY));
+    const tempCtx = tempCanvas.getContext("2d");
+    if (!tempCtx) {
+      return { ok: false, reason: "no_temp_ctx" };
+    }
+
+    const offsets = getThirdRingOffsets();
+    const targetR = targetColor.r;
+    const targetG = targetColor.g;
+    const targetB = targetColor.b;
+    const tolSq = tolerance * tolerance;
+
+    const useHexMask = cfg.useHexMask !== false;
+    const hexRadius = Config.movement.neighborStepPx / Math.sqrt(3);
+    const SQRT3_HALF = Math.sqrt(3) / 2;
+    const INV_SQRT3 = 1 / Math.sqrt(3);
+
+    const samples = [];
+    let drawFailures = 0;
+    for (let i = 0; i < offsets.length; i += 1) {
+      const tile = offsets[i];
+      const cssX = cssCenterX + tile.dx - halfSize;
+      const cssY = cssCenterY + tile.dy - halfSize;
+      const viewportX = rect.left + cssX;
+      const viewportY = rect.top + cssY;
+      const srcX = Math.round(cssX * scaleX);
+      const srcY = Math.round(cssY * scaleY);
+      const srcW = Math.round(patchW * scaleX);
+      const srcH = Math.round(patchH * scaleY);
+
+      let pixels = null;
+      try {
+        tempCtx.clearRect(0, 0, tempCanvas.width, tempCanvas.height);
+        tempCtx.drawImage(canvas, srcX, srcY, srcW, srcH, 0, 0, tempCanvas.width, tempCanvas.height);
+        pixels = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height).data;
+      } catch (err) {
+        drawFailures += 1;
+        samples.push({ key: tile.key, dirs: tile.dirs.slice(), ok: false, ratio: 0, hit: false });
+        continue;
+      }
+
+      let matchCount = 0;
+      let totalPixels = 0;
+      const tempW = tempCanvas.width;
+      const tempH = tempCanvas.height;
+      for (let ty = 0; ty < tempH; ty += 1) {
+        const cssDy = ((ty + 0.5) / scaleY) - halfSize;
+        const ay = Math.abs(cssDy);
+        if (useHexMask && ay > hexRadius) continue;
+        for (let tx = 0; tx < tempW; tx += 1) {
+          const cssDx = ((tx + 0.5) / scaleX) - halfSize;
+          if (useHexMask) {
+            const ax = Math.abs(cssDx);
+            if (ax > hexRadius * SQRT3_HALF) continue;
+            if (ax * INV_SQRT3 + ay > hexRadius) continue;
+          }
+          const p = (ty * tempW + tx) * 4;
+          const dr = pixels[p] - targetR;
+          const dg = pixels[p + 1] - targetG;
+          const db = pixels[p + 2] - targetB;
+          const distSq = dr * dr + dg * dg + db * db;
+          if (distSq <= tolSq) matchCount += 1;
+          totalPixels += 1;
+        }
+      }
+      const ratio = totalPixels > 0 ? matchCount / totalPixels : 0;
+      samples.push({
+        key: tile.key,
+        dirs: tile.dirs.slice(),
+        dx: tile.dx,
+        dy: tile.dy,
+        viewportX: viewportX,
+        viewportY: viewportY,
+        patchW: patchW,
+        patchH: patchH,
+        ok: true,
+        ratio: ratio,
+        matchCount: matchCount,
+        totalPixels: totalPixels,
+        hit: ratio >= minMatchRatio
+      });
+    }
+
+    const hits = samples.filter((s) => s.hit);
+    hits.sort((a, b) => b.ratio - a.ratio);
+    const best = hits.length > 0 ? hits[0] : null;
+    const snapshot = {
+      ok: true,
+      scannedAt: Date.now(),
+      label: label,
+      target: targetColor,
+      tolerance: tolerance,
+      minMatchRatio: minMatchRatio,
+      halfSize: halfSize,
+      canvasRect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+      samples: samples,
+      hits: hits,
+      best: best,
+      drawFailures: drawFailures
+    };
+    Logger.log(logTag, `3-ring scan for ${label} done`, {
+      hits: hits.length,
+      bestKey: best ? best.key : null,
+      bestRatio: best ? Number(best.ratio.toFixed(4)) : null
+    });
+    Runtime.exploration.lastThirdRingScan = snapshot;
+    return snapshot;
+  }
+
+  // AI CHANGED: v1.2.0-alpha — best-effort lens detection. Click-dispatches one second-ring tile center via the same
+  //   movement primitive used by `exploreByScan`. If the game accepts the move (lastKnownCoords change indicates the bot
+  //   moved 2 hops), lens is equipped. The probe is destructive (it actually moves the bot) so callers must invoke this
+  //   only on a safe boundary (e.g. start of session, before AUTO begins). Manual override via `setLensStateOverride()`
+  //   bypasses the destructive probe entirely.
+  async function detectLensState(userOpts) {
+    const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
+    if (!Runtime.vision || typeof Runtime.vision !== "object") {
+      Runtime.vision = { hasLens: null, lastDetectAt: null, lastDetectResult: null, detectAttempts: 0, manualOverride: null };
+    }
+    Runtime.vision.detectAttempts = (Runtime.vision.detectAttempts || 0) + 1;
+    Runtime.vision.lastDetectAt = Date.now();
+
+    if (Runtime.vision.manualOverride === true || Runtime.vision.manualOverride === false) {
+      const result = { ok: true, hasLens: Runtime.vision.manualOverride, source: "manual_override" };
+      Runtime.vision.hasLens = Runtime.vision.manualOverride;
+      Runtime.vision.lastDetectResult = result;
+      Logger.log("LENS", "detectLensState short-circuited via manual override", result);
+      return result;
+    }
+    if (Config && Config.vision && Config.vision.lensProbeEnabled === false && opts.force !== true) {
+      const result = { ok: true, hasLens: false, source: "probe_disabled", reason: "lens_probe_disabled" };
+      Runtime.vision.lastDetectResult = result;
+      return result;
+    }
+
+    const beforeMap = await ensureMapOpen();
+    if (!beforeMap || beforeMap.ok === false) {
+      const result = { ok: false, hasLens: null, reason: "map_not_open" };
+      Runtime.vision.lastDetectResult = result;
+      return result;
+    }
+    const before = readBasicState();
+    const beforeCoords = before && before.coords ? String(before.coords) : null;
+
+    // Pick first second-ring offset.
+    const offsets = getSecondRingOffsets();
+    const center = getMapCenterClientPoint();
+    if (!center || offsets.length === 0) {
+      const result = { ok: false, hasLens: null, reason: "no_center_or_offsets" };
+      Runtime.vision.lastDetectResult = result;
+      return result;
+    }
+    const probeTile = offsets[0];
+    Logger.log("LENS", "detectLensState probing second-ring center", { tile: probeTile.key, beforeCoords: beforeCoords });
+    const moved = moveToMapPoint(center.x + probeTile.dx, center.y + probeTile.dy);
+    if (!moved) {
+      const result = { ok: false, hasLens: null, reason: "dispatch_failed" };
+      Runtime.vision.lastDetectResult = result;
+      return result;
+    }
+    const settleMs = Config && Config.vision && Number.isFinite(Config.vision.lensProbeCoordsCheckSettleMs)
+      ? Config.vision.lensProbeCoordsCheckSettleMs
+      : 600;
+    await sleep(settleMs);
+    const after = readBasicState();
+    const afterCoords = after && after.coords ? String(after.coords) : null;
+    const moveAccepted = !!(beforeCoords && afterCoords && beforeCoords !== afterCoords);
+    const hasLens = moveAccepted;
+    Runtime.vision.hasLens = hasLens;
+    const result = {
+      ok: true,
+      hasLens: hasLens,
+      source: "probe",
+      beforeCoords: beforeCoords,
+      afterCoords: afterCoords,
+      probeKey: probeTile.key
+    };
+    Runtime.vision.lastDetectResult = result;
+    Logger.log("LENS", "detectLensState result", result);
+    return result;
+  }
+
+  function setLensStateOverride(value) {
+    if (!Runtime.vision || typeof Runtime.vision !== "object") {
+      Runtime.vision = { hasLens: null, lastDetectAt: null, lastDetectResult: null, detectAttempts: 0, manualOverride: null };
+    }
+    if (value === true || value === false) {
+      Runtime.vision.manualOverride = value;
+      Runtime.vision.hasLens = value;
+      return { ok: true, manualOverride: value, hasLens: value };
+    }
+    if (value === null || value === undefined) {
+      Runtime.vision.manualOverride = null;
+      return { ok: true, manualOverride: null, hasLens: Runtime.vision.hasLens };
+    }
+    return { ok: false, reason: "invalid_value" };
+  }
+
+  function getLensState() {
+    const v = Runtime.vision || {};
+    return {
+      hasLens: typeof v.hasLens === "boolean" ? v.hasLens : null,
+      manualOverride: typeof v.manualOverride === "boolean" ? v.manualOverride : null,
+      lastDetectAt: v.lastDetectAt || null,
+      detectAttempts: Number.isFinite(v.detectAttempts) ? v.detectAttempts : 0
+    };
+  }
+
   // AI CHANGED: Helper — does a 1-ring scan have any USEFUL loot? Useful = at least one walkable tile
   // with non-empty loot icons that isn't boss-only (boss tiles stay hard-avoided in scoring).
   function ringHasUsefulLoot(scanSnapshot) {
@@ -821,7 +1202,13 @@
 
     let target = null;
     let dieGuided = false;
+    let championRingGuided = false;
+    let lensThirdRingGuided = false;
     let secondRing = null;
+    let secondRingChampion = null;
+    let thirdRing = null;
+    const avoidChampions = getAvoidChampions();
+    const lensEquipped = !!(Runtime.vision && Runtime.vision.hasLens === true);
 
     // AI CHANGED: When the 1-ring already shows useful loot, use it directly — no point doing the 2-ring scan.
     if (ringHasUsefulLoot(scan)) {
@@ -830,8 +1217,20 @@
       // AI CHANGED: 1-ring is empty (or only boss). Visually probe the 2-ring for a yellow die hint.
       setBotStatus("scanning", "2-ring visual scan for yellow die");
       secondRing = await scanSecondRingForDie();
-      if (secondRing && secondRing.ok && secondRing.best) {
-        const bestSample = secondRing.best;
+      // AI CHANGED: v1.2.0-alpha — When champions NOT avoided, also pixel-scan 2-ring for champion red marker (#aa4040).
+      if (!avoidChampions) {
+        setBotStatus("scanning", "2-ring visual scan for champion red");
+        secondRingChampion = await scanSecondRingForChampion();
+      }
+      // Pick the higher-priority 2-ring hint: champion red dominates yellow die (active target > loot hint).
+      const bestSample = (() => {
+        if (secondRingChampion && secondRingChampion.ok && secondRingChampion.best) {
+          championRingGuided = true;
+          return secondRingChampion.best;
+        }
+        return secondRing && secondRing.ok ? secondRing.best : null;
+      })();
+      if (bestSample) {
         const candidateDirs = Array.isArray(bestSample.dirs) ? bestSample.dirs : [];
         // AI CHANGED: Resolve every candidate dir to its 1-ring scan result, drop blocked / hostile tiles.
         const ringCandidates = [];
@@ -842,7 +1241,8 @@
             continue;
           }
           const kinds = parseLootKindsFromMarkers(tile.lootIcons || []);
-          if (kinds.includes("boss")) {
+          // Champion-guided path may step through a boss-marked tile only when champion avoidance is OFF.
+          if (kinds.includes("boss") && avoidChampions) {
             continue;
           }
           ringCandidates.push(tile);
@@ -855,22 +1255,72 @@
           // use the same farming-aware policy.
           ringCandidates.sort((a, b) => scoreScannedTile(b) - scoreScannedTile(a));
           target = ringCandidates[0];
-          dieGuided = true;
-          Logger.log("MOVE", `2-ring yellow die guides toward ${target.key}`, {
+          dieGuided = !championRingGuided;
+          Logger.log("MOVE", `2-ring ${championRingGuided ? "champion red" : "yellow die"} guides toward ${target.key}`, {
             ring2Key: bestSample.key,
             ring2Ratio: Number(bestSample.ratio.toFixed(4)),
             considered: candidateDirs,
             picked: target.key,
             pickedEnemies: target.enemies,
             pickedAllies: target.allies,
+            championGuided: championRingGuided,
             // AI CHANGED: Surface the score so we can see in logs why a candidate beat its peers.
             pickedScore: scoreScannedTile(target)
           });
         } else {
-          Logger.warn("MOVE", `Die seen toward dirs ${candidateDirs.join("/")} but no walkable safe candidate; ignoring hint`);
+          Logger.warn("MOVE", `Hint seen toward dirs ${candidateDirs.join("/")} but no walkable safe candidate; ignoring hint`);
         }
       }
-      // If die didn't yield a usable target, fall back to standard scoring (e.g. step into empty tile).
+      // AI CHANGED: v1.2.0-alpha — Lens-equipped third-ring fallback. When neither 1-ring nor 2-ring yielded a target,
+      //   scan the 3-ring for yellow + (champion red if not avoided) and step toward the resolved 1-ring direction.
+      if (!target && lensEquipped) {
+        setBotStatus("scanning", "3-ring visual scan (lens equipped)");
+        const yellowCfg = Config.scan.secondRing || {};
+        const yellowColor = yellowCfg.yellowDieColor || { r: 240, g: 184, b: 12 };
+        thirdRing = await scanThirdRingForColor(yellowColor, {
+          tolerance: yellowCfg.yellowDieTolerance,
+          minMatchRatio: (Config.scan.thirdRing && Config.scan.thirdRing.minMatchRatio) || yellowCfg.minMatchRatio,
+          label: "yellow_die_3ring"
+        });
+        let thirdBest = thirdRing && thirdRing.ok ? thirdRing.best : null;
+        if (!thirdBest && !avoidChampions) {
+          const champColor = yellowCfg.championRedColor || { r: 0xaa, g: 0x40, b: 0x40 };
+          const champ3 = await scanThirdRingForColor(champColor, {
+            tolerance: yellowCfg.championRedTolerance || 75,
+            minMatchRatio: yellowCfg.championRedMinMatchRatio || 0.005,
+            label: "champion_red_3ring"
+          });
+          if (champ3 && champ3.ok && champ3.best) {
+            thirdRing = champ3;
+            thirdBest = champ3.best;
+            championRingGuided = true;
+          }
+        }
+        if (thirdBest) {
+          const candidateDirs = Array.isArray(thirdBest.dirs) ? thirdBest.dirs : [];
+          const ringCandidates3 = [];
+          for (let i = 0; i < candidateDirs.length; i += 1) {
+            const dir = candidateDirs[i];
+            const tile = scan.results.find((r) => r && r.ok && r.classification === "walkable" && r.key === dir);
+            if (!tile) continue;
+            const kinds = parseLootKindsFromMarkers(tile.lootIcons || []);
+            if (kinds.includes("boss") && avoidChampions) continue;
+            ringCandidates3.push(tile);
+          }
+          if (ringCandidates3.length > 0) {
+            ringCandidates3.sort((a, b) => scoreScannedTile(b) - scoreScannedTile(a));
+            target = ringCandidates3[0];
+            lensThirdRingGuided = true;
+            Logger.log("MOVE", `3-ring scan guides toward ${target.key}`, {
+              ring3Key: thirdBest.key,
+              ring3Ratio: Number(thirdBest.ratio.toFixed(4)),
+              picked: target.key,
+              championGuided: championRingGuided
+            });
+          }
+        }
+      }
+      // If neither 2-ring nor 3-ring yielded a usable target, fall back to standard scoring.
       if (!target) {
         target = chooseBestScannedNeighbor(scan);
       }
@@ -911,7 +1361,158 @@
       lootIcons: target.lootIcons,
       coords: verify.coords,
       // AI CHANGED: Mark whether this move was driven by a 2-ring yellow-die hint (vs. normal scoring).
-      dieGuided: dieGuided
+      dieGuided: dieGuided,
+      championRingGuided: championRingGuided,
+      lensThirdRingGuided: lensThirdRingGuided
     });
-    return { ok: true, moved: true, target: target, verify: verify, scan: scan, secondRing: secondRing, dieGuided: dieGuided };
+    // AI CHANGED: v1.2.0-alpha — record last move direction for basement forward-objective scoring.
+    if (Runtime.exploration && target && target.key) {
+      Runtime.exploration.lastMoveDir = target.key;
+    }
+    if (isInBasement() && Runtime.basement) {
+      Runtime.basement.lastDirection = target.key;
+      Runtime.basement.tilesAdvanced = (Runtime.basement.tilesAdvanced || 0) + 1;
+    }
+    return {
+      ok: true, moved: true, target: target, verify: verify, scan: scan,
+      secondRing: secondRing, secondRingChampion: secondRingChampion, thirdRing: thirdRing,
+      dieGuided: dieGuided, championRingGuided: championRingGuided, lensThirdRingGuided: lensThirdRingGuided
+    };
+  }
+
+  // AI CHANGED: v1.2.0-alpha — App-facing setters/getters for avoidance + basement preferences. Persisted to localStorage.
+  function ensurePreferencesObject() {
+    if (!Runtime.preferences || typeof Runtime.preferences !== "object") {
+      Runtime.preferences = { avoidChampions: true, avoidGoblins: false, basementFarmingEnabled: false };
+    }
+    return Runtime.preferences;
+  }
+
+  function setAvoidChampions(value) {
+    const prefs = ensurePreferencesObject();
+    prefs.avoidChampions = !!value;
+    saveBotPreferencesToStorage({ reason: "set_avoid_champions" });
+    Logger.log("PREFS", "avoidChampions=" + prefs.avoidChampions);
+    return { ok: true, avoidChampions: prefs.avoidChampions };
+  }
+
+  function setAvoidGoblins(value) {
+    const prefs = ensurePreferencesObject();
+    prefs.avoidGoblins = !!value;
+    saveBotPreferencesToStorage({ reason: "set_avoid_goblins" });
+    Logger.log("PREFS", "avoidGoblins=" + prefs.avoidGoblins);
+    return { ok: true, avoidGoblins: prefs.avoidGoblins };
+  }
+
+  function setBasementFarmingEnabled(value) {
+    const prefs = ensurePreferencesObject();
+    prefs.basementFarmingEnabled = !!value;
+    saveBotPreferencesToStorage({ reason: "set_basement_farming" });
+    Logger.log("PREFS", "basementFarmingEnabled=" + prefs.basementFarmingEnabled);
+    return { ok: true, basementFarmingEnabled: prefs.basementFarmingEnabled };
+  }
+
+  function getBotPreferencesSnapshot() {
+    const prefs = ensurePreferencesObject();
+    return {
+      avoidChampions: !!prefs.avoidChampions,
+      avoidGoblins: !!prefs.avoidGoblins,
+      basementFarmingEnabled: !!prefs.basementFarmingEnabled
+    };
+  }
+
+  function saveBotPreferencesToStorage(meta) {
+    try {
+      const payload = getBotPreferencesSnapshot();
+      window.localStorage.setItem("ligmarbot.botPreferences.v1", JSON.stringify(payload));
+      return { ok: true, payload: payload, reason: meta && meta.reason ? meta.reason : null };
+    } catch (err) {
+      return { ok: false, error: String(err && err.message ? err.message : err) };
+    }
+  }
+
+  function loadBotPreferencesFromStorage() {
+    try {
+      const raw = window.localStorage.getItem("ligmarbot.botPreferences.v1");
+      if (!raw) return { ok: true, fromStorage: false };
+      const p = JSON.parse(raw);
+      const prefs = ensurePreferencesObject();
+      if (typeof p.avoidChampions === "boolean") prefs.avoidChampions = p.avoidChampions;
+      if (typeof p.avoidGoblins === "boolean") prefs.avoidGoblins = p.avoidGoblins;
+      if (typeof p.basementFarmingEnabled === "boolean") prefs.basementFarmingEnabled = p.basementFarmingEnabled;
+      return { ok: true, fromStorage: true, prefs: getBotPreferencesSnapshot() };
+    } catch (err) {
+      return { ok: false, error: String(err && err.message ? err.message : err) };
+    }
+  }
+
+  // AI CHANGED: v1.2.0-alpha — Basement state helpers. Detection looks at the highlighted collect button's accessible
+  //   text content for one of `Config.basement.entryDetectSubstrings`. Entry/exit lifecycle is operator-callable so the
+  //   desktop app can drive it explicitly; AUTO loop callers can also invoke `markBasementEntered()` after a verified
+  //   collect-click into a basement, and `markBasementExited()` after the corresponding exit collect-click.
+  function detectBasementEntryFromUi() {
+    if (!Config || !Config.basement) return { ok: false, reason: "no_config" };
+    try {
+      const sel = Config.basement.collectButtonSelector || "div.battle-event-button.highlight";
+      const btns = Array.from(document.querySelectorAll(sel));
+      const subs = Array.isArray(Config.basement.entryDetectSubstrings) ? Config.basement.entryDetectSubstrings : [];
+      for (let i = 0; i < btns.length; i += 1) {
+        const btn = btns[i];
+        const txt = (btn.textContent || "").toLowerCase().trim();
+        const aria = (btn.getAttribute("aria-label") || "").toLowerCase().trim();
+        const blob = txt + " " + aria;
+        for (let j = 0; j < subs.length; j += 1) {
+          const sub = String(subs[j] || "").toLowerCase();
+          if (sub && blob.indexOf(sub) !== -1) {
+            return { ok: true, isBasement: true, substring: sub, button: btn };
+          }
+        }
+      }
+    } catch (err) {
+      return { ok: false, error: String(err && err.message ? err.message : err) };
+    }
+    return { ok: true, isBasement: false };
+  }
+
+  function markBasementEntered(meta) {
+    if (!Runtime.basement || typeof Runtime.basement !== "object") {
+      Runtime.basement = { active: false, enteredAt: null, lastEntrySource: null, lastDirection: null, atEndTile: false, mobsKilledHere: 0, tilesAdvanced: 0 };
+    }
+    Runtime.basement.active = true;
+    Runtime.basement.enteredAt = Date.now();
+    Runtime.basement.lastEntrySource = meta && meta.source ? String(meta.source) : "unknown";
+    Runtime.basement.lastDirection = null;
+    Runtime.basement.atEndTile = false;
+    Runtime.basement.mobsKilledHere = 0;
+    Runtime.basement.tilesAdvanced = 0;
+    Logger.log("BASEMENT", "entered", { source: Runtime.basement.lastEntrySource });
+    return { ok: true, state: Object.assign({}, Runtime.basement) };
+  }
+
+  function markBasementExited(meta) {
+    if (!Runtime.basement) return { ok: false, reason: "no_state" };
+    Runtime.basement.active = false;
+    Runtime.basement.atEndTile = false;
+    Runtime.basement.lastDirection = null;
+    Logger.log("BASEMENT", "exited", { reason: meta && meta.reason ? meta.reason : null });
+    return { ok: true };
+  }
+
+  function setBasementAtEndTile(value) {
+    if (!Runtime.basement || typeof Runtime.basement !== "object") return { ok: false, reason: "no_state" };
+    Runtime.basement.atEndTile = !!value;
+    return { ok: true, atEndTile: Runtime.basement.atEndTile };
+  }
+
+  function getBasementState() {
+    const b = Runtime.basement || {};
+    return {
+      active: !!b.active,
+      enteredAt: b.enteredAt || null,
+      atEndTile: !!b.atEndTile,
+      mobsKilledHere: Number.isFinite(b.mobsKilledHere) ? b.mobsKilledHere : 0,
+      tilesAdvanced: Number.isFinite(b.tilesAdvanced) ? b.tilesAdvanced : 0,
+      lastDirection: b.lastDirection || null,
+      lastEntrySource: b.lastEntrySource || null
+    };
   }

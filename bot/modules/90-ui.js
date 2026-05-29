@@ -305,13 +305,13 @@
     }
   }
 
-  // AI CHANGED: AUTO panel — persist combat mode (Fast/Safe/Easy) in ligmarbot.autoFarmUi.v1; applied when AUTO loop runs.
+  // AI CHANGED: AUTO panel — persist combat mode (Normal/Hard/Easy; legacy fast/safe accepted) in ligmarbot.autoFarmUi.v1.
   function autoFarmUiPrefsSnapshot() {
-    const raw =
-      Runtime.autoFarm && Runtime.autoFarm.combatMode ? String(Runtime.autoFarm.combatMode).toLowerCase() : "fast";
-    const cm = raw === "easy" || raw === "safe" || raw === "fast" ? raw : "fast";
+    const cm = typeof normalizeCombatModeName === "function"
+      ? normalizeCombatModeName(Runtime.autoFarm && Runtime.autoFarm.combatMode)
+      : "normal";
     // AI CHANGED: Persist AUTO local chat spammer toggle with combat mode (`ligmarbot.autoFarmUi.v1`).
-    const spamOn = !!(Config.chat && Config.chat.autoLocalPromocodeSpammerEnabled !== false);
+    const spamOn = !!(Config.chat && Config.chat.autoLocalPromocodeSpammerEnabled === true);
     // AI CHANGED: Persist night mode (hourly reload + boot autostart) with the same AUTO prefs blob.
     const nightOn = !!(Runtime.autoFarm && Runtime.autoFarm.nightMode && Runtime.autoFarm.nightMode.enabled);
     return { combatMode: cm, autoLocalChatSpammerEnabled: spamOn, nightModeEnabled: nightOn };
@@ -321,18 +321,15 @@
     try {
       const raw = window.localStorage.getItem("ligmarbot.autoFarmUi.v1");
       if (!raw) {
-        // AI CHANGED: No stored prefs — still sync planner from default Runtime.autoFarm.combatMode (e.g. fast).
+        // AI CHANGED: No stored prefs — still sync planner from default Runtime.autoFarm.combatMode.
         if (typeof applyAutoFarmCombatMode === "function") {
           applyAutoFarmCombatMode();
         }
         return { ok: true, fromStorage: false, autoFarm: autoFarmUiPrefsSnapshot() };
       }
       const p = JSON.parse(raw);
-      if (typeof p.combatMode === "string") {
-        const m = p.combatMode.toLowerCase();
-        if (m === "fast" || m === "safe" || m === "easy") {
-          Runtime.autoFarm.combatMode = m;
-        }
+      if (typeof p.combatMode === "string" && typeof normalizeCombatModeName === "function") {
+        Runtime.autoFarm.combatMode = normalizeCombatModeName(p.combatMode);
       }
       // AI CHANGED: Restore chat spammer preference from the same AUTO prefs blob.
       if (typeof p.autoLocalChatSpammerEnabled === "boolean" && Config.chat) {
@@ -387,10 +384,10 @@
     if (!map) {
       return;
     }
-    const raw =
-      Runtime.autoFarm && Runtime.autoFarm.combatMode ? String(Runtime.autoFarm.combatMode).toLowerCase() : "fast";
-    const norm = raw === "easy" || raw === "safe" || raw === "fast" ? raw : "fast";
-    ["fast", "safe", "easy"].forEach(function (key) {
+    const norm = typeof normalizeCombatModeName === "function"
+      ? normalizeCombatModeName(Runtime.autoFarm && Runtime.autoFarm.combatMode)
+      : "normal";
+    ["normal", "hard", "easy"].forEach(function (key) {
       const btn = map[key];
       if (!btn) {
         return;
@@ -4306,6 +4303,381 @@
         addCheck("post_retarget_policy_default_is_cancel_not_queue", false, { error: String(err && err.message ? err.message : err) }, false);
       }
 
+      // AI CHANGED: v1.2.0-alpha — DESKTOP APP CONTROLS test bundle. Each block is independent and self-contained.
+
+      // 1) In-page GUI is no longer auto-mounted by default.
+      try {
+        const cfg = Config.bootGui || null;
+        const autoMountFalse = !!(cfg && cfg.autoMountPanel === false);
+        const panelExists = !!(document.getElementById && document.getElementById("ligmarbot-control-panel"));
+        addCheck(
+          "v120_no_inpage_gui_auto_mount_default",
+          autoMountFalse,
+          { autoMountPanel: cfg ? cfg.autoMountPanel : null, panelInDom: panelExists },
+          false
+        );
+      } catch (err) {
+        addCheck("v120_no_inpage_gui_auto_mount_default", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 2) Combat mode rename — canonical names + legacy aliases.
+      try {
+        const ok =
+          typeof normalizeCombatModeName === "function" &&
+          normalizeCombatModeName("fast") === "normal" &&
+          normalizeCombatModeName("safe") === "hard" &&
+          normalizeCombatModeName("normal") === "normal" &&
+          normalizeCombatModeName("hard") === "hard" &&
+          normalizeCombatModeName("easy") === "easy";
+        addCheck("v120_combat_mode_aliases_normalize", ok, {
+          fastNorm: typeof normalizeCombatModeName === "function" ? normalizeCombatModeName("fast") : null,
+          safeNorm: typeof normalizeCombatModeName === "function" ? normalizeCombatModeName("safe") : null,
+          normalNorm: typeof normalizeCombatModeName === "function" ? normalizeCombatModeName("normal") : null,
+          hardNorm: typeof normalizeCombatModeName === "function" ? normalizeCombatModeName("hard") : null,
+          easyNorm: typeof normalizeCombatModeName === "function" ? normalizeCombatModeName("easy") : null
+        }, false);
+      } catch (err) {
+        addCheck("v120_combat_mode_aliases_normalize", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 3) Combat mode setter accepts legacy "fast" → stores "normal".
+      try {
+        if (typeof setAutoFarmCombatMode !== "function" || typeof getAutoFarmCombatMode !== "function") {
+          addCheck("v120_combat_mode_setter_accepts_alias", false, { reason: "missing_helpers" }, false);
+        } else {
+          const before = getAutoFarmCombatMode();
+          setAutoFarmCombatMode("fast");
+          const after = getAutoFarmCombatMode();
+          // restore
+          setAutoFarmCombatMode(before.mode);
+          addCheck(
+            "v120_combat_mode_setter_accepts_alias",
+            after && after.mode === "normal",
+            { afterMode: after ? after.mode : null, restoredTo: before ? before.mode : null },
+            false
+          );
+        }
+      } catch (err) {
+        addCheck("v120_combat_mode_setter_accepts_alias", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 4) Avoidance preference shape + setter behavior.
+      try {
+        if (typeof setAvoidChampions !== "function" || typeof getAvoidChampions !== "function") {
+          addCheck("v120_avoidance_pref_shape", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startCh = getAvoidChampions();
+          const startGo = typeof getAvoidGoblins === "function" ? getAvoidGoblins() : null;
+          setAvoidChampions(false);
+          const off = getAvoidChampions();
+          setAvoidChampions(true);
+          const on = getAvoidChampions();
+          // restore
+          setAvoidChampions(!!startCh);
+          if (typeof setAvoidGoblins === "function") setAvoidGoblins(!!startGo);
+          addCheck(
+            "v120_avoidance_pref_shape",
+            off === false && on === true,
+            { startedAt: { ch: startCh, go: startGo }, off: off, on: on },
+            false
+          );
+        }
+      } catch (err) {
+        addCheck("v120_avoidance_pref_shape", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 5) scoreScannedTile honors avoidance toggles for boss + goblin tiles.
+      try {
+        if (typeof scoreScannedTile !== "function") {
+          addCheck("v120_score_honors_avoidance_toggles", false, { reason: "no_score_fn" }, false);
+        } else {
+          const startCh = typeof getAvoidChampions === "function" ? getAvoidChampions() : true;
+          const startGo = typeof getAvoidGoblins === "function" ? getAvoidGoblins() : false;
+          const champTile = { ok: true, classification: "walkable", key: "TR", enemies: 1, allies: 0, lootIcons: ["icon-src-mob-type-champion"] };
+          const goblinTile = { ok: true, classification: "walkable", key: "L", enemies: 0, allies: 0, lootIcons: ["icon-src-event-goblin"] };
+          const emptyTile = { ok: true, classification: "walkable", key: "R", enemies: 0, allies: 0, lootIcons: [] };
+          if (typeof setAvoidChampions === "function") setAvoidChampions(true);
+          const champAvoidedScore = scoreScannedTile(champTile);
+          if (typeof setAvoidChampions === "function") setAvoidChampions(false);
+          const champTargetScore = scoreScannedTile(champTile);
+          if (typeof setAvoidGoblins === "function") setAvoidGoblins(false);
+          const gobAllowedScore = scoreScannedTile(goblinTile);
+          if (typeof setAvoidGoblins === "function") setAvoidGoblins(true);
+          const gobAvoidedScore = scoreScannedTile(goblinTile);
+          const emptyScore = scoreScannedTile(emptyTile);
+          // restore prefs
+          if (typeof setAvoidChampions === "function") setAvoidChampions(!!startCh);
+          if (typeof setAvoidGoblins === "function") setAvoidGoblins(!!startGo);
+          const ok =
+            champAvoidedScore < -100000 &&
+            champTargetScore > emptyScore &&
+            gobAllowedScore > emptyScore &&
+            gobAvoidedScore < emptyScore;
+          addCheck(
+            "v120_score_honors_avoidance_toggles",
+            ok,
+            { champAvoidedScore: champAvoidedScore, champTargetScore: champTargetScore, gobAllowedScore: gobAllowedScore, gobAvoidedScore: gobAvoidedScore, emptyScore: emptyScore },
+            false
+          );
+        }
+      } catch (err) {
+        addCheck("v120_score_honors_avoidance_toggles", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 6) Champion red pixel scan exists + only consulted when champion avoidance is OFF (helper signature).
+      try {
+        const hasFn = typeof scanSecondRingForChampion === "function";
+        const hasColor = !!(Config && Config.scan && Config.scan.secondRing && Config.scan.secondRing.championRedColor);
+        const colorMatch =
+          hasColor &&
+          Config.scan.secondRing.championRedColor.r === 0xaa &&
+          Config.scan.secondRing.championRedColor.g === 0x40 &&
+          Config.scan.secondRing.championRedColor.b === 0x40;
+        addCheck(
+          "v120_champion_red_scanner_shape",
+          hasFn && colorMatch,
+          { hasFn: hasFn, colorMatch: colorMatch, color: hasColor ? Config.scan.secondRing.championRedColor : null },
+          false
+        );
+      } catch (err) {
+        addCheck("v120_champion_red_scanner_shape", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 7) Lens detection runtime shape: hasLens defaults to null, override + getter work.
+      try {
+        if (typeof getLensState !== "function" || typeof setLensStateOverride !== "function") {
+          addCheck("v120_lens_state_shape", false, { reason: "missing_helpers" }, false);
+        } else {
+          const before = getLensState();
+          setLensStateOverride(true);
+          const o = getLensState();
+          setLensStateOverride(false);
+          const f = getLensState();
+          setLensStateOverride(null);
+          const cleared = getLensState();
+          addCheck(
+            "v120_lens_state_shape",
+            o.hasLens === true && f.hasLens === false && cleared.manualOverride === null,
+            { before: before, overrideTrue: o, overrideFalse: f, cleared: cleared },
+            false
+          );
+        }
+      } catch (err) {
+        addCheck("v120_lens_state_shape", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 8) Third-ring offsets + scan helper presence.
+      try {
+        const hasOff = typeof getThirdRingOffsets === "function";
+        const hasScan = typeof scanThirdRingForColor === "function";
+        const offsets = hasOff ? getThirdRingOffsets() : [];
+        addCheck(
+          "v120_third_ring_helpers_shape",
+          hasOff && hasScan && Array.isArray(offsets) && offsets.length === 18,
+          { hasOff: hasOff, hasScan: hasScan, offsetCount: Array.isArray(offsets) ? offsets.length : 0 },
+          false
+        );
+      } catch (err) {
+        addCheck("v120_third_ring_helpers_shape", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 9) Basement state shape + toggle.
+      try {
+        if (typeof setBasementFarmingEnabled !== "function" || typeof getBasementFarmingEnabled !== "function") {
+          addCheck("v120_basement_pref_shape", false, { reason: "missing_helpers" }, false);
+        } else {
+          const start = getBasementFarmingEnabled();
+          setBasementFarmingEnabled(true);
+          const on = getBasementFarmingEnabled();
+          setBasementFarmingEnabled(false);
+          const off = getBasementFarmingEnabled();
+          setBasementFarmingEnabled(!!start);
+          addCheck("v120_basement_pref_shape", on === true && off === false, { startedAt: start, on: on, off: off }, false);
+        }
+      } catch (err) {
+        addCheck("v120_basement_pref_shape", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 10) Basement-end champion override beats global avoidance for a champion tile.
+      try {
+        if (typeof scoreScannedTile !== "function" || typeof markBasementEntered !== "function") {
+          addCheck("v120_basement_end_champ_override", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startCh = typeof getAvoidChampions === "function" ? getAvoidChampions() : true;
+          const startActive = !!(Runtime.basement && Runtime.basement.active);
+          const startEnd = !!(Runtime.basement && Runtime.basement.atEndTile);
+          if (typeof setAvoidChampions === "function") setAvoidChampions(true);
+          markBasementEntered({ source: "test" });
+          if (typeof setBasementAtEndTile === "function") setBasementAtEndTile(true);
+          const champTile = { ok: true, classification: "walkable", key: "TR", enemies: 1, allies: 0, lootIcons: ["icon-src-mob-type-champion"] };
+          const overrideScore = scoreScannedTile(champTile);
+          if (typeof setBasementAtEndTile === "function") setBasementAtEndTile(false);
+          const noOverrideScore = scoreScannedTile(champTile);
+          // restore
+          if (typeof markBasementExited === "function") markBasementExited({ reason: "test_done" });
+          Runtime.basement.active = !!startActive;
+          Runtime.basement.atEndTile = !!startEnd;
+          if (typeof setAvoidChampions === "function") setAvoidChampions(!!startCh);
+          addCheck(
+            "v120_basement_end_champ_override",
+            overrideScore > 0 && noOverrideScore < -100000,
+            { overrideScore: overrideScore, noOverrideScore: noOverrideScore },
+            false
+          );
+        }
+      } catch (err) {
+        addCheck("v120_basement_end_champ_override", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 11) Basement forward-objective penalizes reverse-direction tile.
+      try {
+        if (typeof scoreScannedTile !== "function" || typeof markBasementEntered !== "function") {
+          addCheck("v120_basement_forward_objective_penalizes_reverse", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startActive = !!(Runtime.basement && Runtime.basement.active);
+          const startLastMove = Runtime.exploration ? Runtime.exploration.lastMoveDir : null;
+          markBasementEntered({ source: "test" });
+          if (Runtime.exploration) Runtime.exploration.lastMoveDir = "TR"; // last move went TR -> reverse is BL
+          const reverseTile = { ok: true, classification: "walkable", key: "BL", enemies: 1, allies: 0, lootIcons: [] };
+          const forwardTile = { ok: true, classification: "walkable", key: "TR", enemies: 1, allies: 0, lootIcons: [] };
+          const reverseScore = scoreScannedTile(reverseTile);
+          const forwardScore = scoreScannedTile(forwardTile);
+          // restore
+          if (typeof markBasementExited === "function") markBasementExited({ reason: "test_done" });
+          Runtime.basement.active = !!startActive;
+          if (Runtime.exploration) Runtime.exploration.lastMoveDir = startLastMove;
+          addCheck(
+            "v120_basement_forward_objective_penalizes_reverse",
+            forwardScore > reverseScore,
+            { forwardScore: forwardScore, reverseScore: reverseScore },
+            false
+          );
+        }
+      } catch (err) {
+        addCheck("v120_basement_forward_objective_penalizes_reverse", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 12) Manual chat API: set/get/add/remove/clear shape.
+      try {
+        if (
+          typeof setAutoChatMessages !== "function" ||
+          typeof getAutoChatMessages !== "function" ||
+          typeof addAutoChatMessage !== "function" ||
+          typeof removeAutoChatMessage !== "function" ||
+          typeof clearAutoChatMessages !== "function"
+        ) {
+          addCheck("v120_manual_chat_api_shape", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startMsgs = getAutoChatMessages();
+          clearAutoChatMessages();
+          setAutoChatMessages(["hello world", "second"]);
+          const got1 = getAutoChatMessages();
+          addAutoChatMessage("third");
+          const got2 = getAutoChatMessages();
+          removeAutoChatMessage(0);
+          const got3 = getAutoChatMessages();
+          clearAutoChatMessages();
+          const got4 = getAutoChatMessages();
+          // restore
+          if (Array.isArray(startMsgs)) setAutoChatMessages(startMsgs);
+          const ok =
+            got1.length === 2 && got1[0] === "hello world" &&
+            got2.length === 3 && got2[2] === "third" &&
+            got3.length === 2 && got3[0] === "second" &&
+            got4.length === 0;
+          addCheck("v120_manual_chat_api_shape", ok, { got1: got1, got2: got2, got3: got3, got4: got4 }, false);
+        }
+      } catch (err) {
+        addCheck("v120_manual_chat_api_shape", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 13) Manual chat dispatcher returns null when user list empty + useUserMessages on.
+      try {
+        if (typeof pickAutoChatSpammerDispatch !== "function") {
+          addCheck("v120_manual_chat_empty_dispatch_null", false, { reason: "no_picker" }, false);
+        } else {
+          const startMsgs = typeof getAutoChatMessages === "function" ? getAutoChatMessages() : [];
+          const startUseUser = !!(Config.chat && Config.chat.useUserMessages);
+          const startEnabled = !!(Config.chat && Config.chat.autoLocalPromocodeSpammerEnabled);
+          if (typeof clearAutoChatMessages === "function") clearAutoChatMessages();
+          Config.chat.useUserMessages = true;
+          const dispEmpty = pickAutoChatSpammerDispatch();
+          if (typeof setAutoChatMessages === "function") setAutoChatMessages(["one", "two"]);
+          const dispOne = pickAutoChatSpammerDispatch();
+          const dispTwo = pickAutoChatSpammerDispatch();
+          // restore
+          if (typeof clearAutoChatMessages === "function") clearAutoChatMessages();
+          if (Array.isArray(startMsgs) && startMsgs.length > 0 && typeof setAutoChatMessages === "function") setAutoChatMessages(startMsgs);
+          Config.chat.useUserMessages = startUseUser;
+          Config.chat.autoLocalPromocodeSpammerEnabled = startEnabled;
+          const ok =
+            dispEmpty === null &&
+            dispOne && dispOne.kind === "user" && dispOne.message === "one" &&
+            dispTwo && dispTwo.kind === "user" && dispTwo.message === "two";
+          addCheck("v120_manual_chat_empty_dispatch_null", ok, { dispEmpty: dispEmpty, dispOne: dispOne, dispTwo: dispTwo }, false);
+        }
+      } catch (err) {
+        addCheck("v120_manual_chat_empty_dispatch_null", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 14) Manual chat interval range setter.
+      try {
+        if (typeof setAutoChatIntervalRange !== "function" || typeof getAutoChatIntervalRange !== "function") {
+          addCheck("v120_manual_chat_interval_shape", false, { reason: "missing_helpers" }, false);
+        } else {
+          const before = getAutoChatIntervalRange();
+          setAutoChatIntervalRange(1000, 2000);
+          const r = getAutoChatIntervalRange();
+          const bad = setAutoChatIntervalRange(5000, 1000);
+          setAutoChatIntervalRange(null, null); // clear
+          const cleared = getAutoChatIntervalRange();
+          addCheck(
+            "v120_manual_chat_interval_shape",
+            r && r.minMs === 1000 && r.maxMs === 2000 && bad && bad.ok === false && cleared && cleared.source === "config",
+            { before: before, r: r, bad: bad, cleared: cleared },
+            false
+          );
+        }
+      } catch (err) {
+        addCheck("v120_manual_chat_interval_shape", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 15) Champion red 2-ring scan is gated to non-avoiding state in exploreByScan code path.
+      //     We can't run a full scan here without a canvas; verify wiring shape: helper exists + Config flag exists +
+      //     `scoreScannedTile` boss case respects toggle (covered by test 5). This test specifically asserts that when
+      //     champions ARE avoided (default state), `scanSecondRingForChampion` is still callable but the EXPLORE path
+      //     in the bundle will only invoke it when NOT avoiding (verified by reading code). We keep the shape assertion.
+      try {
+        const hasFn = typeof scanSecondRingForChampion === "function";
+        const hasFlag = !!(Config && Config.exploration && Object.prototype.hasOwnProperty.call(Config.exploration, "avoidChampions"));
+        addCheck("v120_champ_red_scan_only_when_not_avoided_shape", hasFn && hasFlag, { hasFn: hasFn, hasFlag: hasFlag }, false);
+      } catch (err) {
+        addCheck("v120_champ_red_scan_only_when_not_avoided_shape", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 16) selectSpecialTileTargetIfDesired returns skip-shape when both avoidance flags are on.
+      try {
+        if (typeof selectSpecialTileTargetIfDesired !== "function") {
+          addCheck("v120_special_target_helper_shape", false, { reason: "missing_helper" }, false);
+        } else {
+          const startCh = typeof getAvoidChampions === "function" ? getAvoidChampions() : true;
+          const startGo = typeof getAvoidGoblins === "function" ? getAvoidGoblins() : false;
+          if (typeof setAvoidChampions === "function") setAvoidChampions(true);
+          if (typeof setAvoidGoblins === "function") setAvoidGoblins(true);
+          const result = await selectSpecialTileTargetIfDesired();
+          if (typeof setAvoidChampions === "function") setAvoidChampions(!!startCh);
+          if (typeof setAvoidGoblins === "function") setAvoidGoblins(!!startGo);
+          addCheck(
+            "v120_special_target_helper_shape",
+            result && result.ok === false && result.skipped === true && result.reason === "both_avoided",
+            { result: result },
+            false
+          );
+        }
+      } catch (err) {
+        addCheck("v120_special_target_helper_shape", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
       // AI CHANGED: Planner Part 2 — execution-plan CHARGE STEP shape test.
       //   Verify a charge step survives plan materialization with chargeMode + chargeReleaseFraction preserved, AND that
       //   `plannerExecutionPlanStepToQueueAction` correctly returns null for the charge step (queue cannot fire charges).
@@ -6991,13 +7363,15 @@
       });
       return b;
     }
-    const modeBtnFast = makeModeButton("Fast", "fast");
-    const modeBtnSafe = makeModeButton("Safe", "safe");
+    // AI CHANGED: v1.2.0-alpha — Fast → Normal, Safe → Hard. Legacy panel still functional for operators who opt into the
+    //   in-page panel via Config.bootGui.autoMountPanel; canonical mode keys are now "normal"/"hard"/"easy".
+    const modeBtnFast = makeModeButton("Normal", "normal");
+    const modeBtnSafe = makeModeButton("Hard", "hard");
     modeBtnSafe.title =
       "Full planner (ranked, horizon, openers, buffs). Between empty tiles: wait for HP/MP floors + short prebuffs before explore.";
     const modeBtnEasy = makeModeButton("Easy", "easy");
     modeBtnEasy.title = "Basic attacks only — ranked planner path disabled.";
-    modeBtnFast.title = "Full planner; lighter idle gating between tiles than Safe.";
+    modeBtnFast.title = "Full planner; lighter idle gating between tiles than Hard.";
     autoModeRow.appendChild(modeBtnFast);
     autoModeRow.appendChild(modeBtnSafe);
     autoModeRow.appendChild(modeBtnEasy);
@@ -7128,7 +7502,7 @@
     Runtime.ui.issueReportLine = null;
     Runtime.ui.combatGraceInput = null;
     Runtime.ui.chatSpammerCheckbox = chatSpamCb;
-    Runtime.ui.autoFarmModeButtons = { fast: modeBtnFast, safe: modeBtnSafe, easy: modeBtnEasy };
+    Runtime.ui.autoFarmModeButtons = { normal: modeBtnFast, hard: modeBtnSafe, easy: modeBtnEasy };
     refreshAutoFarmModeButtonsVisual();
 
     updateControlPanelStatus();
