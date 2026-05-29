@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ligmar Bot Loader
 // @namespace    http://tampermonkey.net/
-// @version      1.2.3-alpha
+// @version      1.2.4-alpha
 // @description  Local loader — pulls bundled Ligmar bot via @require from disk. Auto-bumped by bot/build.ps1.
 // @author       Victor
 // @match        https://ligmar.io/game/*

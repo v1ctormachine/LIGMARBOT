@@ -57,7 +57,21 @@
       //   only have the ladder. To avoid getting stuck, the wrapper falls through to phase "complete" after this many
       //   suppressed ladder cycles at atEnd. Default 2 (one suppressed cycle to confirm combat is fully cleared, then
       //   on the next cycle promote to complete and click the ladder = exit).
-      exitSuppressedAtEndPromoteThreshold: 2
+      exitSuppressedAtEndPromoteThreshold: 2,
+      // AI CHANGED: v1.2.4-alpha — DEDICATED IN-BASEMENT EXIT BUTTON. The game shows a separate `Exiting` control on
+      //   the entrance tile while inside a basement (an `app-button-icon` with a `.button-icon-text` reading "Exiting").
+      //   This is distinct from the highlighted-collect ladder (`battle-event-button.highlight`) that triggers
+      //   basement entry from outside. The bot uses these substrings to recognize the in-basement exit button so it
+      //   can be (a) suppressed while exploring/atEnd and (b) used after objective completion / during returning.
+      exitButtonTextSelector: ".button-icon-text",
+      exitButtonClickableTags: ["app-button-icon", "button"],
+      exitDetectSubstrings: ["exiting", "выход", "exit"],
+      // Reverse-direction strong-bonus magnitude during returning phase (multiplier on backtrackPenalty).
+      returningReverseBonusMult: 2,
+      // After this many exit-suppressed cycles in `exploring` phase WITHOUT seeing a champion icon, the bot promotes
+      //   to atEnd anyway (defensive: covers basements with no champion mob, or with an icon the detector misses).
+      //   Set to 0 to disable.
+      exitSuppressedExploringPromoteToAtEndThreshold: 0
     },
     // AI CHANGED: Added action verification timing config for click+confirm flows.
     verification: {

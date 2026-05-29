@@ -204,6 +204,13 @@
       // AI CHANGED: v1.2.2-alpha — DESKTOP APP API. Phase state machine helpers.
       basementSetPhase: typeof basementSetPhase === "function" ? basementSetPhase : null,
       getBasementCanExit: typeof getBasementCanExit === "function" ? getBasementCanExit : null,
+      // AI CHANGED: v1.2.4-alpha — DESKTOP APP API. Dedicated `Exiting` button helpers + in-cycle exit step.
+      detectBasementExitButton:
+        typeof detectBasementExitButton === "function" ? detectBasementExitButton : null,
+      clickBasementExitButton:
+        typeof clickBasementExitButton === "function" ? clickBasementExitButton : null,
+      maybeUseBasementExitIfReady:
+        typeof maybeUseBasementExitIfReady === "function" ? maybeUseBasementExitIfReady : null,
       // AI CHANGED: v1.2.1-alpha — DESKTOP APP API. Lens auto-detect latch helper (also runs in `startAutoFarmLoop`).
       maybeAutoDetectLensIfNeeded:
         typeof maybeAutoDetectLensIfNeeded === "function" ? maybeAutoDetectLensIfNeeded : null,

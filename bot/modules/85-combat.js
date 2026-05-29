@@ -5822,6 +5822,23 @@
 
     plannerMaybeLogAfterSecureCombat();
 
+    // AI CHANGED: v1.2.4-alpha — REAL BASEMENT EXIT step. Before regular loot, check if the dedicated `Exiting`
+    //   button (in-basement exit control) is visible and the phase machine permits exiting. The handler suppresses
+    //   the click while exploring/atEnd (immediate-exit fix preserved) and clicks it when phase is complete/returning.
+    //   When farming is OFF or we're not in a basement, this is a transparent skip.
+    if (typeof maybeUseBasementExitIfReady === "function") {
+      try {
+        const exitResult = await maybeUseBasementExitIfReady();
+        if (exitResult && exitResult.exited === true) {
+          Logger.log("LOOP", "Secure-tile cycle ended via basement Exiting click", exitResult);
+          return { ok: true, stage: "done_basement_exit", basementExit: exitResult };
+        }
+        // suppressed / no_exit_button / not_applicable / unexpected_phase / click_failed all fall through to normal loot.
+      } catch (basementExitErr) {
+        Logger.warn("BASEMENT", "maybeUseBasementExitIfReady threw", basementExitErr);
+      }
+    }
+
     // AI CHANGED: Surface loot as live status (clickLootOrActivateVerified internally handles "no loot" no-op).
     setBotStatus("looting", "collecting loot / activating event");
     // AI CHANGED: v1.2.1-alpha — Real basement automation. The basement collect button looks like a normal

@@ -4939,7 +4939,7 @@
             Runtime.basement.objectiveComplete = !!startSnap.objectiveComplete;
           }
           const ok =
-            afterEnter.phase === "active" && afterEnter.active === true && afterEnter.objectiveComplete === false && afterEnter.canExit === false &&
+            afterEnter.phase === "exploring" && afterEnter.active === true && afterEnter.objectiveComplete === false && afterEnter.canExit === false &&
             afterAtEnd.phase === "atEnd" && afterAtEnd.atEndTile === true && afterAtEnd.canExit === false &&
             afterComplete.phase === "complete" && afterComplete.objectiveComplete === true && afterComplete.canExit === true &&
             afterExit.phase === "idle" && afterExit.active === false && afterExit.canExit === false;
@@ -4978,7 +4978,7 @@
           }
           const ok =
             after.exitSuppressedCount === 0 && after.exitSuppressedAtEndCount === 0 &&
-            after.knowledgeLootedCount === 0 && after.atEndTile === false && after.phase === "active";
+            after.knowledgeLootedCount === 0 && after.atEndTile === false && after.phase === "exploring";
           addCheck("v122_basement_entry_resets_counters", ok, { after: after }, false);
         }
       } catch (err) {
@@ -5019,7 +5019,7 @@
           const ok =
             lootCalls === 0 &&
             result && result.ok === true && result.skipped === true && result.reason === "basement_exit_suppressed" &&
-            afterPhase === "active";
+            afterPhase === "exploring";
           addCheck("v122_wrapper_suppresses_active_ladder", ok, { result: result, lootCalls: lootCalls, afterPhase: afterPhase }, false);
         }
       } catch (err) {
@@ -5169,7 +5169,7 @@
             Runtime.basement.phase = startSnap.phase || "idle";
           }
           setBasementFarmingEnabled(!!startEnabled);
-          const ok = lootCalls === 1 && result && result.ok === true && phaseAfter === "active";
+          const ok = lootCalls === 1 && result && result.ok === true && phaseAfter === "exploring";
           addCheck("v122_wrapper_idle_entry_marks_entered", ok, { result: result, phaseAfter: phaseAfter, lootCalls: lootCalls }, false);
         }
       } catch (err) {
@@ -5365,7 +5365,7 @@
         addCheck("v123_end_probe_skipPopup_finds_champion", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
       }
 
-      // 4) skipPopup with no champion icon: state stays atEndTile=false, phase stays "active".
+      // 4) skipPopup with no champion icon: state stays atEndTile=false, phase stays "exploring".
       try {
         if (typeof updateBasementEndTileFlagFromVisibleIcons !== "function" || typeof markBasementEntered !== "function" || typeof markBasementExited !== "function") {
           addCheck("v123_end_probe_skipPopup_no_champion_no_transition", false, { reason: "missing_helpers" }, false);
@@ -5384,7 +5384,7 @@
           }
           const ok =
             result && result.ok === true && result.atEndTile === false && atEndAfter === false &&
-            phaseAfter === "active";
+            phaseAfter === "exploring";
           addCheck("v123_end_probe_skipPopup_no_champion_no_transition", ok, { result: result, phaseAfter: phaseAfter, atEndAfter: atEndAfter }, false);
         }
       } catch (err) {
@@ -5403,6 +5403,379 @@
         }
       } catch (err) {
         addCheck("v123_end_probe_returns_promise", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // ===================================================================================================
+      // v1.2.4-alpha — Dedicated `Exiting` button + entrance memory + return-to-exit flow tests.
+      // ===================================================================================================
+
+      // Local DOM helper: build a synthetic `Exiting` button (app-button-icon > .button-icon-text).
+      const __v124_makeExitButton = function (label) {
+        const btn = document.createElement("app-button-icon");
+        btn.style.position = "absolute"; btn.style.left = "-9999px"; btn.style.top = "-9999px";
+        btn.style.width = "10px"; btn.style.height = "10px"; btn.style.display = "block";
+        const txt = document.createElement("div");
+        txt.className = "button-icon-text";
+        txt.textContent = label || "Exiting";
+        btn.appendChild(txt);
+        document.body.appendChild(btn);
+        return btn;
+      };
+
+      // 1) detectBasementExitButton finds the `Exiting` button by text and returns clickable parent.
+      try {
+        if (typeof detectBasementExitButton !== "function") {
+          addCheck("v124_detect_exit_button_shape", false, { reason: "missing_helper" }, false);
+        } else {
+          const btn = __v124_makeExitButton("Exiting");
+          const result = detectBasementExitButton();
+          const ok = result && result.ok === true && result.found === true && result.button === btn && result.substring === "exiting";
+          if (btn.parentNode) btn.parentNode.removeChild(btn);
+          addCheck("v124_detect_exit_button_shape", ok, { result: result && { ok: result.ok, found: result.found, substring: result.substring, viaTextNode: !!result.viaTextNode } }, false);
+        }
+      } catch (err) {
+        addCheck("v124_detect_exit_button_shape", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 2) detectBasementExitButton returns found:false when no Exiting text is present.
+      try {
+        if (typeof detectBasementExitButton !== "function") {
+          addCheck("v124_detect_exit_button_absent", false, { reason: "missing_helper" }, false);
+        } else {
+          const result = detectBasementExitButton();
+          const ok = result && result.ok === true && result.found === false;
+          addCheck("v124_detect_exit_button_absent", ok, { result: result }, false);
+        }
+      } catch (err) {
+        addCheck("v124_detect_exit_button_absent", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 3) maybeUseBasementExitIfReady SUPPRESSES the Exiting button while phase=exploring.
+      try {
+        if (typeof maybeUseBasementExitIfReady !== "function" || typeof markBasementEntered !== "function" ||
+            typeof markBasementExited !== "function" || typeof setBasementFarmingEnabled !== "function") {
+          addCheck("v124_exit_suppressed_exploring", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          const startFarm = typeof getBasementFarmingEnabled === "function" ? getBasementFarmingEnabled() : false;
+          setBasementFarmingEnabled(true);
+          const btn = __v124_makeExitButton("Exiting");
+          markBasementEntered({ source: "test_v124_suppress_exploring" });
+          const result = await maybeUseBasementExitIfReady();
+          const phaseAfter = (Runtime.basement && Runtime.basement.phase) || "idle";
+          const exploringCount = (Runtime.basement && Runtime.basement.exitSuppressedExploringCount) || 0;
+          if (btn.parentNode) btn.parentNode.removeChild(btn);
+          markBasementExited({ reason: "test_v124_suppress_exploring_done" });
+          setBasementFarmingEnabled(startFarm);
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.phase = startSnap.phase || "idle";
+            Runtime.basement.active = !!startSnap.active;
+          }
+          const ok = result && result.ok === true && result.suppressed === true &&
+                     result.reason === "exit_suppressed_exploring" && phaseAfter === "exploring" && exploringCount >= 1;
+          addCheck("v124_exit_suppressed_exploring", ok, { result: result, phaseAfter: phaseAfter, exploringCount: exploringCount }, false);
+        }
+      } catch (err) {
+        addCheck("v124_exit_suppressed_exploring", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // 4) maybeUseBasementExitIfReady SUPPRESSES while phase=atEnd (below threshold).
+      try {
+        if (typeof maybeUseBasementExitIfReady !== "function" || typeof markBasementEntered !== "function" ||
+            typeof markBasementExited !== "function" || typeof basementSetPhase !== "function" ||
+            typeof setBasementFarmingEnabled !== "function") {
+          addCheck("v124_exit_suppressed_atEnd", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          const startFarm = typeof getBasementFarmingEnabled === "function" ? getBasementFarmingEnabled() : false;
+          setBasementFarmingEnabled(true);
+          const btn = __v124_makeExitButton("Exiting");
+          markBasementEntered({ source: "test_v124_suppress_atend" });
+          basementSetPhase("atEnd", "test_v124_force_atend");
+          // Reset counters so we're well below threshold.
+          Runtime.basement.exitSuppressedAtEndCount = 0;
+          const result = await maybeUseBasementExitIfReady();
+          const phaseAfter = (Runtime.basement && Runtime.basement.phase) || "idle";
+          if (btn.parentNode) btn.parentNode.removeChild(btn);
+          markBasementExited({ reason: "test_v124_suppress_atend_done" });
+          setBasementFarmingEnabled(startFarm);
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.phase = startSnap.phase || "idle";
+            Runtime.basement.active = !!startSnap.active;
+          }
+          const ok = result && result.ok === true && result.suppressed === true &&
+                     result.reason === "exit_suppressed_atEnd" && phaseAfter === "atEnd";
+          addCheck("v124_exit_suppressed_atEnd", ok, { result: result, phaseAfter: phaseAfter }, false);
+        }
+      } catch (err) {
+        addCheck("v124_exit_suppressed_atEnd", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // 5) maybeUseBasementExitIfReady CLICKS the Exiting button while phase=complete and marks exited.
+      try {
+        if (typeof maybeUseBasementExitIfReady !== "function" || typeof markBasementEntered !== "function" ||
+            typeof markBasementExited !== "function" || typeof basementSetPhase !== "function" ||
+            typeof setBasementFarmingEnabled !== "function") {
+          addCheck("v124_exit_clicked_when_complete", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          const startFarm = typeof getBasementFarmingEnabled === "function" ? getBasementFarmingEnabled() : false;
+          setBasementFarmingEnabled(true);
+          const btn = __v124_makeExitButton("Exiting");
+          let clickFired = 0;
+          btn.addEventListener("click", function () { clickFired += 1; });
+          markBasementEntered({ source: "test_v124_click_complete" });
+          basementSetPhase("complete", "test_v124_force_complete");
+          const result = await maybeUseBasementExitIfReady();
+          const phaseAfter = (Runtime.basement && Runtime.basement.phase) || "idle";
+          if (btn.parentNode) btn.parentNode.removeChild(btn);
+          // markBasementExited already happened inside the helper; restore for next test.
+          setBasementFarmingEnabled(startFarm);
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.phase = startSnap.phase || "idle";
+            Runtime.basement.active = !!startSnap.active;
+          }
+          const ok = result && result.ok === true && result.exited === true && result.clicked === true &&
+                     phaseAfter === "idle" && clickFired >= 1;
+          addCheck("v124_exit_clicked_when_complete", ok, { result: result, phaseAfter: phaseAfter, clickFired: clickFired }, false);
+        }
+      } catch (err) {
+        addCheck("v124_exit_clicked_when_complete", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // 6) maybeUseBasementExitIfReady CLICKS the Exiting button while phase=returning and marks exited.
+      try {
+        if (typeof maybeUseBasementExitIfReady !== "function" || typeof markBasementEntered !== "function" ||
+            typeof basementSetPhase !== "function" || typeof setBasementFarmingEnabled !== "function") {
+          addCheck("v124_exit_clicked_when_returning", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          const startFarm = typeof getBasementFarmingEnabled === "function" ? getBasementFarmingEnabled() : false;
+          setBasementFarmingEnabled(true);
+          const btn = __v124_makeExitButton("Exiting");
+          markBasementEntered({ source: "test_v124_click_returning" });
+          basementSetPhase("returning", "test_v124_force_returning");
+          const result = await maybeUseBasementExitIfReady();
+          const phaseAfter = (Runtime.basement && Runtime.basement.phase) || "idle";
+          if (btn.parentNode) btn.parentNode.removeChild(btn);
+          setBasementFarmingEnabled(startFarm);
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.phase = startSnap.phase || "idle";
+            Runtime.basement.active = !!startSnap.active;
+          }
+          const ok = result && result.ok === true && result.exited === true && result.clicked === true && phaseAfter === "idle";
+          addCheck("v124_exit_clicked_when_returning", ok, { result: result, phaseAfter: phaseAfter }, false);
+        }
+      } catch (err) {
+        addCheck("v124_exit_clicked_when_returning", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // 7) `complete` without a visible Exiting button transitions to `returning`.
+      try {
+        if (typeof maybeUseBasementExitIfReady !== "function" || typeof markBasementEntered !== "function" ||
+            typeof markBasementExited !== "function" || typeof basementSetPhase !== "function" ||
+            typeof setBasementFarmingEnabled !== "function") {
+          addCheck("v124_complete_without_exit_to_returning", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          const startFarm = typeof getBasementFarmingEnabled === "function" ? getBasementFarmingEnabled() : false;
+          setBasementFarmingEnabled(true);
+          markBasementEntered({ source: "test_v124_complete_to_returning" });
+          basementSetPhase("complete", "test_v124_force_complete_no_button");
+          const result = await maybeUseBasementExitIfReady();
+          const phaseAfter = (Runtime.basement && Runtime.basement.phase) || "idle";
+          markBasementExited({ reason: "test_v124_complete_to_returning_done" });
+          setBasementFarmingEnabled(startFarm);
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.phase = startSnap.phase || "idle";
+            Runtime.basement.active = !!startSnap.active;
+          }
+          const ok = result && result.ok === true && result.skipped === true && result.reason === "no_exit_button" && phaseAfter === "returning";
+          addCheck("v124_complete_without_exit_to_returning", ok, { result: result, phaseAfter: phaseAfter }, false);
+        }
+      } catch (err) {
+        addCheck("v124_complete_without_exit_to_returning", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // 8) markBasementEntered initializes moveStack=[] and entrance fields default to null.
+      try {
+        if (typeof markBasementEntered !== "function" || typeof markBasementExited !== "function") {
+          addCheck("v124_entrance_memory_initialized", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          markBasementEntered({ source: "test_v124_entrance" });
+          const stackOk = Array.isArray(Runtime.basement.moveStack) && Runtime.basement.moveStack.length === 0;
+          const entranceShapeOk =
+            Object.prototype.hasOwnProperty.call(Runtime.basement, "entranceTileKey") &&
+            Object.prototype.hasOwnProperty.call(Runtime.basement, "entranceCoords");
+          markBasementExited({ reason: "test_v124_entrance_done" });
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.phase = startSnap.phase || "idle";
+            Runtime.basement.active = !!startSnap.active;
+          }
+          addCheck("v124_entrance_memory_initialized", !!(stackOk && entranceShapeOk), { stackOk: stackOk, entranceShapeOk: entranceShapeOk }, false);
+        }
+      } catch (err) {
+        addCheck("v124_entrance_memory_initialized", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 9) markBasementEntered with explicit entranceTileKey/entranceCoords meta is preserved.
+      try {
+        if (typeof markBasementEntered !== "function" || typeof markBasementExited !== "function") {
+          addCheck("v124_entrance_meta_persisted", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          markBasementEntered({ source: "test_v124_meta", entranceTileKey: "5,7", entranceCoords: { x: 5, y: 7 } });
+          const keyOk = Runtime.basement.entranceTileKey === "5,7";
+          const coordsOk = Runtime.basement.entranceCoords && Runtime.basement.entranceCoords.x === 5 && Runtime.basement.entranceCoords.y === 7;
+          markBasementExited({ reason: "test_v124_meta_done" });
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.phase = startSnap.phase || "idle";
+            Runtime.basement.active = !!startSnap.active;
+          }
+          addCheck("v124_entrance_meta_persisted", !!(keyOk && coordsOk), { keyOk: keyOk, coordsOk: coordsOk }, false);
+        }
+      } catch (err) {
+        addCheck("v124_entrance_meta_persisted", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 10) markBasementExited clears entrance memory + moveStack.
+      try {
+        if (typeof markBasementEntered !== "function" || typeof markBasementExited !== "function") {
+          addCheck("v124_exit_clears_entrance_memory", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          markBasementEntered({ source: "test_v124_clear", entranceTileKey: "1,2" });
+          Runtime.basement.moveStack.push("R");
+          Runtime.basement.moveStack.push("BR");
+          markBasementExited({ reason: "test_v124_clear_done" });
+          const cleared = Runtime.basement.entranceTileKey === null &&
+                          Runtime.basement.entranceCoords === null &&
+                          Array.isArray(Runtime.basement.moveStack) && Runtime.basement.moveStack.length === 0;
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.phase = startSnap.phase || "idle";
+            Runtime.basement.active = !!startSnap.active;
+          }
+          addCheck("v124_exit_clears_entrance_memory", cleared, { state: { entranceTileKey: Runtime.basement.entranceTileKey, moveStackLen: (Runtime.basement.moveStack || []).length } }, false);
+        }
+      } catch (err) {
+        addCheck("v124_exit_clears_entrance_memory", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 11) Returning-phase scoring prefers reverse-of-stack-top direction.
+      try {
+        if (typeof scoreReturningDirectionAdjust !== "function") {
+          addCheck("v124_returning_scoring_prefers_reverse", false, { reason: "missing_helper" }, false);
+        } else {
+          const savedStack = (Runtime.basement && Array.isArray(Runtime.basement.moveStack)) ? Runtime.basement.moveStack.slice() : [];
+          if (!Runtime.basement) Runtime.basement = {};
+          Runtime.basement.moveStack = ["R"]; // last move was right; reverse is left
+          const reverseTile = scoreReturningDirectionAdjust({ key: "L" }, 100);
+          const forwardTile = scoreReturningDirectionAdjust({ key: "R" }, 100);
+          const neutralTile = scoreReturningDirectionAdjust({ key: "TL" }, 100);
+          Runtime.basement.moveStack = savedStack;
+          const ok = reverseTile > 0 && forwardTile < 0 && neutralTile === 0;
+          addCheck("v124_returning_scoring_prefers_reverse", ok, { reverseTile: reverseTile, forwardTile: forwardTile, neutralTile: neutralTile }, false);
+        }
+      } catch (err) {
+        addCheck("v124_returning_scoring_prefers_reverse", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 12) basementSetPhase accepts "active" alias and normalizes to "exploring".
+      try {
+        if (typeof basementSetPhase !== "function") {
+          addCheck("v124_phase_active_alias_normalized", false, { reason: "missing_helper" }, false);
+        } else {
+          const savedPhase = (Runtime.basement && Runtime.basement.phase) || "idle";
+          const savedActive = !!(Runtime.basement && Runtime.basement.active);
+          basementSetPhase("idle", "test_v124_alias_reset");
+          const r = basementSetPhase("active", "test_v124_alias_input");
+          const phaseAfter = (Runtime.basement && Runtime.basement.phase) || "idle";
+          basementSetPhase(savedPhase, "test_v124_alias_restore");
+          if (Runtime.basement) Runtime.basement.active = savedActive;
+          const ok = r && r.ok === true && phaseAfter === "exploring";
+          addCheck("v124_phase_active_alias_normalized", ok, { result: r, phaseAfter: phaseAfter }, false);
+        }
+      } catch (err) {
+        addCheck("v124_phase_active_alias_normalized", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 13) End champion override still applies in `returning` phase.
+      try {
+        if (typeof scoreScannedTile !== "function" || typeof basementSetPhase !== "function" ||
+            typeof setAvoidChampions !== "function" || typeof setBasementFarmingEnabled !== "function" ||
+            typeof markBasementEntered !== "function" || typeof markBasementExited !== "function") {
+          addCheck("v124_end_champion_override_during_returning", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          const startFarm = typeof getBasementFarmingEnabled === "function" ? getBasementFarmingEnabled() : false;
+          const startAvoid = typeof getAvoidChampions === "function" ? getAvoidChampions() : true;
+          setBasementFarmingEnabled(true);
+          setAvoidChampions(true);
+          markBasementEntered({ source: "test_v124_returning_override" });
+          basementSetPhase("returning", "test_v124_force_returning_override");
+          const synthetic = {
+            ok: true, classification: "walkable", key: "R",
+            enemies: 1, allies: 0,
+            lootIcons: ["mob-type-champion event-champion"]
+          };
+          const score = scoreScannedTile(synthetic);
+          markBasementExited({ reason: "test_v124_returning_override_done" });
+          setBasementFarmingEnabled(startFarm);
+          setAvoidChampions(startAvoid);
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.phase = startSnap.phase || "idle";
+            Runtime.basement.active = !!startSnap.active;
+          }
+          // The override should keep the score positive (champion engageable) rather than -Infinity.
+          const ok = Number.isFinite(score) && score > 0;
+          addCheck("v124_end_champion_override_during_returning", ok, { score: score }, false);
+        }
+      } catch (err) {
+        addCheck("v124_end_champion_override_during_returning", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 14) Wrapper transitions complete → returning when knowledge looted and Exiting NOT visible.
+      try {
+        if (typeof maybeApplyBasementTransitionAroundLoot !== "function" || typeof markBasementEntered !== "function" ||
+            typeof markBasementExited !== "function" || typeof basementSetPhase !== "function" ||
+            typeof setBasementFarmingEnabled !== "function") {
+          addCheck("v124_wrapper_knowledge_loot_transitions_to_returning", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          const startFarm = typeof getBasementFarmingEnabled === "function" ? getBasementFarmingEnabled() : false;
+          setBasementFarmingEnabled(true);
+          markBasementEntered({ source: "test_v124_wrapper_knowledge" });
+          basementSetPhase("atEnd", "test_v124_wrapper_force_atend");
+          // Ensure no Exiting button is in the DOM so the auto-transition fires.
+          const result = await maybeApplyBasementTransitionAroundLoot(async function () {
+            return { ok: true, clicked: true, verified: true };
+          });
+          const phaseAfter = (Runtime.basement && Runtime.basement.phase) || "idle";
+          markBasementExited({ reason: "test_v124_wrapper_knowledge_done" });
+          setBasementFarmingEnabled(startFarm);
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.phase = startSnap.phase || "idle";
+            Runtime.basement.active = !!startSnap.active;
+          }
+          const ok = result && result.ok === true && phaseAfter === "returning";
+          addCheck("v124_wrapper_knowledge_loot_transitions_to_returning", ok, { result: result, phaseAfter: phaseAfter }, false);
+        }
+      } catch (err) {
+        addCheck("v124_wrapper_knowledge_loot_transitions_to_returning", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // 15) clickBasementExitButton soft-fails when no button is found.
+      try {
+        if (typeof clickBasementExitButton !== "function") {
+          addCheck("v124_click_exit_button_soft_fails", false, { reason: "missing_helper" }, false);
+        } else {
+          const r = await clickBasementExitButton();
+          const ok = r && r.ok === false && r.reason === "exit_button_not_found";
+          addCheck("v124_click_exit_button_soft_fails", ok, { result: r }, false);
+        }
+      } catch (err) {
+        addCheck("v124_click_exit_button_soft_fails", false, { error: String(err && err.message ? err.message : err) }, false);
       }
 
       // 9) Manual chat is the documented primary mode (default `useUserMessages !== false` and dispatcher uses it).

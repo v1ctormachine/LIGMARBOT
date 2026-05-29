@@ -515,13 +515,14 @@
     const avoidChampions = getAvoidChampions();
     const avoidGoblins = getAvoidGoblins();
     const inBasement = isInBasement();
-    // Basement-end override: if we're at the basement end tile, allow champion engagement even when global avoidance is ON.
-    //   v1.2.2-alpha — accept either the live atEndTile UI flag OR the sticky "atEnd" phase, so the override remains
-    //   stable across the kill (champion icon disappears post-mortem but phase stays "atEnd" / "complete").
+    // Basement-end override: allow champion engagement at the basement end even when global avoidance is ON.
+    //   v1.2.2-alpha / v1.2.4-alpha — accept either the live atEndTile UI flag OR the sticky "atEnd" / "complete" /
+    //   "returning" phase so the override remains stable across the kill and through the return phase.
+    const basementPhase = (Runtime.basement && Runtime.basement.phase) || "idle";
     const basementEndChampOverride =
       inBasement &&
       Runtime.basement &&
-      (Runtime.basement.atEndTile === true || Runtime.basement.phase === "atEnd" || Runtime.basement.phase === "complete") &&
+      (Runtime.basement.atEndTile === true || basementPhase === "atEnd" || basementPhase === "complete" || basementPhase === "returning") &&
       Config &&
       Config.basement &&
       Config.basement.endChampionOverride !== false;
@@ -544,11 +545,16 @@
       const champAllies = lootKinds.includes("purple_chest") ? 0 : allies * 2000;
       let champScore = championBase + enemies * 250 - champAllies;
       if (inBasement) {
-        const reverse = reverseDirection(Runtime.exploration ? Runtime.exploration.lastMoveDir : null);
         const penalty = Config && Config.basement && Number.isFinite(Config.basement.backtrackPenalty)
           ? Config.basement.backtrackPenalty
           : 800000;
-        if (reverse && tile.key === reverse) champScore -= penalty;
+        if (basementPhase === "returning" || basementPhase === "complete") {
+          // We've completed the objective and are heading back. Prefer the reverse-of-stack-top direction.
+          champScore += scoreReturningDirectionAdjust(tile, penalty);
+        } else {
+          const reverse = reverseDirection(Runtime.exploration ? Runtime.exploration.lastMoveDir : null);
+          if (reverse && tile.key === reverse) champScore -= penalty;
+        }
       }
       return champScore;
     }
@@ -599,18 +605,42 @@
     // walkable tiles in the same loot tier (e.g. 2 mobs > 1 mob > 0 mobs).
     let score = base + enemies * 200 - alliesPenalty;
 
-    // AI CHANGED: v1.2.0-alpha — Basement forward objective. While inside a basement, penalize the tile that lies in the
-    //   REVERSE direction of the last verified move. This stops the bot from oscillating back toward the entry/ladder.
+    // AI CHANGED: v1.2.0-alpha / v1.2.4-alpha — Basement forward objective + returning preference.
+    //   While exploring/atEnd: penalize the tile that lies in the REVERSE direction of the last verified move so the
+    //     bot keeps moving forward.
+    //   While returning/complete: PREFER the reverse-of-stack-top direction so the bot retraces toward the entrance.
     if (inBasement) {
-      const reverse = reverseDirection(Runtime.exploration ? Runtime.exploration.lastMoveDir : null);
       const penalty = Config && Config.basement && Number.isFinite(Config.basement.backtrackPenalty)
         ? Config.basement.backtrackPenalty
         : 800000;
-      if (reverse && tile.key === reverse) {
-        score -= penalty;
+      if (basementPhase === "returning" || basementPhase === "complete") {
+        score += scoreReturningDirectionAdjust(tile, penalty);
+      } else {
+        const reverse = reverseDirection(Runtime.exploration ? Runtime.exploration.lastMoveDir : null);
+        if (reverse && tile.key === reverse) {
+          score -= penalty;
+        }
       }
     }
     return score;
+  }
+
+  // AI CHANGED: v1.2.4-alpha — Returning/complete-phase scoring adjust. Prefers the reverse-of-stack-top direction
+  //   (the way back toward the entrance one step) and penalizes moves in the stack-top direction (further forward).
+  //   Returns the additive score adjustment (positive = prefer, negative = avoid). When the move stack is empty we
+  //   should already be at the entrance — returns 0 in that case so the wrapper's exit click happens naturally.
+  function scoreReturningDirectionAdjust(tile, penalty) {
+    if (!tile || !tile.key) return 0;
+    const stack = Runtime && Runtime.basement && Array.isArray(Runtime.basement.moveStack) ? Runtime.basement.moveStack : [];
+    if (stack.length === 0) return 0;
+    const stackTop = stack[stack.length - 1];
+    const back = reverseDirection(stackTop);
+    const mult = Config && Config.basement && Number.isFinite(Config.basement.returningReverseBonusMult)
+      ? Config.basement.returningReverseBonusMult
+      : 2;
+    if (back && tile.key === back) return penalty * mult;
+    if (stackTop && tile.key === stackTop) return -penalty;
+    return 0;
   }
 
   // AI CHANGED: Build the 12 second-ring tile offsets (6 corners + 6 edges) plus the 1-ring directions
@@ -1435,13 +1465,23 @@
       championRingGuided: championRingGuided,
       lensThirdRingGuided: lensThirdRingGuided
     });
-    // AI CHANGED: v1.2.0-alpha — record last move direction for basement forward-objective scoring.
+    // AI CHANGED: v1.2.0-alpha / v1.2.4-alpha — record last move direction for basement forward-objective scoring.
+    //   Also push to moveStack while exploring/atEnd, and pop while returning so the bot retraces toward entrance.
     if (Runtime.exploration && target && target.key) {
       Runtime.exploration.lastMoveDir = target.key;
     }
     if (isInBasement() && Runtime.basement) {
       Runtime.basement.lastDirection = target.key;
       Runtime.basement.tilesAdvanced = (Runtime.basement.tilesAdvanced || 0) + 1;
+      if (!Array.isArray(Runtime.basement.moveStack)) Runtime.basement.moveStack = [];
+      const phaseNow = Runtime.basement.phase || "idle";
+      if (phaseNow === "exploring" || phaseNow === "atEnd") {
+        Runtime.basement.moveStack.push(target.key);
+      } else if (phaseNow === "returning" || phaseNow === "complete") {
+        if (Runtime.basement.moveStack.length > 0) {
+          Runtime.basement.moveStack.pop();
+        }
+      }
     }
     return {
       ok: true, moved: true, target: target, verify: verify, scan: scan,
@@ -1544,26 +1584,99 @@
     return { ok: true, isBasement: false };
   }
 
-  // AI CHANGED: v1.2.2-alpha — Phase state machine. ALL phase mutations route through this helper so we keep a single
-  //   place for invariants: `active` boolean stays in sync, `objectiveComplete` flag stays in sync, transitions are
-  //   logged with reasons, and we record `lastPhaseTransitionAt` / `lastPhaseTransitionReason` for diagnostics.
+  // AI CHANGED: v1.2.4-alpha — Detect the IN-BASEMENT dedicated `Exiting` button. This is a different control from
+  //   the outside basement entry (`detectBasementEntryFromUi`) and is the canonical signal that we are standing on
+  //   the basement entrance tile from the inside. The button is rendered as `app-button-icon` (or `button`) with a
+  //   `.button-icon-text` child whose text reads "Exiting".
+  //
+  //   The detector queries text nodes via `Config.basement.exitButtonTextSelector` (default `.button-icon-text`),
+  //   matches against `Config.basement.exitDetectSubstrings` (default `["exiting", "выход", "exit"]`), and walks up
+  //   to a clickable parent matching `Config.basement.exitButtonClickableTags`. Returns `{ ok, found, button, ... }`.
+  //   Soft-fails to `{ ok: true, found: false }` when no match exists. Used by the loot wrapper, the dedicated
+  //   `clickBasementExitButton` action, and the in-cycle `maybeUseBasementExitIfReady` step.
+  function detectBasementExitButton() {
+    if (!Config || !Config.basement) return { ok: false, reason: "no_config" };
+    try {
+      const textSel = Config.basement.exitButtonTextSelector || ".button-icon-text";
+      const subs = Array.isArray(Config.basement.exitDetectSubstrings)
+        ? Config.basement.exitDetectSubstrings
+        : ["exiting"];
+      const clickableTags = Array.isArray(Config.basement.exitButtonClickableTags)
+        ? Config.basement.exitButtonClickableTags.map(function (t) { return String(t || "").toLowerCase(); })
+        : ["app-button-icon", "button"];
+      const textNodes = Array.from(document.querySelectorAll(textSel));
+      for (let i = 0; i < textNodes.length; i += 1) {
+        const node = textNodes[i];
+        if (typeof isElementVisible === "function" && !isElementVisible(node)) continue;
+        const txt = (node.textContent || "").toLowerCase().trim();
+        let matchedSub = null;
+        for (let j = 0; j < subs.length; j += 1) {
+          const s = String(subs[j] || "").toLowerCase();
+          if (s && txt.indexOf(s) !== -1) { matchedSub = s; break; }
+        }
+        if (!matchedSub) continue;
+        // Walk up to clickable parent.
+        let target = node;
+        for (let k = 0; k < 6; k += 1) {
+          if (!target.parentElement) break;
+          target = target.parentElement;
+          const tag = (target.tagName || "").toLowerCase();
+          if (clickableTags.indexOf(tag) !== -1) {
+            return { ok: true, found: true, button: target, substring: matchedSub, text: txt, viaTextNode: true };
+          }
+        }
+        // Fallback: return the text node itself; clicking will bubble to a handler.
+        return { ok: true, found: true, button: node, substring: matchedSub, text: txt, fallbackToTextNode: true };
+      }
+      return { ok: true, found: false };
+    } catch (err) {
+      return { ok: false, error: String(err && err.message ? err.message : err) };
+    }
+  }
+
+  // AI CHANGED: v1.2.4-alpha — Click the dedicated `Exiting` button. Soft-fails when the button is not found. Does
+  //   NOT mutate `Runtime.basement` state itself — the caller (`maybeUseBasementExitIfReady`) is responsible for
+  //   `markBasementExited` AFTER the click succeeds, so phase transitions remain in one place.
+  async function clickBasementExitButton() {
+    const det = detectBasementExitButton();
+    if (!det || det.ok === false) return { ok: false, reason: "detector_failed", detect: det };
+    if (!det.found) return { ok: false, reason: "exit_button_not_found" };
+    try {
+      det.button.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window }));
+      det.button.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, view: window }));
+      det.button.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+    } catch (err) {
+      return { ok: false, reason: "click_threw", error: String(err && err.message ? err.message : err) };
+    }
+    Logger.log("BASEMENT", "Exiting button clicked", { substring: det.substring, viaTextNode: !!det.viaTextNode });
+    await sleep(300);
+    return { ok: true, clicked: true, substring: det.substring };
+  }
+
+  // AI CHANGED: v1.2.2-alpha / v1.2.4-alpha — Phase state machine. ALL phase mutations route through this helper.
+  //   Canonical phases: "idle", "exploring", "atEnd", "complete", "returning". The legacy name "active" is accepted
+  //   as an input synonym for "exploring" (normalized internally). `active` boolean and `objectiveComplete` flag
+  //   stay in sync with phase. Transitions are logged.
   function basementSetPhase(nextPhase, reason) {
     if (!Runtime.basement || typeof Runtime.basement !== "object") {
       Runtime.basement = {
         active: false, phase: "idle", objectiveComplete: false,
         enteredAt: null, exitedAt: null, lastEntrySource: null, lastDirection: null,
         atEndTile: false, mobsKilledHere: 0, tilesAdvanced: 0,
-        exitSuppressedCount: 0, exitSuppressedAtEndCount: 0, knowledgeLootedCount: 0,
+        entranceTileKey: null, entranceCoords: null, moveStack: [],
+        exitSuppressedCount: 0, exitSuppressedExploringCount: 0,
+        exitSuppressedAtEndCount: 0, knowledgeLootedCount: 0,
         lastPhaseTransitionAt: null, lastPhaseTransitionReason: null
       };
     }
-    const allowed = ["idle", "active", "atEnd", "complete"];
-    const target = allowed.indexOf(nextPhase) !== -1 ? nextPhase : null;
-    if (!target) return { ok: false, reason: "invalid_phase", attempted: nextPhase };
+    const allowed = ["idle", "exploring", "active", "atEnd", "complete", "returning"];
+    if (allowed.indexOf(nextPhase) === -1) return { ok: false, reason: "invalid_phase", attempted: nextPhase };
+    // Normalize legacy alias.
+    const target = nextPhase === "active" ? "exploring" : nextPhase;
     const prev = Runtime.basement.phase || "idle";
     if (prev === target) return { ok: true, skipped: true, phase: prev };
     Runtime.basement.phase = target;
-    Runtime.basement.objectiveComplete = (target === "complete");
+    Runtime.basement.objectiveComplete = (target === "complete" || target === "returning");
     Runtime.basement.active = (target !== "idle");
     Runtime.basement.lastPhaseTransitionAt = Date.now();
     Runtime.basement.lastPhaseTransitionReason = reason || null;
@@ -1582,11 +1695,30 @@
     Runtime.basement.atEndTile = false;
     Runtime.basement.mobsKilledHere = 0;
     Runtime.basement.tilesAdvanced = 0;
+    Runtime.basement.entranceTileKey = (meta && meta.entranceTileKey) || null;
+    Runtime.basement.entranceCoords = (meta && meta.entranceCoords) || null;
+    Runtime.basement.moveStack = [];
     Runtime.basement.exitSuppressedCount = 0;
+    Runtime.basement.exitSuppressedExploringCount = 0;
     Runtime.basement.exitSuppressedAtEndCount = 0;
     Runtime.basement.knowledgeLootedCount = 0;
-    basementSetPhase("active", "mark_basement_entered");
-    Logger.log("BASEMENT", "entered", { source: Runtime.basement.lastEntrySource, substring: meta && meta.substring ? meta.substring : null });
+    basementSetPhase("exploring", "mark_basement_entered");
+    // AI CHANGED: v1.2.4-alpha — Best-effort entrance coordinate snapshot. The entry click typically closes the
+    //   per-tile popup, so coords may not be readable here; the moveStack alone is sufficient for path-back.
+    if (!Runtime.basement.entranceCoords && typeof readCurrentCoordsFromPopup === "function") {
+      try {
+        const c = readCurrentCoordsFromPopup();
+        if (c && Number.isFinite(c.x) && Number.isFinite(c.y)) {
+          Runtime.basement.entranceCoords = { x: c.x, y: c.y };
+          Runtime.basement.entranceTileKey = c.x + "," + c.y;
+        }
+      } catch (err) {}
+    }
+    Logger.log("BASEMENT", "entered", {
+      source: Runtime.basement.lastEntrySource,
+      substring: meta && meta.substring ? meta.substring : null,
+      entranceCoords: Runtime.basement.entranceCoords
+    });
     return { ok: true, state: Object.assign({}, Runtime.basement) };
   }
 
@@ -1595,6 +1727,9 @@
     Runtime.basement.exitedAt = Date.now();
     Runtime.basement.atEndTile = false;
     Runtime.basement.lastDirection = null;
+    Runtime.basement.moveStack = [];
+    Runtime.basement.entranceTileKey = null;
+    Runtime.basement.entranceCoords = null;
     basementSetPhase("idle", (meta && meta.reason) || "mark_basement_exited");
     Logger.log("BASEMENT", "exited", { reason: meta && meta.reason ? meta.reason : null, substring: meta && meta.substring ? meta.substring : null });
     return { ok: true };
@@ -1604,26 +1739,30 @@
     if (!Runtime.basement || typeof Runtime.basement !== "object") return { ok: false, reason: "no_state" };
     const v = !!value;
     Runtime.basement.atEndTile = v;
-    // Rising edge into atEnd phase only happens from "active". From "atEnd"/"complete" we stay sticky.
-    if (v && Runtime.basement.phase === "active") {
+    // Rising edge into atEnd phase only happens from "exploring". From "atEnd"/"complete"/"returning" we stay sticky.
+    if (v && Runtime.basement.phase === "exploring") {
       basementSetPhase("atEnd", "set_basement_at_end_tile");
     }
     return { ok: true, atEndTile: v, phase: Runtime.basement.phase };
   }
 
-  // AI CHANGED: v1.2.2-alpha — Convenience boolean: are we allowed to take the basement exit ladder right now?
-  //   True only when phase === "complete". Used by the loot wrapper and (optionally) by external desktop-app callers.
+  // AI CHANGED: v1.2.2-alpha / v1.2.4-alpha — Convenience boolean: are we allowed to take the basement exit right now?
+  //   True only when phase is `complete` or `returning` (post-objective). Used by the loot wrapper, the in-cycle
+  //   exit step (`maybeUseBasementExitIfReady`), and external desktop-app status panels.
   function getBasementCanExit() {
-    return !!(Runtime && Runtime.basement && Runtime.basement.phase === "complete");
+    if (!Runtime || !Runtime.basement) return false;
+    const p = Runtime.basement.phase;
+    return p === "complete" || p === "returning";
   }
 
   function getBasementState() {
     const b = Runtime.basement || {};
+    const p = b.phase || "idle";
     return {
       active: !!b.active,
-      phase: b.phase || "idle",
+      phase: p,
       objectiveComplete: !!b.objectiveComplete,
-      canExit: b.phase === "complete",
+      canExit: p === "complete" || p === "returning",
       enteredAt: b.enteredAt || null,
       exitedAt: b.exitedAt || null,
       atEndTile: !!b.atEndTile,
@@ -1631,7 +1770,11 @@
       tilesAdvanced: Number.isFinite(b.tilesAdvanced) ? b.tilesAdvanced : 0,
       lastDirection: b.lastDirection || null,
       lastEntrySource: b.lastEntrySource || null,
+      entranceTileKey: b.entranceTileKey || null,
+      entranceCoords: b.entranceCoords ? Object.assign({}, b.entranceCoords) : null,
+      moveStack: Array.isArray(b.moveStack) ? b.moveStack.slice() : [],
       exitSuppressedCount: Number.isFinite(b.exitSuppressedCount) ? b.exitSuppressedCount : 0,
+      exitSuppressedExploringCount: Number.isFinite(b.exitSuppressedExploringCount) ? b.exitSuppressedExploringCount : 0,
       exitSuppressedAtEndCount: Number.isFinite(b.exitSuppressedAtEndCount) ? b.exitSuppressedAtEndCount : 0,
       knowledgeLootedCount: Number.isFinite(b.knowledgeLootedCount) ? b.knowledgeLootedCount : 0,
       lastPhaseTransitionAt: b.lastPhaseTransitionAt || null,
@@ -1639,35 +1782,42 @@
     };
   }
 
-  // AI CHANGED: v1.2.1-alpha / v1.2.2-alpha — Basement objective wrapper. Wraps an async loot/activate function with a
-  //   phase-aware decision tree so the bot does NOT immediately exit the basement on the cycle right after entry.
+  // AI CHANGED: v1.2.1-alpha / v1.2.2-alpha / v1.2.4-alpha — Basement objective wrapper around the highlighted-collect
+  //   `clickLootOrActivateVerified()` call. v1.2.4 only the OUTSIDE basement entry click (`detectBasementEntryFromUi`)
+  //   and the END-TILE knowledge loot run through this wrapper. The IN-BASEMENT exit (`Exiting` button) is handled by
+  //   the dedicated `maybeUseBasementExitIfReady` step in `secureTileAndLootOnce`, which uses the separate
+  //   `detectBasementExitButton` / `clickBasementExitButton` helpers. This means three distinct interactions are now
+  //   cleanly separated:
+  //     A. OUTSIDE basement entry — `maybeApplyBasementTransitionAroundLoot` + `detectBasementEntryFromUi`
+  //     B. INSIDE basement exit  — `maybeUseBasementExitIfReady` + `detectBasementExitButton`
+  //     C. End-tile knowledge loot — `maybeApplyBasementTransitionAroundLoot` (non-substring loot at atEnd)
+  //
+  //   Decision tree for THIS wrapper (loot/activate flow):
   //
   //   Decision tree (checks `detectBasementEntryFromUi()` BEFORE clicking — the highlighted button vanishes after a
   //   successful click, so we MUST snapshot first):
   //
-  //     phase=="idle":
-  //       - isLadder + click ok        → markBasementEntered  (phase → active)
-  //       - !isLadder + click ok       → normal loot, no state change
+  //     phase=="idle":  (outside any basement)
+  //       - isEntry  + click ok → markBasementEntered (phase → exploring)
+  //       - !isEntry + click ok → normal loot, no state change
   //
-  //     phase=="active":  (we just entered, exploring forward)
-  //       - isLadder                   → SUPPRESS click. Return ok/skipped/reason="basement_exit_suppressed".
-  //                                       Increment exitSuppressedCount. Critical: this is the fix for the
-  //                                       immediate-exit bug — the entrance-tile ladder is the same button as the
-  //                                       exit ladder, so detect-substring matches it; without this gate the wrapper
-  //                                       would flip phase back to idle on cycle 2.
-  //       - !isLadder + click ok       → normal loot (chest/altar/contract on the way), no phase change.
+  //     phase=="exploring":  (inside basement, moving forward — was "active" pre-1.2.4)
+  //       - isEntry  → SUPPRESS click. Return ok/skipped/reason="basement_exit_suppressed".
+  //                    Increment exitSuppressedExploringCount. Critical: this is the immediate-exit fix.
+  //       - !isEntry + click ok → normal loot (chest/altar/contract on the way), no phase change.
   //
-  //     phase=="atEnd":   (champion icon was seen on this tile this run; sticky)
-  //       - isLadder                   → SUPPRESS first N cycles (Config.basement.exitSuppressedAtEndPromoteThreshold).
-  //                                       Increment exitSuppressedAtEndCount. After threshold reached, promote phase
-  //                                       → "complete" and FALL THROUGH to actually click the ladder (this is the
-  //                                       fallback for basements that have no separate knowledge button).
-  //       - !isLadder + click ok       → KNOWLEDGE LOOTED. Promote phase → "complete". The next cycle's ladder click
-  //                                       will be allowed and will exit the basement.
+  //     phase=="atEnd":  (champion icon was seen on this tile this run; sticky)
+  //       - isEntry  → SUPPRESS first N cycles (Config.basement.exitSuppressedAtEndPromoteThreshold).
+  //                    After threshold reached, promote phase → "complete" and FALL THROUGH (fallback for basements
+  //                    with no separate knowledge button).
+  //       - !isEntry + click ok → KNOWLEDGE LOOTED. Promote phase → "complete". If `Exiting` button is NOT visible
+  //                    (we're not on the entrance tile), auto-transition complete → returning so scoring drives
+  //                    the bot back to entrance.
   //
-  //     phase=="complete":
-  //       - isLadder + click ok        → markBasementExited (phase → idle). This is the allowed exit click.
-  //       - !isLadder + click ok       → normal loot, no phase change (rare; secondary loot at end tile).
+  //     phase=="complete" / "returning":
+  //       - isEntry  + click ok → markBasementExited (phase → idle). Legacy collect-button exit path; preserved
+  //                    for safety. The canonical exit is `Exiting` via maybeUseBasementExitIfReady.
+  //       - !isEntry + click ok → normal loot (rare; secondary loot at end / on the way back).
   //
   //   When basement farming is disabled, the wrapper is a transparent pass-through. When the loot fn fails, no phase
   //   transition is applied (the bot will retry on a later cycle).
@@ -1682,7 +1832,7 @@
     } catch (err) {
       beforeDetect = null;
     }
-    const isLadder = !!(beforeDetect && beforeDetect.ok === true && beforeDetect.isBasement === true);
+    const isEntry = !!(beforeDetect && beforeDetect.ok === true && beforeDetect.isBasement === true);
     if (!Runtime.basement || typeof Runtime.basement !== "object") {
       basementSetPhase("idle", "wrapper_init_default");
     }
@@ -1693,12 +1843,14 @@
         : 2;
 
     // PHASE-AWARE PRE-CLICK GATE.
-    if (isLadder) {
-      if (phase === "active") {
+    if (isEntry) {
+      if (phase === "exploring") {
         Runtime.basement.exitSuppressedCount = (Runtime.basement.exitSuppressedCount || 0) + 1;
-        Logger.log("BASEMENT", "ladder click suppressed (active phase)", {
+        Runtime.basement.exitSuppressedExploringCount = (Runtime.basement.exitSuppressedExploringCount || 0) + 1;
+        Logger.log("BASEMENT", "entry-collect click suppressed (exploring phase)", {
           phase: phase,
           exitSuppressedCount: Runtime.basement.exitSuppressedCount,
+          exitSuppressedExploringCount: Runtime.basement.exitSuppressedExploringCount,
           substring: beforeDetect ? beforeDetect.substring : null
         });
         return {
@@ -1712,15 +1864,14 @@
         Runtime.basement.exitSuppressedCount = (Runtime.basement.exitSuppressedCount || 0) + 1;
         Runtime.basement.exitSuppressedAtEndCount = (Runtime.basement.exitSuppressedAtEndCount || 0) + 1;
         if (Runtime.basement.exitSuppressedAtEndCount >= promoteThreshold) {
-          // Promote to complete and fall through to actually click the ladder = exit.
-          Logger.log("BASEMENT", "promoting to complete via suppressed-at-end threshold", {
+          Logger.log("BASEMENT", "promoting to complete via suppressed-at-end threshold (collect path)", {
             exitSuppressedAtEndCount: Runtime.basement.exitSuppressedAtEndCount,
             threshold: promoteThreshold
           });
           basementSetPhase("complete", "atEnd_suppressed_threshold_reached");
           phase = "complete";
         } else {
-          Logger.log("BASEMENT", "ladder click suppressed (atEnd phase)", {
+          Logger.log("BASEMENT", "entry-collect click suppressed (atEnd phase)", {
             phase: phase,
             exitSuppressedAtEndCount: Runtime.basement.exitSuppressedAtEndCount,
             threshold: promoteThreshold,
@@ -1742,21 +1893,110 @@
 
     // POST-CLICK PHASE TRANSITIONS.
     if (lootResult && lootResult.ok === true) {
-      if (isLadder) {
+      if (isEntry) {
         if (phase === "idle") {
           try { markBasementEntered({ source: "loot_collect_click", substring: beforeDetect.substring }); } catch (err) {}
-        } else if (phase === "complete") {
+        } else if (phase === "complete" || phase === "returning") {
           try { markBasementExited({ reason: "loot_collect_click_exit", substring: beforeDetect.substring }); } catch (err) {}
         }
       } else {
-        // Non-ladder loot succeeded.
+        // Non-entry loot succeeded.
         if (phase === "atEnd" && lootResult.clicked === true && !lootResult.skipped) {
           Runtime.basement.knowledgeLootedCount = (Runtime.basement.knowledgeLootedCount || 0) + 1;
           basementSetPhase("complete", "knowledge_looted_at_end_tile");
+          // AI CHANGED: v1.2.4-alpha — Auto complete → returning if the dedicated `Exiting` button is NOT visible
+          //   (i.e. we are not standing on the entrance tile). This makes scoring drive the bot back to entrance.
+          let exitVisibleNow = false;
+          try {
+            const ed = typeof detectBasementExitButton === "function" ? detectBasementExitButton() : null;
+            exitVisibleNow = !!(ed && ed.ok && ed.found);
+          } catch (err) {}
+          if (!exitVisibleNow) {
+            basementSetPhase("returning", "knowledge_looted_not_on_entrance");
+          }
         }
       }
     }
     return lootResult;
+  }
+
+  // AI CHANGED: v1.2.4-alpha — In-cycle handler for the dedicated `Exiting` in-basement button. Called from
+  //   `secureTileAndLootOnce` AFTER combat clears, BEFORE the loot-wrapper step. Decision tree:
+  //
+  //     not in basement / farming OFF      → skip (reason: "not_applicable")
+  //     `Exiting` button NOT visible       → skip (reason: "no_exit_button"). On `complete` phase, also transitions
+  //                                           complete → returning (we're not on entrance, head back).
+  //     phase == "exploring"               → SUPPRESS, increment exitSuppressedExploringCount.
+  //     phase == "atEnd"                   → SUPPRESS until exitSuppressedAtEndCount reaches threshold; then promote
+  //                                           to "complete" and click.
+  //     phase == "complete" / "returning"  → CLICK `Exiting` → markBasementExited (phase → idle).
+  //
+  //   Returns `{ ok, clicked, exited, suppressed, reason, phase }`.
+  async function maybeUseBasementExitIfReady() {
+    const farmingOn = typeof getBasementFarmingEnabled === "function" ? getBasementFarmingEnabled() : false;
+    if (!farmingOn || !isInBasement()) {
+      return { ok: true, skipped: true, reason: "not_applicable" };
+    }
+    if (!Runtime.basement || typeof Runtime.basement !== "object") {
+      return { ok: true, skipped: true, reason: "no_state" };
+    }
+    let det = null;
+    try {
+      det = typeof detectBasementExitButton === "function" ? detectBasementExitButton() : null;
+    } catch (err) {
+      return { ok: false, error: String(err && err.message ? err.message : err), reason: "detect_threw" };
+    }
+    const phase = Runtime.basement.phase || "idle";
+    if (!det || det.found !== true) {
+      // Not on entrance / button not visible. If we already completed, transition to returning so scoring takes us back.
+      if (phase === "complete") {
+        basementSetPhase("returning", "complete_without_exit_button_visible");
+      }
+      return { ok: true, skipped: true, reason: "no_exit_button", phase: Runtime.basement.phase };
+    }
+    const promoteThreshold =
+      Config && Config.basement && Number.isFinite(Config.basement.exitSuppressedAtEndPromoteThreshold)
+        ? Config.basement.exitSuppressedAtEndPromoteThreshold
+        : 2;
+    let resolvedPhase = phase;
+    if (phase === "exploring") {
+      Runtime.basement.exitSuppressedCount = (Runtime.basement.exitSuppressedCount || 0) + 1;
+      Runtime.basement.exitSuppressedExploringCount = (Runtime.basement.exitSuppressedExploringCount || 0) + 1;
+      Logger.log("BASEMENT", "Exiting button suppressed (exploring phase)", {
+        phase: phase,
+        exitSuppressedCount: Runtime.basement.exitSuppressedCount,
+        exitSuppressedExploringCount: Runtime.basement.exitSuppressedExploringCount
+      });
+      return { ok: true, suppressed: true, reason: "exit_suppressed_exploring", phase: phase };
+    }
+    if (phase === "atEnd") {
+      Runtime.basement.exitSuppressedCount = (Runtime.basement.exitSuppressedCount || 0) + 1;
+      Runtime.basement.exitSuppressedAtEndCount = (Runtime.basement.exitSuppressedAtEndCount || 0) + 1;
+      if (Runtime.basement.exitSuppressedAtEndCount >= promoteThreshold) {
+        Logger.log("BASEMENT", "Exiting suppressed-at-end threshold reached → promote to complete and click", {
+          exitSuppressedAtEndCount: Runtime.basement.exitSuppressedAtEndCount,
+          threshold: promoteThreshold
+        });
+        basementSetPhase("complete", "atEnd_exit_suppressed_threshold_reached");
+        resolvedPhase = "complete";
+      } else {
+        Logger.log("BASEMENT", "Exiting button suppressed (atEnd phase)", {
+          phase: phase,
+          exitSuppressedAtEndCount: Runtime.basement.exitSuppressedAtEndCount,
+          threshold: promoteThreshold
+        });
+        return { ok: true, suppressed: true, reason: "exit_suppressed_atEnd", phase: phase };
+      }
+    }
+    if (resolvedPhase !== "complete" && resolvedPhase !== "returning") {
+      return { ok: false, reason: "unexpected_phase", phase: resolvedPhase };
+    }
+    const click = await clickBasementExitButton();
+    if (!click || click.ok === false) {
+      return { ok: false, reason: "click_failed", click: click, phase: resolvedPhase };
+    }
+    markBasementExited({ reason: "exiting_button_click", substring: click.substring });
+    return { ok: true, clicked: true, exited: true, phase: "idle" };
   }
 
   // AI CHANGED: v1.2.1-alpha / v1.2.2-alpha / v1.2.3-alpha — Refresh `Runtime.basement.atEndTile` by EXPLICITLY opening
@@ -1789,8 +2029,8 @@
     if (!isInBasement()) return { ok: false, skipped: true, reason: "not_in_basement" };
     if (!Runtime.basement) return { ok: false, skipped: true, reason: "no_state" };
     const cfg = (opts && typeof opts === "object") ? opts : {};
-    // Sticky: once at "atEnd" / "complete", further probes are unnecessary and could introduce side effects.
-    if (Runtime.basement.phase === "atEnd" || Runtime.basement.phase === "complete") {
+    // Sticky: once at "atEnd" / "complete" / "returning", further probes are unnecessary and could introduce side effects.
+    if (Runtime.basement.phase === "atEnd" || Runtime.basement.phase === "complete" || Runtime.basement.phase === "returning") {
       return { ok: true, skipped: true, reason: "phase_sticky", phase: Runtime.basement.phase, atEndTile: !!Runtime.basement.atEndTile };
     }
     // Optional OOC gate — combat callers pass requireOoc:true so the popup probe never runs mid-fight.
@@ -1893,8 +2133,8 @@
     if (hasChampion !== previous) {
       Logger.log("BASEMENT", "atEndTile flag updated", { previous: previous, current: hasChampion, iconsScanned: iconsScanned, viaPopup: viaPopup });
     }
-    // Rising edge (active → atEnd) — sticky thereafter.
-    if (Runtime.basement.phase === "active" && previous === false && hasChampion === true) {
+    // Rising edge (exploring → atEnd) — sticky thereafter.
+    if (Runtime.basement.phase === "exploring" && previous === false && hasChampion === true) {
       basementSetPhase("atEnd", "champion_icon_visible_in_basement");
     }
     return { ok: true, atEndTile: hasChampion, phase: Runtime.basement.phase, iconsScanned: iconsScanned, viaPopup: viaPopup };
