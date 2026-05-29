@@ -395,11 +395,17 @@
     };
   }
 
-  // AI CHANGED: v1.2.0-alpha — When `Config.chat.useUserMessages === true` (default), pick from `Runtime.autoFarm.chatSpammer.userMessages`
-  //   in round-robin order; do NOT consult time-of-day banks or smart-line. Returns null when user list is empty.
-  //   Legacy 6-way roll path is preserved when `useUserMessages === false`.
+  // AI CHANGED: v1.2.0-alpha / v1.2.1-alpha — MANUAL CHAT IS THE PRIMARY RUNTIME MODEL.
+  //   When `Config.chat.useUserMessages === true` (the new permanent default), the dispatcher round-robins over
+  //   `Runtime.autoFarm.chatSpammer.userMessages` — set by the desktop app via `setAutoChatMessages([...])`. With an empty
+  //   user list the dispatcher returns null and `maybeRunAutoChatSpammer` skips with `reason: "no_user_messages"`.
+  //
+  //   The legacy 6-way time-of-day banks + smart-line path is ONLY consulted when an operator explicitly opts back in by
+  //   setting `Config.chat.useUserMessages = false`. It is preserved for backward compatibility with old localStorage
+  //   prefs and console workflows but is NOT part of the documented runtime model anymore. Do not rely on it.
   function pickAutoChatSpammerDispatch() {
-    if (Config.chat && Config.chat.useUserMessages === true) {
+    // PRIMARY RUNTIME MODEL — manual user messages.
+    if (Config.chat && Config.chat.useUserMessages !== false) {
       const rt = getAutoChatSpammerRuntime();
       const list = Array.isArray(rt.userMessages) ? rt.userMessages : [];
       if (list.length === 0) {
@@ -417,6 +423,7 @@
         pickOutcomes: list.length
       };
     }
+    // LEGACY-ONLY PATH (operator opted out of user-mode). Time-of-day banks + 6-way roll preserved unchanged.
     const slot = getTimeOfDayChatSlot();
     const rawMessages = getChatSpammerMessagesForSlot(slot);
     const bankFive = normalizeChatBankToFive(rawMessages);
@@ -480,8 +487,9 @@
     }
     const now = Date.now();
     const slotNow = getTimeOfDayChatSlot({ nowMs: now });
-    // AI CHANGED: v1.2.0-alpha — when user-mode is on, only the user list matters; legacy banks are bypassed.
-    if (Config.chat && Config.chat.useUserMessages === true) {
+    // AI CHANGED: v1.2.0-alpha / v1.2.1-alpha — PRIMARY RUNTIME MODEL — manual user messages. When the user list is empty
+    //   the spammer is silent (reason: no_user_messages), which is the documented "empty list = no spam" contract.
+    if (Config.chat && Config.chat.useUserMessages !== false) {
       const userList = Array.isArray((getAutoChatSpammerRuntime()).userMessages)
         ? getAutoChatSpammerRuntime().userMessages
         : [];
@@ -489,10 +497,11 @@
         return { ok: false, skipped: true, reason: "no_user_messages" };
       }
     } else {
+      // LEGACY-ONLY PATH (operator set Config.chat.useUserMessages = false). Time-of-day banks preserved unchanged.
       const messages = getChatSpammerMessagesForSlot(slotNow);
       const smartConfigured = isChatSmartLineConfigured();
       if (messages.length <= 0 && !smartConfigured) {
-        return { ok: false, skipped: true, reason: "no_messages" };
+        return { ok: false, skipped: true, reason: "no_messages_legacy_mode" };
       }
     }
     const rt = getAutoChatSpammerRuntime();
@@ -5458,6 +5467,14 @@
       Logger.warn("LOOP", "Cannot start secure loop: enemyCount unavailable");
       return { ok: false, stage: "precheck", reason: "enemy_count_unavailable" };
     }
+    // AI CHANGED: v1.2.1-alpha — While inside a basement, refresh the at-end-tile flag from the currently visible hex event
+    //   icons. This drives the basement-end champion override in `scoreScannedTile()` AND the active-targeting helper.
+    //   No-op when basement farming is OFF or we are not currently in a basement.
+    if (typeof updateBasementEndTileFlagFromVisibleIcons === "function" && typeof getBasementFarmingEnabled === "function" && getBasementFarmingEnabled() === true) {
+      try { updateBasementEndTileFlagFromVisibleIcons(); } catch (basementEndErr) {
+        Logger.warn("BASEMENT", "updateBasementEndTileFlagFromVisibleIcons threw", basementEndErr);
+      }
+    }
 
     // AI CHANGED: Surface secure-tile preparation as live status.
     setBotStatus("preparing", `secure-tile cycle (enemies=${startState.combat.enemyCount})`);
@@ -5803,7 +5820,12 @@
 
     // AI CHANGED: Surface loot as live status (clickLootOrActivateVerified internally handles "no loot" no-op).
     setBotStatus("looting", "collecting loot / activating event");
-    const lootResult = await clickLootOrActivateVerified();
+    // AI CHANGED: v1.2.1-alpha — Real basement automation. The basement collect button looks like a normal
+    //   highlighted loot button (`div.battle-event-button.highlight`) but its text/aria-label matches the
+    //   basement substrings. `maybeApplyBasementTransitionAroundLoot()` snapshots that detection BEFORE the
+    //   click and flips `Runtime.basement.active` AFTER a successful click. When basement farming is OFF this
+    //   is a transparent pass-through — non-basement tiles see exactly the legacy behavior.
+    const lootResult = await maybeApplyBasementTransitionAroundLoot(() => clickLootOrActivateVerified());
     if (!lootResult.ok) {
       Logger.warn("LOOP", "Loot verification failed", lootResult);
       return { ok: false, stage: "loot", result: lootResult };
@@ -5948,9 +5970,12 @@
   function stopAutoFarmLoop() {
     if (!Runtime.autoFarm.running) {
       Logger.log("AUTO", "Auto-farm loop already stopped");
+      // AI CHANGED: v1.2.1-alpha — clear lens latch so the next session re-probes (matches 80-map auto-detect contract).
+      Runtime.autoFarm.lensAutoDetectDone = false;
       return { ok: true, running: false, message: "already_stopped" };
     }
     Runtime.autoFarm.stopRequested = true;
+    Runtime.autoFarm.lensAutoDetectDone = false;
     Logger.log("AUTO", "Stop requested for auto-farm loop");
     // AI CHANGED: Night mode — cancel pending hourly reload when user stops AUTO so the page does not refresh during manual play.
     cancelNightModeHourlyReload({ source: "auto_loop_stop" });
@@ -6234,6 +6259,8 @@
     Runtime.autoFarm.autoLikeTestPrepDone = false;
     // AI CHANGED: Fresh AUTO session — clear the ensure-skills latch so the first OOC cycle revalidates cache/hero, then later cycles skip.
     Runtime.autoFarm.skillEnsureDone = false;
+    // AI CHANGED: v1.2.1-alpha — Fresh AUTO session — clear lens auto-detect latch so the first SAFE OOC cycle probes once.
+    Runtime.autoFarm.lensAutoDetectDone = false;
     // AI CHANGED: Buff system v1.0.5-alpha — fresh session resets per-tile prebuff gate and the first-OOC-pass flag for longbuffs. `longSelfTracked` (assumed expiry map) is intentionally NOT cleared — buffs from before AUTO OFF are still likely active and we should not force redundant immediate recasts.
     resetSupportBuffPrebuffTileGate("auto_session_start");
     resetSupportBuffLongbuffSessionState("auto_session_start");
@@ -6317,6 +6344,17 @@
       if (Runtime.autoFarm.stopRequested) {
         exitReason = "user_stop";
         break;
+      }
+      // AI CHANGED: v1.2.1-alpha — Auto lens detection. Runs at MOST once per AUTO session on a SAFE OOC boundary
+      //   (no enemies, healthy session, not moving). Self-gates internally — calling it every cycle is cheap and the
+      //   helper short-circuits when the latch is already set. The destructive probe is bypassed when manual override
+      //   is set (`setLensStateOverride`).
+      if (typeof maybeAutoDetectLensIfNeeded === "function" && Runtime.autoFarm.lensAutoDetectDone === false) {
+        try {
+          await maybeAutoDetectLensIfNeeded({ reason: "auto_loop_pre_cycle" });
+        } catch (lensErr) {
+          Logger.warn("LENS", "maybeAutoDetectLensIfNeeded threw", lensErr);
+        }
       }
       const cycleResult = await runPreparedSecureCycle();
       Runtime.autoFarm.lastResult = cycleResult;

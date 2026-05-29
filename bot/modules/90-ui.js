@@ -4678,6 +4678,265 @@
         addCheck("v120_special_target_helper_shape", false, { error: String(err && err.message ? err.message : err) }, false);
       }
 
+      // AI CHANGED: v1.2.1-alpha — FEATURE COMPLETION test bundle.
+
+      // 1) Special-target helper soft-fails cleanly when no popup / no map.
+      //   Outside AUTO with no live map UI, the helper must NOT throw and must return a structured failure with a
+      //   recognizable `reason`. We invoke it with avoidance-off so it tries the full flow.
+      try {
+        if (typeof selectSpecialTileTargetIfDesired !== "function") {
+          addCheck("v121_special_target_soft_fail_shape", false, { reason: "missing_helper" }, false);
+        } else {
+          const startCh = typeof getAvoidChampions === "function" ? getAvoidChampions() : true;
+          const startGo = typeof getAvoidGoblins === "function" ? getAvoidGoblins() : false;
+          if (typeof setAvoidChampions === "function") setAvoidChampions(false);
+          if (typeof setAvoidGoblins === "function") setAvoidGoblins(false);
+          const result = await selectSpecialTileTargetIfDesired();
+          if (typeof setAvoidChampions === "function") setAvoidChampions(!!startCh);
+          if (typeof setAvoidGoblins === "function") setAvoidGoblins(!!startGo);
+          // Acceptable failure reasons in TEST-only mode. Live runs will succeed on a real basement-end tile.
+          const acceptableReasons = [
+            "map_not_open",
+            "center_failed",
+            "center_threw",
+            "center_tile_click_failed",
+            "center_tile_click_threw",
+            "popup_timeout",
+            "popup_not_current_tile",
+            "no_event_icons",
+            "no_matching_icon"
+          ];
+          const okShape =
+            result && typeof result === "object" && (
+              result.ok === true ||
+              (result.ok === false && acceptableReasons.indexOf(result.reason) !== -1)
+            );
+          addCheck("v121_special_target_soft_fail_shape", !!okShape, { result: result, acceptableReasons: acceptableReasons }, false);
+        }
+      } catch (err) {
+        addCheck("v121_special_target_soft_fail_shape", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // 2) Lens auto-detect helper short-circuits on manual override (no destructive probe).
+      try {
+        if (typeof maybeAutoDetectLensIfNeeded !== "function" || typeof setLensStateOverride !== "function") {
+          addCheck("v121_lens_auto_detect_manual_override_short_circuit", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startOverride = Runtime.vision ? Runtime.vision.manualOverride : null;
+          const startLatch = !!(Runtime.autoFarm && Runtime.autoFarm.lensAutoDetectDone);
+          const startRunning = !!(Runtime.autoFarm && Runtime.autoFarm.running);
+          // Force the precondition: in AUTO + latch unset, but with manual override set.
+          Runtime.autoFarm.running = true;
+          Runtime.autoFarm.stopRequested = false;
+          Runtime.autoFarm.lensAutoDetectDone = false;
+          setLensStateOverride(true);
+          const result = await maybeAutoDetectLensIfNeeded({ reason: "test_override_short_circuit" });
+          // Restore
+          setLensStateOverride(startOverride);
+          Runtime.autoFarm.running = startRunning;
+          Runtime.autoFarm.lensAutoDetectDone = startLatch;
+          const ok =
+            result && result.ok === true && result.skipped === true && result.reason === "manual_override" &&
+            result.hasLens === true;
+          addCheck("v121_lens_auto_detect_manual_override_short_circuit", ok, { result: result }, false);
+        }
+      } catch (err) {
+        addCheck("v121_lens_auto_detect_manual_override_short_circuit", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // 3) Lens auto-detect helper sets the latch on already-known state.
+      try {
+        if (typeof maybeAutoDetectLensIfNeeded !== "function" || typeof setLensStateOverride !== "function") {
+          addCheck("v121_lens_auto_detect_already_known_latch", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startOverride = Runtime.vision ? Runtime.vision.manualOverride : null;
+          const startHasLens = Runtime.vision ? Runtime.vision.hasLens : null;
+          const startLatch = !!(Runtime.autoFarm && Runtime.autoFarm.lensAutoDetectDone);
+          const startRunning = !!(Runtime.autoFarm && Runtime.autoFarm.running);
+          // Pretend lens already known (manual override null but hasLens set), latch unset, in AUTO.
+          setLensStateOverride(null);
+          if (Runtime.vision) Runtime.vision.hasLens = true;
+          Runtime.autoFarm.running = true;
+          Runtime.autoFarm.stopRequested = false;
+          Runtime.autoFarm.lensAutoDetectDone = false;
+          const result = await maybeAutoDetectLensIfNeeded({ reason: "test_already_known" });
+          const latchedAfter = !!(Runtime.autoFarm && Runtime.autoFarm.lensAutoDetectDone);
+          // Restore
+          setLensStateOverride(startOverride);
+          if (Runtime.vision) Runtime.vision.hasLens = startHasLens;
+          Runtime.autoFarm.running = startRunning;
+          Runtime.autoFarm.lensAutoDetectDone = startLatch;
+          const ok =
+            result && result.ok === true && result.skipped === true && result.reason === "already_known" && latchedAfter === true;
+          addCheck("v121_lens_auto_detect_already_known_latch", ok, { result: result, latchedAfter: latchedAfter }, false);
+        }
+      } catch (err) {
+        addCheck("v121_lens_auto_detect_already_known_latch", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // 4) Lens auto-detect helper does not flip the latch when not in AUTO (so future sessions still probe).
+      try {
+        if (typeof maybeAutoDetectLensIfNeeded !== "function") {
+          addCheck("v121_lens_auto_detect_outside_auto_no_latch", false, { reason: "missing_helper" }, false);
+        } else {
+          const startRunning = !!(Runtime.autoFarm && Runtime.autoFarm.running);
+          const startLatch = !!(Runtime.autoFarm && Runtime.autoFarm.lensAutoDetectDone);
+          Runtime.autoFarm.running = false;
+          Runtime.autoFarm.lensAutoDetectDone = false;
+          const result = await maybeAutoDetectLensIfNeeded({ reason: "test_outside_auto" });
+          const latchedAfter = !!(Runtime.autoFarm && Runtime.autoFarm.lensAutoDetectDone);
+          Runtime.autoFarm.running = startRunning;
+          Runtime.autoFarm.lensAutoDetectDone = startLatch;
+          const ok = result && result.ok === false && result.skipped === true && result.reason === "not_in_auto" && latchedAfter === false;
+          addCheck("v121_lens_auto_detect_outside_auto_no_latch", ok, { result: result, latchedAfter: latchedAfter }, false);
+        }
+      } catch (err) {
+        addCheck("v121_lens_auto_detect_outside_auto_no_latch", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // 5) Basement loot wrapper is a transparent pass-through when basement farming is OFF.
+      try {
+        if (typeof maybeApplyBasementTransitionAroundLoot !== "function" || typeof setBasementFarmingEnabled !== "function") {
+          addCheck("v121_basement_loot_wrapper_off_passthrough", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startEnabled = typeof getBasementFarmingEnabled === "function" ? getBasementFarmingEnabled() : false;
+          const startActive = !!(Runtime.basement && Runtime.basement.active);
+          setBasementFarmingEnabled(false);
+          if (Runtime.basement) Runtime.basement.active = false;
+          let calls = 0;
+          const fakeLoot = async function () { calls += 1; return { ok: true, clicked: true, verified: true }; };
+          const result = await maybeApplyBasementTransitionAroundLoot(fakeLoot);
+          const stateAfter = !!(Runtime.basement && Runtime.basement.active);
+          setBasementFarmingEnabled(!!startEnabled);
+          if (Runtime.basement) Runtime.basement.active = !!startActive;
+          const ok = calls === 1 && result && result.ok === true && stateAfter === false;
+          addCheck("v121_basement_loot_wrapper_off_passthrough", ok, { calls: calls, result: result, stateAfter: stateAfter }, false);
+        }
+      } catch (err) {
+        addCheck("v121_basement_loot_wrapper_off_passthrough", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // 6) Basement loot wrapper does NOT flip state when before-detect saw no basement substring.
+      try {
+        if (typeof maybeApplyBasementTransitionAroundLoot !== "function" || typeof setBasementFarmingEnabled !== "function") {
+          addCheck("v121_basement_loot_wrapper_non_basement_no_flip", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startEnabled = typeof getBasementFarmingEnabled === "function" ? getBasementFarmingEnabled() : false;
+          const startActive = !!(Runtime.basement && Runtime.basement.active);
+          // Stub detectBasementEntryFromUi temporarily.
+          const origDetect = typeof detectBasementEntryFromUi === "function" ? detectBasementEntryFromUi : null;
+          // We can't easily monkey-patch a function declaration in this scope; instead, simulate by ensuring
+          // we are NOT in basement and the live UI has no highlight collect button (TEST runs without one).
+          setBasementFarmingEnabled(true);
+          if (Runtime.basement) Runtime.basement.active = false;
+          const fakeLoot = async function () { return { ok: true, clicked: true, verified: true }; };
+          const result = await maybeApplyBasementTransitionAroundLoot(fakeLoot);
+          const stateAfter = !!(Runtime.basement && Runtime.basement.active);
+          setBasementFarmingEnabled(!!startEnabled);
+          if (Runtime.basement) Runtime.basement.active = !!startActive;
+          // In TEST harness there is no highlighted basement collect button, so detect returns isBasement:false →
+          // wrapper must NOT have flipped state.
+          const ok = result && result.ok === true && stateAfter === false;
+          addCheck("v121_basement_loot_wrapper_non_basement_no_flip", ok, { result: result, stateAfter: stateAfter }, false);
+          void origDetect;
+        }
+      } catch (err) {
+        addCheck("v121_basement_loot_wrapper_non_basement_no_flip", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // 7) updateBasementEndTileFlagFromVisibleIcons short-circuits when not in basement.
+      try {
+        if (typeof updateBasementEndTileFlagFromVisibleIcons !== "function") {
+          addCheck("v121_basement_end_flag_short_circuit_outside", false, { reason: "missing_helper" }, false);
+        } else {
+          const startActive = !!(Runtime.basement && Runtime.basement.active);
+          const startEnd = !!(Runtime.basement && Runtime.basement.atEndTile);
+          if (Runtime.basement) {
+            Runtime.basement.active = false;
+            Runtime.basement.atEndTile = true; // pre-set; helper must NOT touch it when outside basement
+          }
+          const result = updateBasementEndTileFlagFromVisibleIcons();
+          const stillTrue = !!(Runtime.basement && Runtime.basement.atEndTile === true);
+          if (Runtime.basement) {
+            Runtime.basement.active = !!startActive;
+            Runtime.basement.atEndTile = !!startEnd;
+          }
+          const ok = result && result.ok === false && result.skipped === true && result.reason === "not_in_basement" && stillTrue === true;
+          addCheck("v121_basement_end_flag_short_circuit_outside", ok, { result: result, stillTrue: stillTrue }, false);
+        }
+      } catch (err) {
+        addCheck("v121_basement_end_flag_short_circuit_outside", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // 8) Basement entry/exit lifecycle via markBasementEntered → markBasementExited shape.
+      try {
+        if (typeof markBasementEntered !== "function" || typeof markBasementExited !== "function" || typeof getBasementState !== "function") {
+          addCheck("v121_basement_lifecycle_shape", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startState = getBasementState();
+          markBasementEntered({ source: "test_lifecycle" });
+          const enteredState = getBasementState();
+          markBasementExited({ reason: "test_lifecycle_done" });
+          const exitedState = getBasementState();
+          // Restore (mark exited already does it; but ensure we're back to original active flag).
+          if (Runtime.basement) {
+            Runtime.basement.active = !!startState.active;
+            Runtime.basement.atEndTile = !!startState.atEndTile;
+          }
+          const ok =
+            enteredState.active === true &&
+            enteredState.lastEntrySource === "test_lifecycle" &&
+            exitedState.active === false;
+          addCheck("v121_basement_lifecycle_shape", ok, { enteredState: enteredState, exitedState: exitedState }, false);
+        }
+      } catch (err) {
+        addCheck("v121_basement_lifecycle_shape", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // 9) Manual chat is the documented primary mode (default `useUserMessages !== false` and dispatcher uses it).
+      try {
+        const useUser = !!(Config.chat && Config.chat.useUserMessages !== false);
+        let dispatchOk = false;
+        if (typeof pickAutoChatSpammerDispatch === "function" && typeof setAutoChatMessages === "function" && typeof clearAutoChatMessages === "function") {
+          const startMsgs = typeof getAutoChatMessages === "function" ? getAutoChatMessages() : [];
+          const startUseUser = !!(Config.chat && Config.chat.useUserMessages !== false);
+          // Force the documented configuration: useUserMessages true (default) + populated list.
+          Config.chat.useUserMessages = true;
+          clearAutoChatMessages();
+          setAutoChatMessages(["primary mode test line"]);
+          const dispatch = pickAutoChatSpammerDispatch();
+          dispatchOk = !!(dispatch && dispatch.kind === "user" && dispatch.message === "primary mode test line");
+          // Restore
+          Config.chat.useUserMessages = startUseUser;
+          clearAutoChatMessages();
+          if (Array.isArray(startMsgs) && startMsgs.length > 0) setAutoChatMessages(startMsgs);
+        }
+        addCheck("v121_manual_chat_primary_mode_default", useUser && dispatchOk, { useUserDefault: useUser, dispatchOk: dispatchOk }, false);
+      } catch (err) {
+        addCheck("v121_manual_chat_primary_mode_default", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 10) Lens latch reset on stop (the helper resets `lensAutoDetectDone` so the next session re-probes).
+      try {
+        if (typeof stopAutoFarmLoop !== "function") {
+          addCheck("v121_lens_latch_reset_on_stop", false, { reason: "no_stop_helper" }, false);
+        } else {
+          const startRunning = !!(Runtime.autoFarm && Runtime.autoFarm.running);
+          const startLatch = !!(Runtime.autoFarm && Runtime.autoFarm.lensAutoDetectDone);
+          Runtime.autoFarm.running = false;
+          Runtime.autoFarm.lensAutoDetectDone = true;
+          const stopResult = stopAutoFarmLoop();
+          const latchAfter = !!(Runtime.autoFarm && Runtime.autoFarm.lensAutoDetectDone);
+          // Restore
+          Runtime.autoFarm.running = startRunning;
+          Runtime.autoFarm.lensAutoDetectDone = startLatch;
+          const ok = stopResult && stopResult.ok === true && latchAfter === false;
+          addCheck("v121_lens_latch_reset_on_stop", ok, { stopResult: stopResult, latchAfter: latchAfter }, false);
+        }
+      } catch (err) {
+        addCheck("v121_lens_latch_reset_on_stop", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
       // AI CHANGED: Planner Part 2 — execution-plan CHARGE STEP shape test.
       //   Verify a charge step survives plan materialization with chargeMode + chargeReleaseFraction preserved, AND that
       //   `plannerExecutionPlanStepToQueueAction` correctly returns null for the charge step (queue cannot fire charges).

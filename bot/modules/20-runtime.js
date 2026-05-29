@@ -19,6 +19,10 @@
       autoLikeTestPrepDone: false,
       // AI CHANGED: One-shot per AUTO session — once `ensureSkillsAndHeroDataForAutoFarm` lands usable skills, subsequent OOC cycles skip the cache reload + scan log.
       skillEnsureDone: false,
+      // AI CHANGED: v1.2.1-alpha — One-shot per AUTO session — the first safe OOC cycle calls `maybeAutoDetectLensIfNeeded`,
+      //   which runs the destructive `detectLensState` probe IF lens state is unknown and probing is enabled. Subsequent
+      //   cycles skip without further dispatch. Reset on `startAutoFarmLoop` and `stopAutoFarmLoop`.
+      lensAutoDetectDone: false,
       // AI CHANGED: Reliability counters for repeated combat no-progress loops.
       reliability: {
         noProgressStreak: 0,

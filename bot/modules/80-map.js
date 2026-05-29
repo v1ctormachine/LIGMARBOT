@@ -1146,6 +1146,74 @@
     };
   }
 
+  // AI CHANGED: v1.2.1-alpha — Automatic lens auto-detection latch. Called once per AUTO session from `startAutoFarmLoop`
+  //   on the first SAFE OOC cycle. The probe is destructive (it actually moves the bot one tile) so we gate it tightly:
+  //     - Must be running in AUTO and not stop-requested.
+  //     - Latch `Runtime.autoFarm.lensAutoDetectDone` must be false (set true on completion or skip-by-state).
+  //     - Manual override (`setLensStateOverride`) wins — if non-null, latch is set true and the probe never runs.
+  //     - Probe must be enabled in `Config.vision.lensProbeEnabled`.
+  //     - Live state must be OOC (enemyCount === 0), session healthy (no death/poor connection), no movement in progress.
+  //     - Map must be openable.
+  //   On any unsafe condition, the helper returns without flipping the latch so a later OOC cycle can retry.
+  async function maybeAutoDetectLensIfNeeded(userOpts) {
+    const opts = userOpts && typeof userOpts === "object" ? userOpts : {};
+    if (!Runtime.autoFarm || Runtime.autoFarm.running !== true) {
+      return { ok: false, skipped: true, reason: "not_in_auto" };
+    }
+    if (Runtime.autoFarm.stopRequested === true) {
+      return { ok: false, skipped: true, reason: "stop_requested" };
+    }
+    if (Runtime.autoFarm.lensAutoDetectDone === true) {
+      return { ok: true, skipped: true, reason: "already_done" };
+    }
+    if (!Runtime.vision || typeof Runtime.vision !== "object") {
+      Runtime.vision = { hasLens: null, lastDetectAt: null, lastDetectResult: null, detectAttempts: 0, manualOverride: null };
+    }
+    // Manual override wins — latch and stop probing.
+    if (Runtime.vision.manualOverride === true || Runtime.vision.manualOverride === false) {
+      Runtime.vision.hasLens = Runtime.vision.manualOverride;
+      Runtime.autoFarm.lensAutoDetectDone = true;
+      Logger.log("LENS", "auto-detect skipped — manual override active", { override: Runtime.vision.manualOverride });
+      return { ok: true, skipped: true, reason: "manual_override", hasLens: Runtime.vision.hasLens };
+    }
+    // Already known.
+    if (Runtime.vision.hasLens === true || Runtime.vision.hasLens === false) {
+      Runtime.autoFarm.lensAutoDetectDone = true;
+      return { ok: true, skipped: true, reason: "already_known", hasLens: Runtime.vision.hasLens };
+    }
+    if (Config && Config.vision && Config.vision.lensProbeEnabled === false && opts.force !== true) {
+      Runtime.autoFarm.lensAutoDetectDone = true;
+      return { ok: true, skipped: true, reason: "probe_disabled" };
+    }
+    // Safety gates — DO NOT flip the latch on these so later cycles can retry.
+    let state = null;
+    try {
+      state = typeof readBasicState === "function" ? readBasicState() : null;
+    } catch (err) {
+      return { ok: false, skipped: true, reason: "state_read_threw" };
+    }
+    if (!state || !state.combat || typeof state.combat.enemyCount !== "number") {
+      return { ok: false, skipped: true, reason: "state_unavailable" };
+    }
+    if (state.combat.enemyCount > 0) {
+      return { ok: false, skipped: true, reason: "in_combat" };
+    }
+    if (state.session && (state.session.dead === true || state.session.poorConnection === true)) {
+      return { ok: false, skipped: true, reason: "session_risk" };
+    }
+    try {
+      if (typeof isMovementInProgress === "function" && isMovementInProgress()) {
+        return { ok: false, skipped: true, reason: "moving" };
+      }
+    } catch (err) {}
+    setBotStatus("scanning", "lens auto-detect probe");
+    Logger.log("LENS", "auto-detect probe starting", { reason: opts.reason || null });
+    const result = await detectLensState({});
+    Runtime.autoFarm.lensAutoDetectDone = true;
+    Logger.log("LENS", "auto-detect probe complete", result);
+    return Object.assign({ ok: true, autoLatched: true }, result || {});
+  }
+
   // AI CHANGED: Helper — does a 1-ring scan have any USEFUL loot? Useful = at least one walkable tile
   // with non-empty loot icons that isn't boss-only (boss tiles stay hard-avoided in scoring).
   function ringHasUsefulLoot(scanSnapshot) {
@@ -1515,4 +1583,73 @@
       lastDirection: b.lastDirection || null,
       lastEntrySource: b.lastEntrySource || null
     };
+  }
+
+  // AI CHANGED: v1.2.1-alpha — Wraps a loot-click async function and applies basement-state transitions when the
+  //   highlighted collect button looks like a basement entry/exit (text/aria-label matches Config.basement.entryDetectSubstrings).
+  //
+  //   Flow:
+  //     1. Snapshot `detectBasementEntryFromUi()` BEFORE the click (the highlighted button vanishes after a successful click).
+  //     2. Run the wrapped loot fn.
+  //     3. If basement farming is enabled AND the BEFORE snapshot saw a basement substring AND the click succeeded:
+  //          - If we were NOT inside a basement → mark entered (this is the basement-entry collect click).
+  //          - If we WERE inside a basement → mark exited (this is the basement-exit collect/ladder click).
+  //
+  //   When basement farming is disabled, the wrapper is a transparent pass-through. When the loot fn fails, no state
+  //   transition is applied (the bot will retry on a later cycle).
+  async function maybeApplyBasementTransitionAroundLoot(lootFn) {
+    const farmingOn = typeof getBasementFarmingEnabled === "function" ? getBasementFarmingEnabled() : false;
+    if (!farmingOn) {
+      return await lootFn();
+    }
+    let beforeDetect = null;
+    try {
+      beforeDetect = typeof detectBasementEntryFromUi === "function" ? detectBasementEntryFromUi() : null;
+    } catch (err) {
+      beforeDetect = null;
+    }
+    const lootResult = await lootFn();
+    if (lootResult && lootResult.ok === true && beforeDetect && beforeDetect.ok === true && beforeDetect.isBasement === true) {
+      const wasActive = typeof isInBasement === "function" && isInBasement();
+      if (!wasActive) {
+        try { markBasementEntered({ source: "loot_collect_click", substring: beforeDetect.substring }); } catch (err) {}
+      } else {
+        try { markBasementExited({ reason: "loot_collect_click_exit", substring: beforeDetect.substring }); } catch (err) {}
+      }
+    }
+    return lootResult;
+  }
+
+  // AI CHANGED: v1.2.1-alpha — Heuristic refresh of `Runtime.basement.atEndTile`. Only mutates state when basement
+  //   farming is enabled AND we're currently inside a basement. Reads visible hex event icons (the active center-tile
+  //   popup OR any visible event icons — basements only show one tile's events at a time so this is unambiguous in
+  //   practice). If a champion-class icon is visible, sets atEndTile=true; otherwise resets to false. Safe to call
+  //   repeatedly (idempotent).
+  function updateBasementEndTileFlagFromVisibleIcons() {
+    if (!isInBasement()) return { ok: false, skipped: true, reason: "not_in_basement" };
+    if (!Runtime.basement) return { ok: false, skipped: true, reason: "no_state" };
+    const sel = Config && Config.selectors && Config.selectors.hexEventIcons
+      ? Config.selectors.hexEventIcons
+      : "div.hex-events app-icon, div.hex-events img";
+    let icons = [];
+    try {
+      icons = Array.from(document.querySelectorAll(sel));
+    } catch (err) {
+      return { ok: false, error: String(err && err.message ? err.message : err) };
+    }
+    let hasChampion = false;
+    for (let i = 0; i < icons.length; i += 1) {
+      const el = icons[i];
+      const blob = ((el.getAttribute("class") || "") + " " + (el.getAttribute("src") || "") + " " + (el.outerHTML || "")).toLowerCase();
+      if (blob.indexOf("mob-type-champion") !== -1 || blob.indexOf("event-champion") !== -1) {
+        hasChampion = true;
+        break;
+      }
+    }
+    const previous = !!Runtime.basement.atEndTile;
+    Runtime.basement.atEndTile = hasChampion;
+    if (hasChampion !== previous) {
+      Logger.log("BASEMENT", "atEndTile flag updated", { previous: previous, current: hasChampion, iconsScanned: icons.length });
+    }
+    return { ok: true, atEndTile: hasChampion, iconsScanned: icons.length };
   }

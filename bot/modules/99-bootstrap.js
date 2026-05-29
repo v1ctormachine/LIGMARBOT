@@ -196,6 +196,14 @@
       setBasementAtEndTile: setBasementAtEndTile,
       getBasementState: getBasementState,
       isInBasement: isInBasement,
+      // AI CHANGED: v1.2.1-alpha — DESKTOP APP API. Real basement automation primitives.
+      maybeApplyBasementTransitionAroundLoot:
+        typeof maybeApplyBasementTransitionAroundLoot === "function" ? maybeApplyBasementTransitionAroundLoot : null,
+      updateBasementEndTileFlagFromVisibleIcons:
+        typeof updateBasementEndTileFlagFromVisibleIcons === "function" ? updateBasementEndTileFlagFromVisibleIcons : null,
+      // AI CHANGED: v1.2.1-alpha — DESKTOP APP API. Lens auto-detect latch helper (also runs in `startAutoFarmLoop`).
+      maybeAutoDetectLensIfNeeded:
+        typeof maybeAutoDetectLensIfNeeded === "function" ? maybeAutoDetectLensIfNeeded : null,
       // AI CHANGED: v1.2.0-alpha — DESKTOP APP API. Active special-target click on current tile.
       selectSpecialTileTargetIfDesired: selectSpecialTileTargetIfDesired,
       // AI CHANGED: Expose overlay control so user can manually clear / re-render from console.
