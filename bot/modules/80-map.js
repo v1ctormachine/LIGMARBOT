@@ -515,14 +515,39 @@
     const avoidChampions = getAvoidChampions();
     const avoidGoblins = getAvoidGoblins();
     const inBasement = isInBasement();
-    // AI CHANGED: v1.2.5-alpha — BASEMENT-WIDE champion override. Inside any basement, champion avoidance is
-    //   ignored entirely (basement champions must be killable to clear the run). The previous "end-only" override
-    //   is preserved as a configuration knob (`Config.basement.endChampionOverride`) but the basement-wide flag
-    //   takes precedence when on. The legacy phase-aware override remains the gate when `Config.basement.basementWideChampionOverride`
-    //   is explicitly disabled.
+    // AI CHANGED: v1.2.7-alpha — HARD-BLOCK BASEMENT ENTRANCE TILE WHILE EXPLORING/atEnd.
+    //   The basement entrance tile is always at game-coords (0,0) (per design) and is also captured into
+    //   `Runtime.basement.entranceTileKey` on entry. While the basement objective is incomplete (phase exploring or
+    //   atEnd), the entrance is always a hard no-go: any candidate scan tile whose predicted coord matches either
+    //   the recorded entrance key OR the canonical "0,0" is rejected outright. This is stronger than the soft
+    //   `entranceTilePenalty` so scoring can never accidentally pick the entrance even if all other tiles would
+    //   score worse.
+    if (inBasement && Runtime.basement) {
+      const phaseHere = Runtime.basement.phase || "idle";
+      if (phaseHere === "exploring" || phaseHere === "atEnd") {
+        const lastCoords = Runtime.basement.lastTileCoords;
+        if (lastCoords && Number.isFinite(lastCoords.x) && Number.isFinite(lastCoords.y)) {
+          const predicted = predictTileCoord(lastCoords, tile.key);
+          if (predicted) {
+            const predictedKey = predicted.x + "," + predicted.y;
+            const entranceKey = Runtime.basement.entranceTileKey;
+            if (predictedKey === "0,0" || (entranceKey && predictedKey === entranceKey)) {
+              return -9999;
+            }
+          }
+        }
+      }
+    }
+    // AI CHANGED: v1.2.5-alpha / v1.2.7-alpha — BASEMENT-WIDE champion override. Inside a basement WHEN BASEMENT
+    //   FARMING IS ENABLED, champion avoidance is ignored entirely (basement champions must be killable to clear
+    //   the run). v1.2.7 tightens the gate to require farming-enabled too — without farming on, we should not be
+    //   inside a basement at all (entry is suppressed) but if we somehow are, we still respect global avoidance.
+    //   The legacy phase-aware end-only override remains as a fallback when basement-wide is explicitly disabled.
     const basementPhase = (Runtime.basement && Runtime.basement.phase) || "idle";
+    const basementFarmingOn = typeof getBasementFarmingEnabled === "function" ? getBasementFarmingEnabled() : false;
     const basementWideOverride =
       inBasement &&
+      basementFarmingOn &&
       Config &&
       Config.basement &&
       Config.basement.basementWideChampionOverride !== false;
@@ -1488,6 +1513,21 @@
     if (!target) {
       return { ok: false, skipped: true, reason: "no_walkable_neighbor", scan: scan, secondRing: secondRing };
     }
+    // AI CHANGED: v1.2.7-alpha — CHAMPION-TILE PRE-MOVE RESOURCE GATE.
+    //   Before walking onto a basement tile that has a champion icon, require at least
+    //   `Config.basement.championPreMoveMinHpPct` HP and `Config.basement.championPreMoveMinMpPct` MP. Soft-fail on
+    //   timeout so the bot doesn't freeze if top-off is impossible for some reason. No-op when not in basement, or
+    //   the target tile has no champion icon, or basement farming is disabled.
+    if (typeof maybeWaitForBasementChampionResources === "function") {
+      try {
+        const gate = await maybeWaitForBasementChampionResources(target);
+        if (gate && gate.gated && gate.ok === false && gate.reason === "stop_requested") {
+          return { ok: false, skipped: true, reason: "stop_requested_during_champion_gate", target: target };
+        }
+      } catch (gateErr) {
+        Logger.warn("BASEMENT", "maybeWaitForBasementChampionResources threw", gateErr);
+      }
+    }
     const center = getMapCenterClientPoint();
     // AI CHANGED: Surface move as live status for the GUI.
     setBotStatus("moving", `to ${target.key} (enemies=${target.enemies}, allies=${target.allies})`);
@@ -1769,6 +1809,71 @@
       return false;
     } catch (err) {
       return false;
+    }
+  }
+
+  // AI CHANGED: v1.2.7-alpha — CHAMPION-TILE PRE-MOVE RESOURCE GATE.
+  //   Returns { gated: false } when no gate applies (not basement / farming off / no champion target / disabled).
+  //   When gated, polls `readBasicState()` for HP% and MP% and (a) calls OOC top-off helpers when below threshold,
+  //   (b) returns ok:true once both thresholds are met, (c) returns ok:false with reason "timeout" after the cap.
+  //   Always soft-fails: callers proceed even on timeout because freezing the bot indefinitely on a stuck heal is
+  //   worse than walking onto a champion under-resourced.
+  async function maybeWaitForBasementChampionResources(target) {
+    if (!target || !target.lootIcons) return { gated: false, reason: "no_target" };
+    const lootKinds = parseLootKindsFromMarkers(target.lootIcons);
+    if (!lootKinds.includes("boss")) return { gated: false, reason: "not_champion_target" };
+    const farmingOn = typeof getBasementFarmingEnabled === "function" ? getBasementFarmingEnabled() : false;
+    if (!farmingOn || !isInBasement()) return { gated: false, reason: "not_in_farming_basement" };
+    const hpTh = Number.isFinite(Config && Config.basement && Config.basement.championPreMoveMinHpPct)
+      ? Math.max(0, Math.min(1, Config.basement.championPreMoveMinHpPct))
+      : 0.95;
+    const mpTh = Number.isFinite(Config && Config.basement && Config.basement.championPreMoveMinMpPct)
+      ? Math.max(0, Math.min(1, Config.basement.championPreMoveMinMpPct))
+      : 0.95;
+    if (hpTh <= 0 && mpTh <= 0) return { gated: false, reason: "thresholds_disabled" };
+    const pollMs = Number.isFinite(Config && Config.basement && Config.basement.championPreMovePollMs)
+      ? Math.max(120, Config.basement.championPreMovePollMs)
+      : 500;
+    const maxWait = Number.isFinite(Config && Config.basement && Config.basement.championPreMoveMaxWaitMs)
+      ? Math.max(1000, Config.basement.championPreMoveMaxWaitMs)
+      : 30000;
+    const started = Date.now();
+    while (true) {
+      if (Runtime && Runtime.autoFarm && Runtime.autoFarm.stopRequested) {
+        return { gated: true, ok: false, reason: "stop_requested" };
+      }
+      if (Date.now() - started > maxWait) {
+        Logger.warn("BASEMENT", "champion-tile pre-move resource gate timed out", {
+          hpTh: hpTh, mpTh: mpTh, waitedMs: Date.now() - started
+        });
+        return { gated: true, ok: false, reason: "timeout", waitedMs: Date.now() - started };
+      }
+      let state = null;
+      try { state = typeof readBasicState === "function" ? readBasicState() : null; } catch (err) { state = null; }
+      const hpPct = state && state.player && state.player.hp && state.player.hp.valid && Number.isFinite(state.player.hp.pct) ? state.player.hp.pct : null;
+      const mpPct = state && state.player && state.player.mp && state.player.mp.valid && Number.isFinite(state.player.mp.pct) ? state.player.mp.pct : null;
+      if (!Number.isFinite(hpPct) || !Number.isFinite(mpPct)) {
+        await sleep(pollMs);
+        continue;
+      }
+      if (hpPct >= hpTh && mpPct >= mpTh) {
+        Logger.log("BASEMENT", "champion-tile pre-move gate satisfied", {
+          target: target.key, hpPct: Number(hpPct.toFixed(3)), mpPct: Number(mpPct.toFixed(3)), hpTh: hpTh, mpTh: mpTh
+        });
+        return { gated: true, ok: true, hpPct: hpPct, mpPct: mpPct, hpTh: hpTh, mpTh: mpTh };
+      }
+      setBotStatus("waiting", `basement champion prep: HP≥${Math.round(hpTh * 100)}% MP≥${Math.round(mpTh * 100)}% (have HP ${Math.round(hpPct * 100)}% / MP ${Math.round(mpPct * 100)}%)`);
+      try {
+        if (hpTh > 0 && hpPct < hpTh && typeof tryUseOutOfCombatHpTopoff === "function") {
+          await tryUseOutOfCombatHpTopoff(state, hpTh);
+        }
+        if (mpTh > 0 && mpPct < mpTh && typeof tryUseOutOfCombatMpTopoff === "function") {
+          await tryUseOutOfCombatMpTopoff(state, mpTh);
+        }
+      } catch (topoffErr) {
+        Logger.warn("BASEMENT", "champion pre-move topoff threw", topoffErr);
+      }
+      await sleep(pollMs);
     }
   }
 
@@ -2179,9 +2284,12 @@
   //   transition is applied (the bot will retry on a later cycle).
   async function maybeApplyBasementTransitionAroundLoot(lootFn) {
     const farmingOn = typeof getBasementFarmingEnabled === "function" ? getBasementFarmingEnabled() : false;
-    if (!farmingOn) {
-      return await lootFn();
-    }
+    // AI CHANGED: v1.2.7-alpha — ENTRY CLICK SUPPRESSION WHEN FARMING DISABLED.
+    //   Always run the basement-entry detector first, regardless of farming state. If farming is OFF and the
+    //   highlighted-collect button is a basement entry (ladder / "Basement"), HARD-SUPPRESS the click. The previous
+    //   fast-path (`if (!farmingOn) return await lootFn()`) silently let the bot click into basements even when the
+    //   user had farming disabled. Non-entry collect buttons (chests, altars, contracts, etc.) still pass through
+    //   transparently when farming is off.
     let beforeDetect = null;
     try {
       beforeDetect = typeof detectBasementEntryFromUi === "function" ? detectBasementEntryFromUi() : null;
@@ -2189,6 +2297,19 @@
       beforeDetect = null;
     }
     const isEntry = !!(beforeDetect && beforeDetect.ok === true && beforeDetect.isBasement === true);
+    if (!farmingOn) {
+      if (isEntry) {
+        Logger.log("BASEMENT", "entry-collect click suppressed: basement farming disabled", {
+          substring: beforeDetect ? beforeDetect.substring : null
+        });
+        return {
+          ok: true, clicked: false, verified: true, skipped: true,
+          reason: "farming_disabled_entry_suppressed",
+          substring: beforeDetect ? beforeDetect.substring : null
+        };
+      }
+      return await lootFn();
+    }
     if (!Runtime.basement || typeof Runtime.basement !== "object") {
       basementSetPhase("idle", "wrapper_init_default");
     }
@@ -2269,14 +2390,27 @@
             Runtime.basement.knowledgeSettledAt = Date.now();
             Runtime.basement.objectiveCompleteAt = Date.now();
             basementSetPhase("complete", "knowledge_looted_at_end_tile_settled");
-            // Auto complete → returning if the dedicated `Exiting` button is NOT visible (i.e. we are not standing
-            //   on the entrance tile). This makes scoring drive the bot back to entrance.
+            // AI CHANGED: v1.2.7-alpha — IMMEDIATE EXIT AFTER KNOWLEDGE SETTLE. If the dedicated `Exiting` button is
+            //   visible RIGHT NOW (e.g. some basements collapse the run so end tile == entrance), click it on this
+            //   same cycle without waiting for the next outer iteration. Otherwise transition to `returning` and
+            //   let scoring + the next cycle's `maybeUseBasementExitIfReady` drive the actual exit.
             let exitVisibleNow = false;
             try {
               const ed = typeof detectBasementExitButton === "function" ? detectBasementExitButton() : null;
               exitVisibleNow = !!(ed && ed.ok && ed.found);
             } catch (err) {}
-            if (!exitVisibleNow) {
+            if (exitVisibleNow) {
+              try {
+                const immediate = await maybeUseBasementExitIfReady();
+                if (immediate && immediate.exited === true) {
+                  Logger.log("BASEMENT", "immediate exit click after knowledge settle succeeded", immediate);
+                } else {
+                  Logger.log("BASEMENT", "immediate exit attempt after knowledge settle did not exit (will retry next cycle)", immediate);
+                }
+              } catch (immediateErr) {
+                Logger.warn("BASEMENT", "immediate exit attempt threw after knowledge settle", immediateErr);
+              }
+            } else {
               basementSetPhase("returning", "knowledge_looted_not_on_entrance");
             }
           } else {

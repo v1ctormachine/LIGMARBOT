@@ -91,10 +91,47 @@
       // Path-based backtrack depth: the LAST K verified moves are reversed and each reverse direction receives the
       //   backtrack penalty. v1.2.4 effectively used K=1; v1.2.5 default K=4 stops 2-3 step oscillations.
       maxBacktrackDepth: 4,
-      // BASEMENT-WIDE CHAMPION OVERRIDE (v1.2.5-alpha). When true, champions are always engageable inside basements
-      //   regardless of global `avoidChampions`. The end-only override (`endChampionOverride`) is preserved as a
-      //   sub-knob; this top-level flag wins when on.
-      basementWideChampionOverride: true
+      // BASEMENT-WIDE CHAMPION OVERRIDE (v1.2.5-alpha / v1.2.7-alpha). When true AND basement farming is enabled,
+      //   champions are always engageable inside basements regardless of global `avoidChampions`. The end-only
+      //   override (`endChampionOverride`) is preserved as a sub-knob; this top-level flag wins when on.
+      basementWideChampionOverride: true,
+      // AI CHANGED: v1.2.7-alpha — CHAMPION-TILE PRE-MOVE RESOURCE GATE.
+      //   Before `exploreByScan` walks onto a basement tile that has a champion icon, require at least these
+      //   percentages of HP and MP. While waiting, OOC HP/MP top-off helpers run (same primitives the Hard combat
+      //   mode explore gate uses). Setting either to 0 disables the corresponding check; setting both to 0 disables
+      //   the gate entirely. `championPreMoveMaxWaitMs` caps the total wait so a stuck top-off doesn't freeze the
+      //   bot indefinitely; on timeout the gate gives up and lets the move happen anyway.
+      championPreMoveMinHpPct: 0.95,
+      championPreMoveMinMpPct: 0.95,
+      championPreMovePollMs: 500,
+      championPreMoveMaxWaitMs: 30000,
+      // AI CHANGED: v1.2.8-alpha — BASEMENT CHAMPION ATTACKERS-POPUP TARGETING.
+      //   When the bot enters combat on a tile inside a farming-enabled basement,
+      //   `selectBasementChampionFromAttackersPopupIfNeeded` opens the attackers popup, waits with a bounded
+      //   `waitForCondition` for a champion attacker card to appear (championship card class blob includes
+      //   `mob-type-champion` / `event-champion`), then clicks that card to lock the champion as active target.
+      //   The waits are signal-based — no blind sleep is used as the primary wait. Both timeouts are bounded; on
+      //   timeout the helper soft-fails and the existing find-enemy + selectSpecialTileTargetIfDesired path runs
+      //   as fallback so combat is never stalled.
+      //   `attackersPopupChampionEnabled` master switch; set false to disable the basement-champion popup path
+      //     entirely and rely on the legacy tile-popup helper.
+      //   `attackersPopupOpenTimeoutMs` cap on waiting for the attackers popup to OPEN after the click.
+      //   `attackersPopupChampionWaitTimeoutMs` cap on waiting for a champion CARD to appear in the open popup.
+      //     Live observation: champion cards usually appear within ~1–2 s of stepping onto the tile.
+      //   `attackersPopupPollMs` polling cadence inside both bounded waits.
+      //   `attackersPopupChampionCardClassSubstrings` lowercase substrings searched against `card.outerHTML` /
+      //     `card.className` to identify a champion card. Defaults match the same blobs `parseLootKindsFromMarkers`
+      //     uses, plus a generic "champion" fallback for localized DOM variants.
+      attackersPopupChampionEnabled: true,
+      attackersPopupOpenTimeoutMs: 1500,
+      attackersPopupChampionWaitTimeoutMs: 2500,
+      attackersPopupPollMs: 100,
+      attackersPopupChampionCardClassSubstrings: [
+        "mob-type-champion",
+        "event-champion",
+        "icon-src-mob-type-champion",
+        "champion"
+      ]
     },
     // AI CHANGED: Added action verification timing config for click+confirm flows.
     verification: {
