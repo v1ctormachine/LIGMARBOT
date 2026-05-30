@@ -4,11 +4,21 @@
   // Designed for console use first; combat planner will consume Runtime.hero later.
 
   // AI CHANGED: Strip thousands separators, percent signs, and parse a float; returns null if not finite.
+  // AI CHANGED: Universal v1.2.9-alpha (Phase U1) — when the value is a numeric range like "17-30" or "150-200"
+  // (game sometimes shows physical/magic attack as a min-max bracket on Mage / Priest builds), take the FIRST
+  // (minimal) part so damage estimates stay conservative. Negative single numbers ("-5") still parse via
+  // parseFloat without being mistaken for a range (we only treat the value as a range when a digit precedes "-").
   function parseStatNumber(raw) {
     if (raw === undefined || raw === null) {
       return null;
     }
-    const s = String(raw).replace(/,/g, "").replace(/%/g, "").trim();
+    let s = String(raw).replace(/,/g, "").replace(/%/g, "").trim();
+    if (s.length > 0 && /^\d/.test(s) && s.indexOf("-") > 0) {
+      const parts = s.split("-");
+      if (parts.length >= 2 && parts[0].length > 0) {
+        s = parts[0];
+      }
+    }
     const n = Number.parseFloat(s);
     return Number.isFinite(n) ? n : null;
   }
@@ -38,6 +48,9 @@
   function parseHeroCombatStatsFromText(blob) {
     const out = {
       physicalAttack: null,
+      // AI CHANGED: Universal v1.2.9-alpha (Phase U1) — magic attack added as a first-class stat so non-Archer
+      // classes (Mage / Priest / hybrid Warrior magic skills) can rely on the planner damage model.
+      magicAttack: null,
       attackSpeed: null,
       critChance: null,
       critDamage: null,
@@ -49,10 +62,19 @@
     }
 
     // Physical attack — "Physical attack  1234" or "Physical attack: 1234"
-    let m = blob.match(/physical\s+attack\s*[:\s]+([\d.,]+)/i);
+    // AI CHANGED: Universal v1.2.9-alpha (Phase U1) — accept hyphen in the captured numeric so range values
+    // like "17-30" reach `parseStatNumber`, which now picks the minimum.
+    let m = blob.match(/physical\s+attack\s*[:\s]+([\d.,-]+)/i);
     if (m) {
       out.physicalAttack = parseStatNumber(m[1]);
       out.rawSnippets.physicalAttack = m[0];
+    }
+
+    // AI CHANGED: Universal v1.2.9-alpha (Phase U1) — magic attack regex (mirrors physical attack shape).
+    m = blob.match(/magic\s+attack\s*[:\s]+([\d.,-]+)/i);
+    if (m) {
+      out.magicAttack = parseStatNumber(m[1]);
+      out.rawSnippets.magicAttack = m[0];
     }
 
     // Attack speed — may be "1.4 / s" or percent in some builds
@@ -99,6 +121,8 @@
   function parseHeroCombatStatsFromParamItems(scopeRoot) {
     const out = {
       physicalAttack: null,
+      // AI CHANGED: Universal v1.2.9-alpha (Phase U1) — magic attack added as a first-class stat (see text-blob parser).
+      magicAttack: null,
       attackSpeed: null,
       critChance: null,
       critDamage: null,
@@ -121,6 +145,10 @@
       if (name === "physical attack") {
         out.physicalAttack = parseStatNumber(rawVal);
         out.rawSnippets.physicalAttack = rawVal;
+      } else if (name === "magic attack") {
+        // AI CHANGED: Universal v1.2.9-alpha (Phase U1) — magic attack row (Mage / Priest / hybrid).
+        out.magicAttack = parseStatNumber(rawVal);
+        out.rawSnippets.magicAttack = rawVal;
       } else if (name === "attack speed") {
         const firstNum = rawVal.match(/[\d.,]+/);
         out.attackSpeed = firstNum ? parseStatNumber(firstNum[0]) : parseStatNumber(rawVal);
@@ -137,8 +165,9 @@
   }
 
   // AI CHANGED: Merge param-row parse (preferred) with regex-on-blob fallback for any null field.
+  // AI CHANGED: Universal v1.2.9-alpha (Phase U1) — magicAttack joins physicalAttack in the merged shape.
   function mergeHeroCombatStats(fromParams, fromRegex) {
-    const keys = ["physicalAttack", "attackSpeed", "critChance", "critDamage"];
+    const keys = ["physicalAttack", "magicAttack", "attackSpeed", "critChance", "critDamage"];
     const merged = {
       rawSnippets: {},
       byName: fromParams && fromParams.byName ? fromParams.byName : {}

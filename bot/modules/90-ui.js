@@ -6683,6 +6683,225 @@
         addCheck("v127_basement_champion_popup_soft_fail_no_throw", false, { error: String(err && err.message ? err.message : err) }, false);
       }
 
+      // ============================================================================================================
+      // AI CHANGED: Universal v1.2.9-alpha (Phases U1-U4) -- v128_* deterministic tests for the Universal Multi-Class
+      // Combat Model. These cover (1) parseStatNumber range parsing taking minimum; (2) magic-skill parsing for
+      // flat magic damage / gear-direct-damage / magic-scaled heals; (3) the fallback damage estimation seeded into
+      // attack skills with no parsed effects; (4) the Sniper Shot finisher rule overriding to the minimum release
+      // when target HP is below the immediate-cancel damage. Each test is fully synthetic (no live DOM probes that
+      // could alter the user's farm state) and restores Runtime / Config snapshots in `finally` blocks.
+      // ============================================================================================================
+
+      // v128_1) parseStatNumber splits ranges and picks the minimum.
+      try {
+        if (typeof parseStatNumber !== "function") {
+          addCheck("v128_range_parsing_minimum", false, { reason: "missing_helper" }, false);
+        } else {
+          const cases = [
+            { input: "17-30", expected: 17 },
+            { input: "150-200", expected: 150 },
+            { input: "1,250-2,500", expected: 1250 },
+            { input: "42", expected: 42 },
+            { input: "100%", expected: 100 },
+            { input: "-5", expected: -5 },
+            { input: "5-", expected: 5 }
+          ];
+          const results = cases.map(function (c) {
+            return { input: c.input, expected: c.expected, got: parseStatNumber(c.input) };
+          });
+          const ok = results.every(function (r) { return r.got === r.expected; });
+          addCheck("v128_range_parsing_minimum", ok, { results: results }, false);
+        }
+      } catch (err) {
+        addCheck("v128_range_parsing_minimum", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // v128_2) magic skill parsing — flat magic damage, gear direct damage, magic-scaled heal, base/basic proc.
+      try {
+        if (typeof parseSkillEffects !== "function") {
+          addCheck("v128_magic_skill_parsing", false, { reason: "missing_helper" }, false);
+        } else {
+          const flatDesc = "Deals base magic damage and 1,537 magic damage to the enemy.";
+          const flatEffects = parseSkillEffects(flatDesc);
+          const flatInstant = flatEffects.find(function (e) { return e.type === "instant"; });
+          const flatBasic = flatEffects.find(function (e) { return e.type === "basic_proc"; });
+          const flatOk = !!(flatInstant && flatInstant.damageType === "magic" && flatInstant.value === 1537
+            && flatBasic && flatBasic.damageType === "magic");
+
+          const gearDesc = "Deals 110% magic damage from gear over 0 s.";
+          const gearEffects = parseSkillEffects(gearDesc);
+          const gearEff = gearEffects.find(function (e) { return e.type === "gear_direct_damage"; });
+          const gearOk = !!(gearEff && gearEff.percent === 110 && gearEff.damageType === "magic");
+          // Crucial: flat_direct_damage MUST NOT also fire on this description.
+          const noFlatOk = !gearEffects.some(function (e) { return e.type === "instant"; });
+
+          const healDesc = "Restores its own or the target's health by 84 and 3% of the base magical attack over 15 s.";
+          const healEffects = parseSkillEffects(healDesc);
+          const healEff = healEffects.find(function (e) { return e.type === "heal" && e.resource === "hp"; });
+          const healOk = !!(healEff && healEff.value === 84 && healEff.percentOfMagicAttack === 3 && healEff.durationSec === 15);
+
+          // base/basic verbs both yield basic_proc (Mage description).
+          const baseDesc = "Deals base magic damage to the target.";
+          const baseEffects = parseSkillEffects(baseDesc);
+          const basePr = baseEffects.find(function (e) { return e.type === "basic_proc"; });
+          const baseOk = !!(basePr && basePr.damageType === "magic");
+
+          const ok = flatOk && gearOk && noFlatOk && healOk && baseOk;
+          addCheck("v128_magic_skill_parsing", ok, {
+            flatEffects: flatEffects, gearEffects: gearEffects, healEffects: healEffects, baseEffects: baseEffects,
+            flags: { flatOk: flatOk, gearOk: gearOk, noFlatOk: noFlatOk, healOk: healOk, baseOk: baseOk }
+          }, false);
+        }
+      } catch (err) {
+        addCheck("v128_magic_skill_parsing", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // v128_3) Fallback damage estimation — an attack skill with no parsable effects should receive
+      //         a generic immediate damage of `Config.planner.fallbackDamageMultiplier * baseAttack`.
+      try {
+        if (typeof plannerSeqNormalizeOneSkill !== "function") {
+          addCheck("v128_fallback_damage_estimation", false, { reason: "missing_helper" }, false);
+        } else {
+          const startStats = Runtime.hero ? Runtime.hero.combatStats : null;
+          const startMul = Config.planner ? Config.planner.fallbackDamageMultiplier : null;
+          try {
+            Runtime.hero = Runtime.hero || {};
+            Runtime.hero.combatStats = { physicalAttack: 100, magicAttack: 80, attackSpeed: 1, critChance: 0, critDamage: 200 };
+            Config.planner.fallbackDamageMultiplier = 1.5;
+            const syntheticRow = {
+              kind: "skill",
+              name: "Mystery Strike",
+              isAttack: true,
+              targetsEnemy: true,
+              effects: [], // intentionally empty -> parser missed everything
+              manaCost: 10,
+              castTimeSec: 0,
+              cooldownSec: 5
+            };
+            const norm = plannerSeqNormalizeOneSkill(syntheticRow, null, 1, 100);
+            // physBase = 100 (from stats). detectProfileClassKey() likely returns "" in tests -> physical fallback.
+            // Expected immediate damage ~ 1.5 * 100 = 150 (mobFactor 1).
+            const expected = 1.5 * 100;
+            const got = norm && Number.isFinite(norm.immediateDamage) ? norm.immediateDamage : null;
+            const ok = !!(got !== null && Math.abs(got - expected) < 0.1);
+            addCheck("v128_fallback_damage_estimation", ok, {
+              expected: expected, got: got, immediateDamageByType: norm && norm.immediateDamageByType
+            }, false);
+          } finally {
+            if (Runtime.hero) Runtime.hero.combatStats = startStats;
+            if (Config.planner) Config.planner.fallbackDamageMultiplier = startMul;
+          }
+        }
+      } catch (err) {
+        addCheck("v128_fallback_damage_estimation", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // v128_4) Sniper Shot finisher fraction — when target HP is at or below the immediate cancel damage,
+      //         plannerBuildChargeReleasePlan returns the minimum release fraction (~0.01) with a 50ms hold.
+      try {
+        if (typeof plannerBuildChargeReleasePlan !== "function") {
+          addCheck("v128_sniper_shot_finisher_fraction", false, { reason: "missing_helper" }, false);
+        } else {
+          const slot = {
+            kind: "skill",
+            name: "Sniper Shot",
+            slot: 0,
+            manaCost: 0,
+            castTimeSec: 0,
+            cooldownSec: 0,
+            effects: [
+              {
+                type: "channel_gear",
+                channelMaxSec: 4,
+                gearDamagePercent: 200,
+                damageType: "physical",
+                gearDamageType: "physical",
+                target: "enemy",
+                interruptible: true
+              }
+            ]
+          };
+          // Live state: target HP is well below baseHit (cancel damage at 0.01 release ~= baseHit * 1.02).
+          const liveState = {
+            combat: { targetHp: { valid: true, cur: 50, max: 1000 } },
+            player: { mp: { valid: true, cur: 100 }, hp: { valid: true, cur: 1000, pct: 1 } }
+          };
+          const plan = plannerBuildChargeReleasePlan(slot, {
+            horizonSec: 5,
+            mobFactor: 1,
+            expectedBasicHit: 100,
+            basicDps: 100,
+            liveState: liveState
+          });
+          const ok = !!(plan
+            && plan.selectionMode === "snipershot_finisher_instant_cancel"
+            && plan.releaseMs === 50
+            && plan.releaseSource === "snipershot_finisher_window"
+            && plan.releaseFraction <= 0.02);
+          addCheck("v128_sniper_shot_finisher_fraction", ok, {
+            selectionMode: plan && plan.selectionMode,
+            releaseMs: plan && plan.releaseMs,
+            releaseFraction: plan && plan.releaseFraction,
+            releaseSource: plan && plan.releaseSource,
+            scoringContext: plan && plan.scoringContext
+          }, false);
+
+          // Reverse: target HP well above cancel damage -> finisher rule does NOT fire.
+          const liveStateHigh = {
+            combat: { targetHp: { valid: true, cur: 950, max: 1000 } },
+            player: { mp: { valid: true, cur: 100 }, hp: { valid: true, cur: 1000, pct: 1 } }
+          };
+          const planHigh = plannerBuildChargeReleasePlan(slot, {
+            horizonSec: 5,
+            mobFactor: 1,
+            expectedBasicHit: 100,
+            basicDps: 100,
+            liveState: liveStateHigh
+          });
+          const reverseOk = !!(planHigh && planHigh.selectionMode !== "snipershot_finisher_instant_cancel");
+          addCheck("v128_sniper_shot_finisher_skipped_at_full_hp", reverseOk, {
+            selectionMode: planHigh && planHigh.selectionMode,
+            releaseFraction: planHigh && planHigh.releaseFraction
+          }, false);
+        }
+      } catch (err) {
+        addCheck("v128_sniper_shot_finisher_fraction", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // v128_5) Class-agnostic adjustments emit non-zero score for synthetic node — sanity check the new helper.
+      try {
+        if (typeof plannerSeqClassAgnosticTacticalAdj !== "function") {
+          addCheck("v128_class_agnostic_adjustments_present", false, { reason: "missing_helper" }, false);
+        } else {
+          const node = {
+            actions: [
+              {
+                kind: "skill",
+                skill: { name: "AOE Burst", manaCost: 50, isAoe: true, tacticalRoles: ["offensive"], semantic: null },
+                pre: { mpCur: 1000, mpMax: 1000, playerHpCur: 1000, playerHpMax: 1000, effectiveActiveAttackers: 3 }
+              },
+              {
+                kind: "skill",
+                skill: { name: "Heal Self", manaCost: 80, isAoe: false, tacticalRoles: ["recovery"], semantic: null },
+                pre: { mpCur: 950, mpMax: 1000, playerHpCur: 200, playerHpMax: 1000, effectiveActiveAttackers: 3 }
+              }
+            ],
+            sim: {}
+          };
+          const combatState = {
+            player: { mpCur: 1000, mpMax: 1000, hpCur: 1000, hpMax: 1000 },
+            fight: { activeAttackerCount: 3 }
+          };
+          const adj = plannerSeqClassAgnosticTacticalAdj(node, combatState);
+          // Expectations: AoE under pressure -> -0.7. Emergency protection (heal at HP 20%) -> -1.0. Net ~ -1.7.
+          // Mana penalty for "Heal Self" should NOT fire (mp at 95% > 30% floor).
+          const ok = adj < 0 && adj <= -1.5;
+          addCheck("v128_class_agnostic_adjustments_present", ok, { adj: adj }, false);
+        }
+      } catch (err) {
+        addCheck("v128_class_agnostic_adjustments_present", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
       // 15) isBasementKnowledgeButtonVisible distinguishes knowledge from basement entry button.
       try {
         if (typeof isBasementKnowledgeButtonVisible !== "function") {

@@ -450,6 +450,13 @@
     planner: {
       // When crit damage % is missing from hero stats, use this crit vs non-crit damage ratio (2 = double).
       defaultCritDamageMultiplier: 2,
+      // AI CHANGED: Universal v1.2.9-alpha (Phase U3) -- when an attack skill parses to zero damage (parser missed
+      // every effect line or the description uses unfamiliar wording), seed a generic fallback of
+      // `fallbackDamageMultiplier * baseAttack` so the skill is not silently treated as "0 damage" (which would
+      // disqualify it from sequence search / opener horizon). Damage type is chosen per class (mage / priest =
+      // magic, otherwise physical). 1.5 is conservative and was chosen to be a small bump above a single basic
+      // (1x) without claiming a guaranteed combo bonus.
+      fallbackDamageMultiplier: 1.5,
       // AI CHANGED: Auto-farm hooks (default OFF). Turn on from console: ligmarBot.Config.planner.recordEnemyDbBeforeAttack = true
       // When true, secureTileAndLootOnce calls recordTargetToEnemyDb() after target acquire, before basic-attack loop.
       recordEnemyDbBeforeAttack: false,
@@ -618,6 +625,22 @@
         enabled: true,
         // AI CHANGED: Max actions in a planned short sequence (basic + skills). 1 = opener only; 5 = setup → burst → finisher window.
         maxActions: 5,
+        // AI CHANGED: Universal v1.2.9-alpha (Phase U4) -- class-agnostic tactical knobs. These nudge the planner
+        // for non-Archer classes (Mage / Priest / Warrior) without hardcoding per-skill recipes.
+        //   - manaManagementMpRatioFloor: when simulated mpCur/mpMax drops below this, high mana-cost skills get a penalty.
+        //   - manaManagementMpFractionThreshold: a skill is considered high-cost when manaCost/mpMax >= this.
+        //   - manaManagementHighCostPenaltySec: TTK-equivalent seconds added per high-cost cast under the floor.
+        //   - emergencyProtectionHpRatioFloor: when simulated playerHp/playerMax drops below this, shield/heal skills get a bonus.
+        //   - emergencyProtectionBonusSec: TTK-equivalent seconds shaved off per shield/heal cast in emergency.
+        //   - aoeUnderPressureAttackerThreshold: minimum active attackers to trigger the AoE bonus.
+        //   - aoeUnderPressureBonusSec: TTK-equivalent seconds shaved off per AoE skill cast under pressure.
+        manaManagementMpRatioFloor: 0.3,
+        manaManagementMpFractionThreshold: 0.25,
+        manaManagementHighCostPenaltySec: 0.6,
+        emergencyProtectionHpRatioFloor: 0.4,
+        emergencyProtectionBonusSec: 1.0,
+        aoeUnderPressureAttackerThreshold: 2,
+        aoeUnderPressureBonusSec: 0.7,
         // AI CHANGED: Max simulated time in seconds before sequence search stops expanding.
         maxHorizonSec: 6,
         // AI CHANGED: Beam width — top-K sequences kept at each expansion depth (higher = more thorough, slower).

@@ -332,6 +332,9 @@
       lastError: null       // string describing the last scan failure, or null
     },
     // AI CHANGED: Phase C1 -- hero combat stats + passive regen snapshots (see 81-hero.js).
+    // AI CHANGED: Universal v1.2.9-alpha (Phase U1) -- merged combatStats shape now includes
+    // `magicAttack` (null until parsed) alongside physicalAttack/attackSpeed/critChance/critDamage,
+    // so non-Archer classes (Mage / Priest / hybrid) get a proper damage base without crit/AS.
     hero: {
       combatStats: null,
       statsReadAt: null,

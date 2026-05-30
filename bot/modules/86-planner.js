@@ -1192,6 +1192,64 @@
               ? liveState.player.mp.cur
               : null
           );
+    // AI CHANGED: Universal v1.2.9-alpha (Phase U4) -- SNIPER SHOT FINISHER RULE.
+    // When the parsed slot is Sniper Shot AND the live target HP is at or below the immediate-cancel damage of
+    // Sniper Shot (the damage dealt by a near-zero release, ~baseHit * (1 + gearPct/100 * stepFraction)), bypass
+    // the dynamic search and return an instant-finisher plan with releaseMs = 50 and the minimum release fraction.
+    // This is a class-agnostic safety rule: it prevents the planner from holding a long charge on a target that
+    // is already dead-on-tap, which wastes time and exposes the hero to incoming damage. The check is gated on
+    // having a valid live target HP (no liveState -> no rule applied; behavior identical to v1.2.8-alpha).
+    const snipershotFinisherTargetHp = (function () {
+      const skillKey = typeof plannerSeqNormalizeSkillKey === "function"
+        ? plannerSeqNormalizeSkillKey(slot && slot.name ? slot.name : "")
+        : "";
+      if (skillKey !== "snipershot") {
+        return null;
+      }
+      if (!liveState || !liveState.combat || !liveState.combat.targetHp || !liveState.combat.targetHp.valid) {
+        return null;
+      }
+      const cur = liveState.combat.targetHp.cur;
+      return Number.isFinite(cur) && cur > 0 ? cur : null;
+    })();
+    if (snipershotFinisherTargetHp !== null && Number.isFinite(expectedBasicHit) && expectedBasicHit > 0) {
+      const stepFraction = Number.isFinite(Config.combat && Config.combat.chargeSkillDynamicSearchStepFraction)
+        && Config.combat.chargeSkillDynamicSearchStepFraction > 0
+        ? Config.combat.chargeSkillDynamicSearchStepFraction
+        : 0.01;
+      const gearPctNow = Number.isFinite(effect.gearDamagePercent) ? effect.gearDamagePercent : 0;
+      const cancelDamage = expectedBasicHit * (1 + (gearPctNow / 100) * stepFraction);
+      if (snipershotFinisherTargetHp <= cancelDamage) {
+        const finisherReleaseMs = 50;
+        const finisherMinHold = Math.min(minHoldMs, finisherReleaseMs);
+        const finisherPlan = plannerBuildChargeReleasePlanFromMs(
+          effect,
+          maxMs,
+          finisherMinHold,
+          finisherReleaseMs,
+          "snipershot_finisher_window"
+        );
+        finisherPlan.selectionMode = "snipershot_finisher_instant_cancel";
+        finisherPlan.executeModeApplied = true;
+        finisherPlan.candidates = [
+          Object.assign({}, finisherPlan, {
+            candidateSource: "snipershot_finisher_window",
+            horizonDamage: null,
+            releaseDamage: +cancelDamage.toFixed(2),
+            followUpBasicDamage: null,
+            blockedSec: finisherPlan.releaseSec,
+            horizonFit: null
+          })
+        ];
+        finisherPlan.scoringContext = {
+          rule: "snipershot_finisher",
+          targetHpCur: +snipershotFinisherTargetHp.toFixed(2),
+          cancelDamage: +cancelDamage.toFixed(2),
+          stepFraction: stepFraction
+        };
+        return finisherPlan;
+      }
+    }
     if (dynamicEnabled && Number.isFinite(expectedBasicHit) && Number.isFinite(basicDps) && basicDps >= 0) {
       const candidateFractions = plannerCollectDynamicChargeReleaseFractions(slot);
       const scoredCandidates = [];
@@ -3015,6 +3073,24 @@
     let isCharge = false;
     let chargeMaxSec = 0;
     let chargeGearPct = 0;
+    // AI CHANGED: Universal v1.2.9-alpha (Phase U3) -- resolve physical / magic attack bases from hero combat stats.
+    // physBase falls back to expectedBasicHit (the planner-provided basic-hit estimate) and finally 0; magicBase
+    // falls back to physBase so single-stat (Archer-style) heroes still get a sane scalar for `basic_proc` /
+    // `channel_gear` / `gear_direct_damage` lines that parser flags as magic.
+    const heroStats = Runtime && Runtime.hero && Runtime.hero.combatStats ? Runtime.hero.combatStats : null;
+    const physBase = (heroStats && Number.isFinite(heroStats.physicalAttack) && heroStats.physicalAttack > 0)
+      ? heroStats.physicalAttack
+      : (Number.isFinite(expectedBasicHit) && expectedBasicHit > 0 ? expectedBasicHit : 0);
+    const magicBase = (heroStats && Number.isFinite(heroStats.magicAttack) && heroStats.magicAttack > 0)
+      ? heroStats.magicAttack
+      : physBase;
+    function baseHitForDamageType(dt) {
+      const d = typeof dt === "string" ? dt.toLowerCase() : "";
+      if (d === "magic") {
+        return magicBase > 0 ? magicBase : (Number.isFinite(expectedBasicHit) && expectedBasicHit > 0 ? expectedBasicHit : 0);
+      }
+      return physBase > 0 ? physBase : (Number.isFinite(expectedBasicHit) && expectedBasicHit > 0 ? expectedBasicHit : 0);
+    }
     function bucketKey(dt) {
       const d = typeof dt === "string" ? dt.toLowerCase() : "";
       if (d === "physical") return "physical";
@@ -3047,9 +3123,14 @@
           dominantDamageType = e.damageType;
         }
       } else if (e.type === "basic_proc") {
-        if (Number.isFinite(expectedBasicHit) && expectedBasicHit > 0) {
-          // basic_proc is basic-anchored — full mob factor regardless of typing (parser typically marks physical for archers).
-          immediateDamageByType[bucketKey(e.damageType || "physical")] += expectedBasicHit * typedMf("basic", e.damageType || "physical");
+        // AI CHANGED: Universal v1.2.9-alpha (Phase U3) -- pick the typed hero attack scalar that matches the
+        // skill's damageType ("magic" -> magicBase, otherwise physBase). Falls back to expectedBasicHit when no
+        // hero stats are available (legacy behavior, preserved for safety).
+        const dt = e.damageType || "physical";
+        const baseHit = baseHitForDamageType(dt);
+        const hit = baseHit > 0 ? baseHit : (Number.isFinite(expectedBasicHit) && expectedBasicHit > 0 ? expectedBasicHit : 0);
+        if (hit > 0) {
+          immediateDamageByType[bucketKey(dt)] += hit * typedMf("basic", dt);
         }
         if (e.damageType) {
           dominantDamageType = e.damageType;
@@ -3058,11 +3139,28 @@
         isCharge = true;
         chargeMaxSec = Number.isFinite(e.channelMaxSec) ? e.channelMaxSec : chargeMaxSec;
         chargeGearPct = Number.isFinite(e.gearDamagePercent) ? e.gearDamagePercent : chargeGearPct;
-        if (Number.isFinite(expectedBasicHit) && expectedBasicHit > 0) {
-          // The base hit of a charge is basic-anchored.
-          immediateDamageByType[bucketKey(e.damageType || "physical")] += expectedBasicHit * typedMf("basic", e.damageType || "physical");
+        // AI CHANGED: Universal v1.2.9-alpha (Phase U3) -- match basic_proc: pick the typed hero attack base.
+        const dt = e.damageType || "physical";
+        const baseHit = baseHitForDamageType(dt);
+        const hit = baseHit > 0 ? baseHit : (Number.isFinite(expectedBasicHit) && expectedBasicHit > 0 ? expectedBasicHit : 0);
+        if (hit > 0) {
+          immediateDamageByType[bucketKey(dt)] += hit * typedMf("basic", dt);
         }
         if (e.damageType) {
+          dominantDamageType = e.damageType;
+        }
+      } else if (e.type === "gear_direct_damage" && Number.isFinite(e.percent)) {
+        // AI CHANGED: Universal v1.2.9-alpha (Phase U3) -- flat gear damage contribution: baseAttack * percent/100.
+        // Damage type follows the parsed e.damageType when present, else falls back to the dominant skill type
+        // (physical for Archer/Warrior, magic for Mage/Priest tagged effects).
+        const dt = e.damageType || (dominantDamageType !== "unknown" ? dominantDamageType : "physical");
+        const baseHit = baseHitForDamageType(dt);
+        if (baseHit > 0) {
+          immediateDamageByType[bucketKey(dt)] += baseHit * (e.percent / 100) * typedMf("non_basic", dt);
+        }
+        if (!e.damageType) {
+          // Do not overwrite an explicit dominantDamageType from earlier effects.
+        } else {
           dominantDamageType = e.damageType;
         }
       } else if (e.type === "slow") {
@@ -3104,6 +3202,42 @@
       const totalImmediate = immediateDamageByType.physical + immediateDamageByType.magic + immediateDamageByType.unknown;
       if (totalImmediate <= 0 && Number.isFinite(expectedBasicHit) && expectedBasicHit > 0) {
         immediateDamageByType.physical += expectedBasicHit * typedMf("basic", "physical");
+      }
+    }
+    // AI CHANGED: Universal v1.2.9-alpha (Phase U3) -- generic fallback damage estimate. When an attack skill
+    // (`row.isAttack && row.targetsEnemy`) parsed to zero immediate AND zero DoT (parser missed every line, or a
+    // class-specific wording we do not yet recognize), seed `Config.planner.fallbackDamageMultiplier * baseAttack`
+    // (default 1.5x) so the skill is not silently ranked as 0 by sequence search / opener horizon. Damage type is
+    // chosen per detected class — mage/priest -> magic, otherwise physical. The fallback ALWAYS prefers physBase
+    // / magicBase from hero stats; it falls back to `expectedBasicHit` only when both are unset.
+    const totalDotForFallback = dotPerSecByType.physical + dotPerSecByType.magic + dotPerSecByType.unknown;
+    const totalImmediateForFallback = immediateDamageByType.physical + immediateDamageByType.magic + immediateDamageByType.unknown;
+    if (
+      row.isAttack && row.targetsEnemy
+      && totalImmediateForFallback <= 0
+      && totalDotForFallback <= 0
+      && dotTotal <= 0
+    ) {
+      const fallbackMul = Number.isFinite(Config.planner && Config.planner.fallbackDamageMultiplier)
+        ? Config.planner.fallbackDamageMultiplier
+        : 1.5;
+      const detectedClass = typeof detectProfileClassKey === "function"
+        ? (detectProfileClassKey() || "")
+        : "";
+      const useMagic = detectedClass === "mage" || detectedClass === "priest";
+      const fallbackDt = useMagic ? "magic" : "physical";
+      const fallbackBase = useMagic
+        ? (magicBase > 0 ? magicBase : physBase)
+        : (physBase > 0 ? physBase : magicBase);
+      const fallbackBaseSafe = fallbackBase > 0
+        ? fallbackBase
+        : (Number.isFinite(expectedBasicHit) && expectedBasicHit > 0 ? expectedBasicHit : 0);
+      if (fallbackBaseSafe > 0 && fallbackMul > 0) {
+        const fallbackAmount = fallbackBaseSafe * fallbackMul * typedMf("non_basic", fallbackDt);
+        immediateDamageByType[bucketKey(fallbackDt)] += fallbackAmount;
+        if (dominantDamageType === "unknown") {
+          dominantDamageType = fallbackDt;
+        }
       }
     }
     const immediateDamage = +(immediateDamageByType.physical + immediateDamageByType.magic + immediateDamageByType.unknown).toFixed(2);
@@ -4111,6 +4245,79 @@
     };
   }
 
+  // AI CHANGED: Universal v1.2.9-alpha (Phase U4) -- class-agnostic tactical adjustments. Walks `node.actions[]`
+  // and emits a single TTK-equivalent adjustment that captures cross-class semantics:
+  //   1. Mana management: penalty for high mana-cost skills cast while simulated MP is already below floor.
+  //   2. Emergency protection: bonus for shield/heal skills cast while simulated player HP is below floor.
+  //   3. AoE under pressure: bonus for AoE skills cast while there are >= N active attackers.
+  // Each rule reads PRE snapshots from `a.pre` (same shape `plannerSeqExplainSemantic` consumes) so the result is
+  // deterministic given a fixed node + combatState. Returns 0 when sequencePlanner config is missing or all rules
+  // are no-ops, keeping legacy behavior identical for builds that haven't tuned these knobs.
+  function plannerSeqClassAgnosticTacticalAdj(node, combatState) {
+    const sp = Config.planner && Config.planner.sequencePlanner ? Config.planner.sequencePlanner : null;
+    if (!sp) {
+      return 0;
+    }
+    const actionsLen = node && Array.isArray(node.actions) ? node.actions.length : 0;
+    if (actionsLen === 0) {
+      return 0;
+    }
+    const mpRatioFloor = Number.isFinite(sp.manaManagementMpRatioFloor) ? sp.manaManagementMpRatioFloor : 0.3;
+    const mpFracThreshold = Number.isFinite(sp.manaManagementMpFractionThreshold) ? sp.manaManagementMpFractionThreshold : 0.25;
+    const mpPenaltySec = Number.isFinite(sp.manaManagementHighCostPenaltySec) ? sp.manaManagementHighCostPenaltySec : 0.6;
+    const hpRatioFloor = Number.isFinite(sp.emergencyProtectionHpRatioFloor) ? sp.emergencyProtectionHpRatioFloor : 0.4;
+    const protectionBonusSec = Number.isFinite(sp.emergencyProtectionBonusSec) ? sp.emergencyProtectionBonusSec : 1.0;
+    const aoeAtkThresh = Number.isFinite(sp.aoeUnderPressureAttackerThreshold) ? sp.aoeUnderPressureAttackerThreshold : 2;
+    const aoeBonusSec = Number.isFinite(sp.aoeUnderPressureBonusSec) ? sp.aoeUnderPressureBonusSec : 0.7;
+    let total = 0;
+    for (let i = 0; i < actionsLen; i += 1) {
+      const a = node.actions[i];
+      if (!a || !a.skill) {
+        continue;
+      }
+      const skill = a.skill;
+      const pre = a.pre || null;
+      // Mana management: skill cost large vs current MP pool while pool is already below floor.
+      const mana = Number.isFinite(skill.manaCost) ? skill.manaCost : 0;
+      const mpMax = pre && Number.isFinite(pre.mpMax) ? pre.mpMax : (Number.isFinite(combatState.player.mpMax) ? combatState.player.mpMax : 0);
+      const mpCur = pre && Number.isFinite(pre.mpCur)
+        ? pre.mpCur
+        : (Number.isFinite(combatState.player.mpCur) ? combatState.player.mpCur : 0);
+      if (mana > 0 && mpMax > 0 && mpPenaltySec > 0) {
+        const mpRatio = mpCur / mpMax;
+        const manaFraction = mana / mpMax;
+        if (mpRatio < mpRatioFloor && manaFraction >= mpFracThreshold) {
+          total += mpPenaltySec;
+        }
+      }
+      // Emergency protection: heal/shield skills get a bonus when player HP is critical.
+      const hpMax = pre && Number.isFinite(pre.playerHpMax) ? pre.playerHpMax : (Number.isFinite(combatState.player.hpMax) ? combatState.player.hpMax : 0);
+      const hpCur = pre && Number.isFinite(pre.playerHpCur)
+        ? pre.playerHpCur
+        : (Number.isFinite(combatState.player.hpCur) ? combatState.player.hpCur : 0);
+      if (hpMax > 0 && protectionBonusSec > 0) {
+        const hpRatio = hpCur / hpMax;
+        if (hpRatio < hpRatioFloor) {
+          const isHeal = Array.isArray(skill.tacticalRoles) && skill.tacticalRoles.indexOf("recovery") >= 0;
+          const isShield = !!(skill.semantic && skill.semantic.role === "defensive_utility");
+          if (isHeal || isShield) {
+            total -= protectionBonusSec;
+          }
+        }
+      }
+      // AoE under pressure.
+      if (skill.isAoe === true && aoeBonusSec > 0) {
+        const effActiveAttackers = pre && Number.isFinite(pre.effectiveActiveAttackers)
+          ? pre.effectiveActiveAttackers
+          : (Number.isFinite(combatState.fight.activeAttackerCount) ? combatState.fight.activeAttackerCount : 0);
+        if (effActiveAttackers >= aoeAtkThresh) {
+          total -= aoeBonusSec;
+        }
+      }
+    }
+    return +total.toFixed(4);
+  }
+
   // AI CHANGED: Score a sequence node. Primary objective: minimize expected time-to-kill. Secondary tiebreaks: lower HP loss, lower MP waste,
   // better tempo. Returns a single number — LOWER is BETTER.
   function plannerSeqScoreNode(node, combatState) {
@@ -4162,7 +4369,14 @@
     // calm-vs-pressure, Fan Volley calm / mp-fraction / true-multi-threat, Ice Shard tempo-under-pressure, Piercing Strike setup detection).
     const explained = plannerSeqExplainSemantic(node, combatState);
     const semanticAdjSec = Number.isFinite(explained.semanticAdjSec) ? explained.semanticAdjSec : 0;
-    return +(ttkSec + survivalPenaltySec + tieHpLossSec + tieMpWasteSec + tieTempoSec + semanticAdjSec).toFixed(4);
+    // AI CHANGED: Universal v1.2.9-alpha (Phase U4) -- class-agnostic tactical adjustments (mana management,
+    // emergency protection, AoE under pressure). Sums ON TOP of the existing semantic adjustments so legacy
+    // Archer behavior is unchanged when the new rules are no-ops (no shield/heal in sequence, MP not below
+    // floor, no AoE under pressure).
+    const classAgnosticAdjSec = typeof plannerSeqClassAgnosticTacticalAdj === "function"
+      ? plannerSeqClassAgnosticTacticalAdj(node, combatState)
+      : 0;
+    return +(ttkSec + survivalPenaltySec + tieHpLossSec + tieMpWasteSec + tieTempoSec + semanticAdjSec + classAgnosticAdjSec).toFixed(4);
   }
 
   // AI CHANGED: Compose results — short summary, action list, kill prediction, survival summary.
