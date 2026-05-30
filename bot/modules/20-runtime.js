@@ -254,7 +254,33 @@
       exitSuppressedAtEndCount: 0,
       knowledgeLootedCount: 0,
       lastPhaseTransitionAt: null,
-      lastPhaseTransitionReason: null
+      lastPhaseTransitionReason: null,
+      // AI CHANGED: v1.2.5-alpha — VISITED-TILE MEMORY. Live coord-based set so scoring can suppress already-visited
+      //   tiles and reject early backtracking to the entrance. Populated from the per-tile popup (`x,y` keys); written
+      //   on every cycle by `recordCurrentBasementTileVisitedIfPossible`. Reset by `markBasementEntered`.
+      visitedTiles: [],
+      lastTileKey: null,
+      lastTileCoords: null,
+      // The tile where atEnd was first locked in (after combat clear + champion icon). Used to recognize repeated
+      //   atEnd cycles on the same tile vs a stale flag carried into a different tile.
+      endTileKey: null,
+      // Per-tile combat-engagement flag. Set true by `secureTileAndLootOnce` whenever it observes enemyCount > 0;
+      //   cleared by `exploreByScan` after a successful verified MOVE. The atEnd rising-edge transition requires
+      //   this to be true so we never lock in atEnd just because a champion icon happened to be on the very first
+      //   tile we walked onto without fighting.
+      combatEngagedThisTile: false,
+      // EMPIRICAL HEX-DIRECTION OFFSETS. Learned over time: after each verified move the runtime compares
+      //   `prevTileCoords` and `currentTileCoords` (when both popup reads succeeded) and stores the delta keyed by
+      //   the move direction code (TL/TR/L/R/BL/BR). When known, scoring uses these offsets to predict candidate
+      //   scan-tile coordinates and check them against `visitedTiles` / `entranceCoords`. Empty until we observe
+      //   the first reliable move pair; partial maps are fine (predictTileCoord returns null for unknown directions).
+      directionOffsets: {},
+      // Knowledge / exit settle telemetry.
+      knowledgeAttemptedAt: null,
+      knowledgeSettledAt: null,
+      objectiveCompleteAt: null,
+      exitClickedAt: null,
+      exitSettledAt: null
     },
     // AI CHANGED: Track whether we've already zoomed the map to minimum so scans use calibrated step distances.
     zoom: {

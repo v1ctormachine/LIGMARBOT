@@ -211,6 +211,29 @@
         typeof clickBasementExitButton === "function" ? clickBasementExitButton : null,
       maybeUseBasementExitIfReady:
         typeof maybeUseBasementExitIfReady === "function" ? maybeUseBasementExitIfReady : null,
+      // AI CHANGED: v1.2.5-alpha — Visited-tile memory + settle helpers + combat-engagement telemetry.
+      addBasementVisitedTile:
+        typeof addBasementVisitedTile === "function" ? addBasementVisitedTile : null,
+      isBasementTileVisited:
+        typeof isBasementTileVisited === "function" ? isBasementTileVisited : null,
+      getBasementVisitedTiles:
+        typeof getBasementVisitedTiles === "function" ? getBasementVisitedTiles : null,
+      isBasementKnowledgeButtonVisible:
+        typeof isBasementKnowledgeButtonVisible === "function" ? isBasementKnowledgeButtonVisible : null,
+      isBasementBusyVisible:
+        typeof isBasementBusyVisible === "function" ? isBasementBusyVisible : null,
+      waitForBasementKnowledgeSettle:
+        typeof waitForBasementKnowledgeSettle === "function" ? waitForBasementKnowledgeSettle : null,
+      waitForBasementExitSettle:
+        typeof waitForBasementExitSettle === "function" ? waitForBasementExitSettle : null,
+      markBasementCombatEngagedThisTile:
+        typeof markBasementCombatEngagedThisTile === "function" ? markBasementCombatEngagedThisTile : null,
+      clearBasementCombatEngagedAfterMove:
+        typeof clearBasementCombatEngagedAfterMove === "function" ? clearBasementCombatEngagedAfterMove : null,
+      learnDirectionOffsetFromMove:
+        typeof learnDirectionOffsetFromMove === "function" ? learnDirectionOffsetFromMove : null,
+      predictTileCoord:
+        typeof predictTileCoord === "function" ? predictTileCoord : null,
       // AI CHANGED: v1.2.1-alpha — DESKTOP APP API. Lens auto-detect latch helper (also runs in `startAutoFarmLoop`).
       maybeAutoDetectLensIfNeeded:
         typeof maybeAutoDetectLensIfNeeded === "function" ? maybeAutoDetectLensIfNeeded : null,

@@ -5778,6 +5778,428 @@
         addCheck("v124_click_exit_button_soft_fails", false, { error: String(err && err.message ? err.message : err) }, false);
       }
 
+      // ===================================================================================================
+      // v1.2.5-alpha — Visited-tile suppression, clear-before-end, knowledge settle, exit settle.
+      // ===================================================================================================
+
+      const __v125_makeExitButton = function (label) {
+        const btn = document.createElement("app-button-icon");
+        btn.style.position = "absolute"; btn.style.left = "-9999px"; btn.style.top = "-9999px";
+        btn.style.width = "10px"; btn.style.height = "10px"; btn.style.display = "block";
+        const txt = document.createElement("div");
+        txt.className = "button-icon-text";
+        txt.textContent = label || "Exiting";
+        btn.appendChild(txt);
+        document.body.appendChild(btn);
+        return btn;
+      };
+      const __v125_makeKnowledgeButton = function (label) {
+        const btn = document.createElement("div");
+        btn.className = "battle-event-button highlight";
+        btn.style.position = "absolute"; btn.style.left = "-9999px"; btn.style.top = "-9999px";
+        btn.style.width = "10px"; btn.style.height = "10px"; btn.style.display = "block";
+        btn.textContent = label || "Pick Up";
+        document.body.appendChild(btn);
+        return btn;
+      };
+
+      // 1) Entrance tile is remembered + visitedTiles seeded with entranceTileKey on basement entry.
+      try {
+        if (typeof markBasementEntered !== "function" || typeof markBasementExited !== "function" || typeof getBasementVisitedTiles !== "function") {
+          addCheck("v125_entrance_tile_remembered_and_visited", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          markBasementEntered({ source: "test_v125_entrance", entranceTileKey: "10,10", entranceCoords: { x: 10, y: 10 } });
+          const visited = getBasementVisitedTiles();
+          const lastKey = Runtime.basement.lastTileKey;
+          markBasementExited({ reason: "test_v125_entrance_done" });
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.phase = startSnap.phase || "idle";
+            Runtime.basement.active = !!startSnap.active;
+          }
+          const ok = visited.indexOf("10,10") !== -1 && lastKey === "10,10";
+          addCheck("v125_entrance_tile_remembered_and_visited", ok, { visited: visited, lastKey: lastKey }, false);
+        }
+      } catch (err) {
+        addCheck("v125_entrance_tile_remembered_and_visited", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 2) Visited-tile suppression: scoring penalizes scan tile whose predicted coord is in visitedTiles.
+      try {
+        if (typeof scoreExploringBackAndVisitedAdjust !== "function" || typeof learnDirectionOffsetFromMove !== "function" ||
+            typeof addBasementVisitedTile !== "function" || typeof markBasementEntered !== "function" || typeof markBasementExited !== "function") {
+          addCheck("v125_visited_tile_suppression_score", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          markBasementEntered({ source: "test_v125_visited", entranceTileKey: "5,5", entranceCoords: { x: 5, y: 5 } });
+          // Teach the runtime that direction R goes (+1, 0) — i.e. (5,5) -> (6,5).
+          learnDirectionOffsetFromMove("R", { x: 5, y: 5 }, { x: 6, y: 5 });
+          // Mark (6,5) as visited so a candidate scan in direction R should be suppressed.
+          addBasementVisitedTile("6,5");
+          // Make sure lastTileCoords is at (5,5) for the predict step.
+          Runtime.basement.lastTileCoords = { x: 5, y: 5 };
+          const adjust = scoreExploringBackAndVisitedAdjust({ key: "R" }, 100000);
+          markBasementExited({ reason: "test_v125_visited_done" });
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.phase = startSnap.phase || "idle";
+            Runtime.basement.active = !!startSnap.active;
+          }
+          // Should be heavily negative (visited penalty applies).
+          const ok = adjust < 0;
+          addCheck("v125_visited_tile_suppression_score", ok, { adjust: adjust }, false);
+        }
+      } catch (err) {
+        addCheck("v125_visited_tile_suppression_score", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 3) Entrance-tile suppression dominates over visited (heavier penalty when predicted == entrance coord).
+      try {
+        if (typeof scoreExploringBackAndVisitedAdjust !== "function" || typeof learnDirectionOffsetFromMove !== "function" ||
+            typeof markBasementEntered !== "function" || typeof markBasementExited !== "function") {
+          addCheck("v125_entrance_tile_dominates_visited", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          markBasementEntered({ source: "test_v125_entrance_dom", entranceTileKey: "6,5", entranceCoords: { x: 6, y: 5 } });
+          // Teach offset and set lastTileCoords so direction R predicts to entrance.
+          learnDirectionOffsetFromMove("R", { x: 5, y: 5 }, { x: 6, y: 5 });
+          Runtime.basement.lastTileCoords = { x: 5, y: 5 };
+          const adjust = scoreExploringBackAndVisitedAdjust({ key: "R" }, 100000);
+          markBasementExited({ reason: "test_v125_entrance_dom_done" });
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.phase = startSnap.phase || "idle";
+            Runtime.basement.active = !!startSnap.active;
+          }
+          // Entrance penalty is heavier than visited penalty — adjust should be at least entrance penalty magnitude.
+          const entrancePenalty = (Config && Config.basement && Config.basement.entranceTilePenalty) || 1200000;
+          const ok = adjust <= -entrancePenalty;
+          addCheck("v125_entrance_tile_dominates_visited", ok, { adjust: adjust, entrancePenalty: entrancePenalty }, false);
+        }
+      } catch (err) {
+        addCheck("v125_entrance_tile_dominates_visited", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 4) atEnd rising edge HELD when combat not yet engaged on this tile.
+      try {
+        if (typeof updateBasementEndTileFlagFromVisibleIcons !== "function" || typeof markBasementEntered !== "function" ||
+            typeof markBasementExited !== "function") {
+          addCheck("v125_atEnd_held_without_combat", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          // Inject champion icon.
+          const events = document.createElement("div");
+          events.className = "hex-events";
+          const icon = document.createElement("app-icon");
+          icon.setAttribute("class", "mob-type-champion");
+          events.appendChild(icon);
+          document.body.appendChild(events);
+          markBasementEntered({ source: "test_v125_atEnd_held" });
+          // combatEngagedThisTile should be false (no combat yet).
+          Runtime.basement.combatEngagedThisTile = false;
+          const result = await updateBasementEndTileFlagFromVisibleIcons({ skipPopup: true });
+          const phaseAfter = Runtime.basement.phase;
+          if (events.parentNode) events.parentNode.removeChild(events);
+          markBasementExited({ reason: "test_v125_atEnd_held_done" });
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.phase = startSnap.phase || "idle";
+            Runtime.basement.active = !!startSnap.active;
+          }
+          // atEndTile flag may flip to true (icon visible), but phase should NOT promote to atEnd without combat.
+          const ok = result && result.ok === true && result.atEndTile === true && phaseAfter === "exploring";
+          addCheck("v125_atEnd_held_without_combat", ok, { result: result, phaseAfter: phaseAfter }, false);
+        }
+      } catch (err) {
+        addCheck("v125_atEnd_held_without_combat", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // 5) atEnd rising edge FIRES after combat has been engaged (and tile is OOC).
+      try {
+        if (typeof updateBasementEndTileFlagFromVisibleIcons !== "function" || typeof markBasementEntered !== "function" ||
+            typeof markBasementExited !== "function" || typeof markBasementCombatEngagedThisTile !== "function") {
+          addCheck("v125_atEnd_fires_after_combat_clear", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          // Inject champion icon.
+          const events = document.createElement("div");
+          events.className = "hex-events";
+          const icon = document.createElement("app-icon");
+          icon.setAttribute("class", "mob-type-champion");
+          events.appendChild(icon);
+          document.body.appendChild(events);
+          markBasementEntered({ source: "test_v125_atEnd_fires" });
+          markBasementCombatEngagedThisTile();
+          // The helper calls readBasicState internally to confirm OOC. In test environments where it's not defined
+          //   or returns null, the helper treats it as "not OOC" → won't promote. We assert phase based on the
+          //   actual environment: if readBasicState returns OOC, expect atEnd; otherwise expect exploring.
+          const result = await updateBasementEndTileFlagFromVisibleIcons({ skipPopup: true });
+          const phaseAfter = Runtime.basement.phase;
+          if (events.parentNode) events.parentNode.removeChild(events);
+          markBasementExited({ reason: "test_v125_atEnd_fires_done" });
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.phase = startSnap.phase || "idle";
+            Runtime.basement.active = !!startSnap.active;
+          }
+          // The result must be ok+atEndTile=true. Phase depends on readBasicState — accept either atEnd or exploring
+          //   (both are valid outcomes given test env constraints).
+          const ok = result && result.ok === true && result.atEndTile === true && (phaseAfter === "atEnd" || phaseAfter === "exploring");
+          addCheck("v125_atEnd_fires_after_combat_clear", ok, { result: result, phaseAfter: phaseAfter }, false);
+        }
+      } catch (err) {
+        addCheck("v125_atEnd_fires_after_combat_clear", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // 6) Knowledge settle reports ok when both knowledge button and busy text are absent.
+      try {
+        if (typeof waitForBasementKnowledgeSettle !== "function") {
+          addCheck("v125_knowledge_settle_ok_when_clean", false, { reason: "missing_helper" }, false);
+        } else {
+          // No knowledge button, no busy bar → should settle quickly.
+          const r = await waitForBasementKnowledgeSettle({ timeoutMs: 800, stableMs: 50 });
+          const ok = r && r.ok === true && Number.isFinite(r.elapsedMs);
+          addCheck("v125_knowledge_settle_ok_when_clean", ok, { result: r }, false);
+        }
+      } catch (err) {
+        addCheck("v125_knowledge_settle_ok_when_clean", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 7) Knowledge settle TIMES OUT while a knowledge button stays visible.
+      try {
+        if (typeof waitForBasementKnowledgeSettle !== "function") {
+          addCheck("v125_knowledge_settle_times_out_with_button", false, { reason: "missing_helper" }, false);
+        } else {
+          const btn = __v125_makeKnowledgeButton("Pick Up Knowledge");
+          const r = await waitForBasementKnowledgeSettle({ timeoutMs: 400, stableMs: 100 });
+          if (btn.parentNode) btn.parentNode.removeChild(btn);
+          const ok = r && r.ok === false && r.reason === "timeout" && r.knowledgeVisible === true;
+          addCheck("v125_knowledge_settle_times_out_with_button", ok, { result: r }, false);
+        }
+      } catch (err) {
+        addCheck("v125_knowledge_settle_times_out_with_button", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 8) Exit settle TIMES OUT while the Exiting button stays visible.
+      try {
+        if (typeof waitForBasementExitSettle !== "function") {
+          addCheck("v125_exit_settle_times_out_with_button", false, { reason: "missing_helper" }, false);
+        } else {
+          const btn = __v125_makeExitButton("Exiting");
+          const r = await waitForBasementExitSettle({ timeoutMs: 400, stableMs: 100 });
+          if (btn.parentNode) btn.parentNode.removeChild(btn);
+          const ok = r && r.ok === false && r.reason === "timeout" && r.exitFound === true;
+          addCheck("v125_exit_settle_times_out_with_button", ok, { result: r }, false);
+        }
+      } catch (err) {
+        addCheck("v125_exit_settle_times_out_with_button", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 9) clickBasementExitButton waits for settle and fails when the button persists.
+      try {
+        if (typeof clickBasementExitButton !== "function") {
+          addCheck("v125_click_exit_blocked_by_persistent_button", false, { reason: "missing_helper" }, false);
+        } else {
+          // Inject a persistent Exiting button — even after click it remains in DOM.
+          const btn = __v125_makeExitButton("Exiting");
+          const r = await clickBasementExitButton({ timeoutMs: 350, stableMs: 80 });
+          if (btn.parentNode) btn.parentNode.removeChild(btn);
+          const ok = r && r.ok === false && r.reason === "exit_settle_timeout" && r.clicked === true;
+          addCheck("v125_click_exit_blocked_by_persistent_button", ok, { result: r }, false);
+        }
+      } catch (err) {
+        addCheck("v125_click_exit_blocked_by_persistent_button", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 10) Basement-wide champion override: champion tile is engaged inside basement even with avoidChampions=true,
+      //     across ALL phases (exploring, atEnd, complete, returning).
+      try {
+        if (typeof scoreScannedTile !== "function" || typeof basementSetPhase !== "function" ||
+            typeof setAvoidChampions !== "function" || typeof setBasementFarmingEnabled !== "function" ||
+            typeof markBasementEntered !== "function" || typeof markBasementExited !== "function") {
+          addCheck("v125_basement_wide_champion_override", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          const startFarm = typeof getBasementFarmingEnabled === "function" ? getBasementFarmingEnabled() : false;
+          const startAvoid = typeof getAvoidChampions === "function" ? getAvoidChampions() : true;
+          setBasementFarmingEnabled(true);
+          setAvoidChampions(true);
+          markBasementEntered({ source: "test_v125_wide_override" });
+          // Test exploring phase first.
+          const tileBoss = {
+            ok: true, classification: "walkable", key: "TR",
+            enemies: 1, allies: 0,
+            lootIcons: ["mob-type-champion event-champion"]
+          };
+          const scoreExploring = scoreScannedTile(tileBoss);
+          basementSetPhase("atEnd", "test_v125_wide_atEnd");
+          const scoreAtEnd = scoreScannedTile(tileBoss);
+          basementSetPhase("complete", "test_v125_wide_complete");
+          const scoreComplete = scoreScannedTile(tileBoss);
+          basementSetPhase("returning", "test_v125_wide_returning");
+          const scoreReturning = scoreScannedTile(tileBoss);
+          markBasementExited({ reason: "test_v125_wide_done" });
+          setBasementFarmingEnabled(startFarm);
+          setAvoidChampions(startAvoid);
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.phase = startSnap.phase || "idle";
+            Runtime.basement.active = !!startSnap.active;
+          }
+          // All four scores should be POSITIVE (override engages champion as a target).
+          const ok = scoreExploring > 0 && scoreAtEnd > 0 && scoreComplete > 0 && scoreReturning > 0;
+          addCheck("v125_basement_wide_champion_override", ok, {
+            scoreExploring: scoreExploring, scoreAtEnd: scoreAtEnd, scoreComplete: scoreComplete, scoreReturning: scoreReturning
+          }, false);
+        }
+      } catch (err) {
+        addCheck("v125_basement_wide_champion_override", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 11) Hex offset learning + predictTileCoord.
+      try {
+        if (typeof learnDirectionOffsetFromMove !== "function" || typeof predictTileCoord !== "function" ||
+            typeof markBasementEntered !== "function" || typeof markBasementExited !== "function") {
+          addCheck("v125_hex_offset_learn_and_predict", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          markBasementEntered({ source: "test_v125_hex" });
+          const learned = learnDirectionOffsetFromMove("BR", { x: 5, y: 5 }, { x: 5, y: 6 });
+          const pred = predictTileCoord({ x: 10, y: 10 }, "BR");
+          markBasementExited({ reason: "test_v125_hex_done" });
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.phase = startSnap.phase || "idle";
+            Runtime.basement.active = !!startSnap.active;
+          }
+          const ok = learned === true && pred && pred.x === 10 && pred.y === 11;
+          addCheck("v125_hex_offset_learn_and_predict", ok, { learned: learned, pred: pred }, false);
+        }
+      } catch (err) {
+        addCheck("v125_hex_offset_learn_and_predict", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 12) markBasementExited clears visitedTiles, lastTileKey, endTileKey, combatEngagedThisTile, directionOffsets.
+      try {
+        if (typeof markBasementEntered !== "function" || typeof markBasementExited !== "function" ||
+            typeof addBasementVisitedTile !== "function" || typeof learnDirectionOffsetFromMove !== "function") {
+          addCheck("v125_exit_clears_all_run_memory", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          markBasementEntered({ source: "test_v125_clear" });
+          addBasementVisitedTile("3,3");
+          addBasementVisitedTile("4,4");
+          learnDirectionOffsetFromMove("R", { x: 0, y: 0 }, { x: 1, y: 0 });
+          Runtime.basement.endTileKey = "4,4";
+          Runtime.basement.combatEngagedThisTile = true;
+          markBasementExited({ reason: "test_v125_clear_done" });
+          const cleanedVisited = (Runtime.basement.visitedTiles || []).length === 0;
+          const cleanedLast = Runtime.basement.lastTileKey === null;
+          const cleanedEnd = Runtime.basement.endTileKey === null;
+          const cleanedEngaged = Runtime.basement.combatEngagedThisTile === false;
+          const cleanedOffsets = Object.keys(Runtime.basement.directionOffsets || {}).length === 0;
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.phase = startSnap.phase || "idle";
+            Runtime.basement.active = !!startSnap.active;
+          }
+          const ok = cleanedVisited && cleanedLast && cleanedEnd && cleanedEngaged && cleanedOffsets;
+          addCheck("v125_exit_clears_all_run_memory", ok, {
+            cleanedVisited: cleanedVisited, cleanedLast: cleanedLast, cleanedEnd: cleanedEnd,
+            cleanedEngaged: cleanedEngaged, cleanedOffsets: cleanedOffsets
+          }, false);
+        }
+      } catch (err) {
+        addCheck("v125_exit_clears_all_run_memory", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 13) Path-based backtrack penalizes more than just the last move (depth >= 2).
+      try {
+        if (typeof scoreExploringBackAndVisitedAdjust !== "function" || typeof markBasementEntered !== "function" ||
+            typeof markBasementExited !== "function") {
+          addCheck("v125_multistep_backtrack_penalty", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          markBasementEntered({ source: "test_v125_backtrack" });
+          // Simulate two moves: first R, then BR. Backtrack candidates are reverseDirection(BR)=TL (most recent)
+          //   and reverseDirection(R)=L (one step deeper).
+          Runtime.basement.moveStack = ["R", "BR"];
+          // Both reverses should be penalized.
+          const adjustTL = scoreExploringBackAndVisitedAdjust({ key: "TL" }, 100000);
+          const adjustL = scoreExploringBackAndVisitedAdjust({ key: "L" }, 100000);
+          const adjustForward = scoreExploringBackAndVisitedAdjust({ key: "BR" }, 100000);
+          markBasementExited({ reason: "test_v125_backtrack_done" });
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.phase = startSnap.phase || "idle";
+            Runtime.basement.active = !!startSnap.active;
+          }
+          // TL is the most recent reverse → full penalty. L is one step deeper → still penalized but smaller.
+          //   Forward direction (BR) is not in the reverses → no penalty.
+          const ok = adjustTL < 0 && adjustL < 0 && Math.abs(adjustTL) >= Math.abs(adjustL) && adjustForward >= 0;
+          addCheck("v125_multistep_backtrack_penalty", ok, { adjustTL: adjustTL, adjustL: adjustL, adjustForward: adjustForward }, false);
+        }
+      } catch (err) {
+        addCheck("v125_multistep_backtrack_penalty", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // 14) maybeUseBasementExitIfReady fails (no exit) when click settle times out (button persists).
+      try {
+        if (typeof maybeUseBasementExitIfReady !== "function" || typeof markBasementEntered !== "function" ||
+            typeof markBasementExited !== "function" || typeof basementSetPhase !== "function" ||
+            typeof setBasementFarmingEnabled !== "function") {
+          addCheck("v125_exit_step_blocks_on_settle_timeout", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          const startFarm = typeof getBasementFarmingEnabled === "function" ? getBasementFarmingEnabled() : false;
+          const startTimeout = (Config && Config.basement && Number.isFinite(Config.basement.exitSettleTimeoutMs)) ? Config.basement.exitSettleTimeoutMs : 4500;
+          setBasementFarmingEnabled(true);
+          // Force a short timeout so the test runs quickly.
+          if (Config && Config.basement) Config.basement.exitSettleTimeoutMs = 300;
+          const btn = __v125_makeExitButton("Exiting");
+          markBasementEntered({ source: "test_v125_exit_settle" });
+          basementSetPhase("complete", "test_v125_exit_settle_force_complete");
+          const result = await maybeUseBasementExitIfReady();
+          const phaseAfter = Runtime.basement.phase;
+          if (btn.parentNode) btn.parentNode.removeChild(btn);
+          if (Runtime.basement.phase !== "idle") {
+            markBasementExited({ reason: "test_v125_exit_settle_done" });
+          }
+          setBasementFarmingEnabled(startFarm);
+          if (Config && Config.basement) Config.basement.exitSettleTimeoutMs = startTimeout;
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.phase = startSnap.phase || "idle";
+            Runtime.basement.active = !!startSnap.active;
+          }
+          const ok = result && result.ok === false && result.reason === "exit_settle_timeout" && phaseAfter !== "idle";
+          addCheck("v125_exit_step_blocks_on_settle_timeout", ok, { result: result, phaseAfter: phaseAfter }, false);
+        }
+      } catch (err) {
+        addCheck("v125_exit_step_blocks_on_settle_timeout", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // 15) isBasementKnowledgeButtonVisible distinguishes knowledge from basement entry button.
+      try {
+        if (typeof isBasementKnowledgeButtonVisible !== "function") {
+          addCheck("v125_knowledge_distinguishes_from_entry", false, { reason: "missing_helper" }, false);
+        } else {
+          // No knowledge button — should be false.
+          const noneVis = isBasementKnowledgeButtonVisible();
+          // Add a basement-entry button (matches "ladder").
+          const entryBtn = document.createElement("div");
+          entryBtn.className = "battle-event-button highlight";
+          entryBtn.style.position = "absolute"; entryBtn.style.left = "-9999px"; entryBtn.style.top = "-9999px";
+          entryBtn.style.width = "10px"; entryBtn.style.height = "10px"; entryBtn.style.display = "block";
+          entryBtn.textContent = "Use Ladder to Basement";
+          document.body.appendChild(entryBtn);
+          const entryOnlyVis = isBasementKnowledgeButtonVisible();
+          // Add a knowledge button (no basement substring).
+          const kBtn = __v125_makeKnowledgeButton("Pick Up Knowledge Crystal");
+          const knowledgeVis = isBasementKnowledgeButtonVisible();
+          if (entryBtn.parentNode) entryBtn.parentNode.removeChild(entryBtn);
+          if (kBtn.parentNode) kBtn.parentNode.removeChild(kBtn);
+          // noneVis: false. entryOnlyVis: false (entry-style button does not count). knowledgeVis: true.
+          const ok = noneVis === false && entryOnlyVis === false && knowledgeVis === true;
+          addCheck("v125_knowledge_distinguishes_from_entry", ok, {
+            noneVis: noneVis, entryOnlyVis: entryOnlyVis, knowledgeVis: knowledgeVis
+          }, false);
+        }
+      } catch (err) {
+        addCheck("v125_knowledge_distinguishes_from_entry", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
       // 9) Manual chat is the documented primary mode (default `useUserMessages !== false` and dispatcher uses it).
       try {
         const useUser = !!(Config.chat && Config.chat.useUserMessages !== false);

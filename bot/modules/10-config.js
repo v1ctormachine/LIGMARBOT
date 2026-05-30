@@ -71,7 +71,30 @@
       // After this many exit-suppressed cycles in `exploring` phase WITHOUT seeing a champion icon, the bot promotes
       //   to atEnd anyway (defensive: covers basements with no champion mob, or with an icon the detector misses).
       //   Set to 0 to disable.
-      exitSuppressedExploringPromoteToAtEndThreshold: 0
+      exitSuppressedExploringPromoteToAtEndThreshold: 0,
+      // AI CHANGED: v1.2.5-alpha — KNOWLEDGE / EXIT SETTLE TIMINGS.
+      //   `knowledgeSettleTimeoutMs`: max time `waitForBasementKnowledgeSettle` waits for the highlighted-collect
+      //     button AND the busy battle-status text to BOTH become absent after a knowledge click. Only when both
+      //     conditions hold does the wrapper promote phase atEnd → complete.
+      //   `exitSettleTimeoutMs`: max time `waitForBasementExitSettle` waits for the dedicated `Exiting` button AND
+      //     the busy battle-status text to BOTH become absent after an `Exiting` click. Only when both conditions
+      //     hold does `markBasementExited` run.
+      //   `settleStableMs`: each settle requires this many consecutive milliseconds of "all signals clear" before
+      //     declaring the transition complete (anti-flicker; mirrors lootSettleStableMs semantics).
+      knowledgeSettleTimeoutMs: 4500,
+      exitSettleTimeoutMs: 4500,
+      settleStableMs: 350,
+      // VISITED-TILE SCORING — penalties applied when a candidate scan tile's predicted coord (via learned hex
+      //   offsets) is already in `Runtime.basement.visitedTiles` or matches the entrance tile.
+      visitedTilePenalty: 700000,
+      entranceTilePenalty: 1200000,
+      // Path-based backtrack depth: the LAST K verified moves are reversed and each reverse direction receives the
+      //   backtrack penalty. v1.2.4 effectively used K=1; v1.2.5 default K=4 stops 2-3 step oscillations.
+      maxBacktrackDepth: 4,
+      // BASEMENT-WIDE CHAMPION OVERRIDE (v1.2.5-alpha). When true, champions are always engageable inside basements
+      //   regardless of global `avoidChampions`. The end-only override (`endChampionOverride`) is preserved as a
+      //   sub-knob; this top-level flag wins when on.
+      basementWideChampionOverride: true
     },
     // AI CHANGED: Added action verification timing config for click+confirm flows.
     verification: {
