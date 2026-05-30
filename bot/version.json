@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "1.2.8-alpha",
-    "description":  "basement champion sequence: attackers popup target select, no-basic fallback, knowledge then exit",
-    "builtAt":  "2026-05-30T15:18:11.9829760+03:00",
+    "version":  "1.2.9-alpha",
+    "description":  "universal combat model: magic attack stats, multi-class parser/fallbacks, and Sniper Shot finisher logic",
+    "builtAt":  "2026-05-30T17:02:34.3205872+03:00",
     "history":  [
+                    {
+                        "version":  "1.2.9-alpha",
+                        "description":  "universal combat model: magic attack stats, multi-class parser/fallbacks, and Sniper Shot finisher logic",
+                        "date":  "2026-05-30T17:02:34.3205872+03:00"
+                    },
                     {
                         "version":  "1.2.8-alpha",
                         "description":  "basement champion sequence: attackers popup target select, no-basic fallback, knowledge then exit",
@@ -247,11 +252,6 @@
                         "version":  "0.3.200",
                         "description":  "fieldValidation buffSigTop adds signaturePreview for §6 exports",
                         "date":  "2026-05-13T20:08:16.4691568+03:00"
-                    },
-                    {
-                        "version":  "0.3.199",
-                        "description":  "fieldValidation: plannerUiPrefs snapshot for soak exports",
-                        "date":  "2026-05-13T20:03:11.6764812+03:00"
                     }
                 ]
 }

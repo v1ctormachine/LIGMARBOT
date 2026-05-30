@@ -41,6 +41,41 @@
         };
       }
     },
+    // AI CHANGED: Universal v1.2.9-alpha (Phase U2) -- gear_direct_damage. Captures "55% magic damage from gear",
+    // "110% magic damage from equipment", "165% damage from gear", etc. Emits `gear_direct_damage` so the planner
+    // can compute its flat contribution as `baseDamage * (percent / 100) * mobFactor`. Skipped at parse-time when
+    // a `channel_gear` already encoded the same gear bundle (Sniper Shot).
+    {
+      key: "gear_direct_damage",
+      regex: /([\d,]+(?:\.\d+)?)%\s*(?:of\s+)?(physical|magic|magical)?\s*damage\s+from\s+(?:gear|equipment)/i,
+      build: (m) => {
+        const out = {
+          type: "gear_direct_damage",
+          percent: parseFloat(String(m[1]).replace(/,/g, "")),
+          target: "enemy"
+        };
+        if (m[2]) {
+          out.damageType = m[2].toLowerCase().replace("magical", "magic");
+        }
+        return out;
+      }
+    },
+    // AI CHANGED: Universal v1.2.9-alpha (Phase U2) -- flat_direct_damage. Captures phrases shared by Mage / Priest /
+    // hybrid Warrior etc.: ", 130 \u2192 236 magic damage", "and 408 physical damage", "and 1,006 as magic damage",
+    // "additional 1,061 physical damage", ", 1,537 magic damage". For "min \u2192 max" upgrade arrows we keep the FIRST
+    // number (conservative). Negative lookahead "(?!\\s+over)" so DoT phrasing never gets double-counted here.
+    // Skipped at parse-time when channel_gear OR gear_direct_damage already fired (those bundles also contain numbers
+    // immediately followed by "physical/magic damage").
+    {
+      key: "flat_direct_damage",
+      regex: /(?:additional|additionally|and|or|,)?\s*([\d,]+(?:\.\d+)?)(?:\s*(?:\u2192|->|>)\s*[\d,]+(?:\.\d+)?)?\s*(?:of|as)?\s*(physical|magic|magical)\s+damage(?!\s+over)/i,
+      build: (m) => ({
+        type: "instant",
+        value: parseFloat(String(m[1]).replace(/,/g, "")),
+        damageType: m[2].toLowerCase().replace("magical", "magic"),
+        target: "enemy"
+      })
+    },
     // Pattern B: Slow -- "Slows the target by <N>% for <T> s"
     {
       key: "slow",
@@ -74,6 +109,27 @@
         durationSec: parseFloat(m[3]),
         target: "self"
       })
+    },
+    // AI CHANGED: Universal v1.2.9-alpha (Phase U2) -- heal_hp_advanced. Mage/Priest heals scaling with the base
+    // magic attack: "restores health by 370 and 8% of the base magic damage", "restores its own or the target's
+    // health by 84 and 3% of the base magical attack over 15 s". Distinct from heal_hp: this shape says
+    // "health by N", whereas heal_hp says "N HP" / "N health". Both regexes never co-fire on the same description.
+    {
+      key: "heal_hp_advanced",
+      regex: /restores?\s+(?:.{1,80}?\s+)?health\s+by\s+(\d[\d,]*(?:\.\d+)?)(?:\s+and\s+([\d,]+(?:\.\d+)?)%\s+of\s+the\s+base\s+magic(?:al)?\s+(?:attack|damage))?(?:\s+over\s+(\d[\d,]*(?:\.\d+)?)\s*(?:s(?:ec(?:ond)?s?)?)?)?/i,
+      build: (m) => {
+        const out = {
+          type: "heal",
+          resource: "hp",
+          value: parseFloat(String(m[1]).replace(/,/g, "")),
+          durationSec: m[3] ? parseFloat(String(m[3]).replace(/,/g, "")) : 0,
+          target: "self"
+        };
+        if (m[2]) {
+          out.percentOfMagicAttack = parseFloat(String(m[2]).replace(/,/g, ""));
+        }
+        return out;
+      }
     },
     // Pattern E: Heal HP — "Restores <N> HP" (instant), "Restores <N> HP over <T> s" (HoT), optional upgrade line
     // "Restores 405 (+52) health over 10 seconds" (base + bonus in parentheses; textContent drops <b>/<span>).
@@ -256,8 +312,20 @@
       return effects;
     }
     // Run each effect pattern first (array is ordered most-specific first).
+    // AI CHANGED: Universal v1.2.9-alpha (Phase U2) -- gear_direct_damage and flat_direct_damage are class-agnostic
+    // catch-alls that intentionally overlap with channel_gear ("up to N% physical damage from gear" / "deals base
+    // physical damage"). When channel_gear already encoded the bundle we skip both (avoids double damage-counting).
+    // flat_direct_damage is also skipped if gear_direct_damage already fired, because gear's "% damage" phrase can
+    // otherwise be re-captured as a flat number.
     for (let i = 0; i < SkillEffectPatterns.length; i += 1) {
       const pattern = SkillEffectPatterns[i];
+      if (pattern.key === "gear_direct_damage" && effects.some((e) => e.type === "channel_gear")) {
+        continue;
+      }
+      if (pattern.key === "flat_direct_damage"
+        && effects.some((e) => e.type === "channel_gear" || e.type === "gear_direct_damage")) {
+        continue;
+      }
       const m = description.match(pattern.regex);
       if (m) {
         try {
@@ -268,43 +336,25 @@
       }
     }
     // AI CHANGED: basic_proc -- skip if channel_gear already describes the same base+gear bundle (Sniper Shot).
+    // AI CHANGED: Universal v1.2.9-alpha (Phase U2) -- accept both "basic" (Archer / Assassin "Deals basic physical
+    // damage") and "base" (Mage / Priest / Warrior "Deals base magic damage") verbs in one regex so non-Archer
+    // classes get a basic_proc with the correct damageType. Channel_gear's "to the target" suffix used to be
+    // required; lifting that gate is safe because the channel_gear early-exit still keeps Sniper Shot exclusive.
     const hasChannelGear = effects.some((e) => e.type === "channel_gear");
     if (!hasChannelGear) {
-      if (/deals\s+basic\s+(physical|magic|magical)\s+damage/i.test(description)) {
-        const m = description.match(/deals\s+basic\s+(physical|magic|magical)\s+damage/i);
-        effects.push({
-          type: "basic_proc",
-          damageType: m[1].toLowerCase().replace("magical", "magic"),
-          target: "enemy"
-        });
-      } else if (/deals\s+base\s+(physical|magic|magical)\s+damage\s+to\s+the\s+target/i.test(description)) {
-        const m = description.match(/deals\s+base\s+(physical|magic|magical)\s+damage\s+to\s+the\s+target/i);
-        effects.push({
-          type: "basic_proc",
-          damageType: m[1].toLowerCase().replace("magical", "magic"),
-          target: "enemy"
-        });
-      }
-    }
-    // Generic "additional N damage" -- only emitted if no DoT already captured (DoT regex is more
-    // specific and would have consumed the same number).
-    if (!effects.some((e) => e.type === "dot")) {
-      // AI CHANGED: Match "additional 453 physical damage" or "additional 453 → 531 of physical damage" (upgrade arrow) for damageType tagging.
-      let m = description.match(/(?:additional|additionally)\s+(\d+(?:\.\d+)?)\s+(physical|magic|magical)\s+damage(?!\s+over)/i);
-      if (!m) {
-        m = description.match(
-          /(?:additional|additionally)\s+(\d+(?:\.\d+)?)(?:\s*(?:\u2192|>)\s*\d+(?:\.\d+)?)?\s+of\s+(physical|magic|magical)\s+damage(?!\s+over)/i
-        );
-      }
+      const m = description.match(/deals\s+(?:basic|base)\s+(physical|magic|magical)\s+damage/i);
       if (m) {
         effects.push({
-          type: "instant",
-          value: parseFloat(m[1]),
-          damageType: m[2].toLowerCase().replace("magical", "magic"),
+          type: "basic_proc",
+          damageType: m[1].toLowerCase().replace("magical", "magic"),
           target: "enemy"
         });
       }
     }
+    // AI CHANGED: Universal v1.2.9-alpha (Phase U2) -- the new flat_direct_damage pattern above is strictly more
+    // permissive than the legacy "additional N damage" fallback (matches "and 408 physical damage", "1,537 magic
+    // damage", etc.), so the legacy fallback is no longer needed. Keeping it would produce duplicate `instant`
+    // effects on the same description.
     return effects;
   }
 

@@ -453,6 +453,22 @@
       // WHY a candidate sequence won/lost (per-action reasonTags + scoreContributions in TTK-equivalent seconds).
       plannerSeqExplainSemantic:
         typeof plannerSeqExplainSemantic === "function" ? plannerSeqExplainSemantic : null,
+      // AI CHANGED: Universal v1.2.9-alpha (Phase U4) -- class-agnostic tactical adjustment (mana / emergency / AoE).
+      plannerSeqClassAgnosticTacticalAdj:
+        typeof plannerSeqClassAgnosticTacticalAdj === "function" ? plannerSeqClassAgnosticTacticalAdj : null,
+      // AI CHANGED: Universal v1.2.9-alpha (Phases U1-U3) -- core helpers exposed for tests / diagnostics.
+      parseStatNumber:
+        typeof parseStatNumber === "function" ? parseStatNumber : null,
+      parseHeroCombatStatsFromText:
+        typeof parseHeroCombatStatsFromText === "function" ? parseHeroCombatStatsFromText : null,
+      mergeHeroCombatStats:
+        typeof mergeHeroCombatStats === "function" ? mergeHeroCombatStats : null,
+      parseSkillEffects:
+        typeof parseSkillEffects === "function" ? parseSkillEffects : null,
+      plannerSeqNormalizeOneSkill:
+        typeof plannerSeqNormalizeOneSkill === "function" ? plannerSeqNormalizeOneSkill : null,
+      plannerBuildChargeReleasePlan:
+        typeof plannerBuildChargeReleasePlan === "function" ? plannerBuildChargeReleasePlan : null,
       plannerSelectSequencePick:
         typeof plannerSelectSequencePick === "function" ? plannerSelectSequencePick : null,
       plannerAdaptSequencePickToOpenerShape:
