@@ -234,6 +234,9 @@
         typeof learnDirectionOffsetFromMove === "function" ? learnDirectionOffsetFromMove : null,
       predictTileCoord:
         typeof predictTileCoord === "function" ? predictTileCoord : null,
+      // AI CHANGED: v1.2.7-alpha — Champion-tile pre-move HP/MP gate (used by exploreByScan; exposed for diagnostics).
+      maybeWaitForBasementChampionResources:
+        typeof maybeWaitForBasementChampionResources === "function" ? maybeWaitForBasementChampionResources : null,
       // AI CHANGED: v1.2.1-alpha — DESKTOP APP API. Lens auto-detect latch helper (also runs in `startAutoFarmLoop`).
       maybeAutoDetectLensIfNeeded:
         typeof maybeAutoDetectLensIfNeeded === "function" ? maybeAutoDetectLensIfNeeded : null,

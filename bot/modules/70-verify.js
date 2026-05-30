@@ -219,14 +219,15 @@
   async function selectSpecialTileTargetIfDesired() {
     const avoidChampions = typeof getAvoidChampions === "function" ? getAvoidChampions() : true;
     const avoidGoblins = typeof getAvoidGoblins === "function" ? getAvoidGoblins() : false;
-    // v1.2.2-alpha / v1.2.4-alpha / v1.2.5-alpha — Basement champion override permits engagement even when
-    //   `avoidChampions === true`. v1.2.5 promotes this to BASEMENT-WIDE by default
-    //   (`Config.basement.basementWideChampionOverride !== false`), so any champion on any tile inside a basement
-    //   is engageable. The legacy phase-aware override is preserved as a fallback when the basement-wide flag is
-    //   explicitly disabled.
+    // v1.2.2-alpha / v1.2.4-alpha / v1.2.5-alpha / v1.2.7-alpha — Basement champion override permits engagement
+    //   even when `avoidChampions === true`. v1.2.5 promoted this to BASEMENT-WIDE; v1.2.7 tightens the gate to
+    //   require BOTH `inBasement` AND `basementFarmingEnabled === true`, so any champion on any tile inside a
+    //   farming-enabled basement is engageable. The legacy phase-aware end-only override remains as a fallback
+    //   when the basement-wide flag is explicitly disabled.
     const inBasementNow = typeof isInBasement === "function" && isInBasement();
+    const basementFarmingOn = typeof getBasementFarmingEnabled === "function" ? getBasementFarmingEnabled() : false;
     const basementWideOverride = !!(
-      inBasementNow && Config && Config.basement && Config.basement.basementWideChampionOverride !== false
+      inBasementNow && basementFarmingOn && Config && Config.basement && Config.basement.basementWideChampionOverride !== false
     );
     const basementEndOverride = basementWideOverride || !!(
       inBasementNow &&

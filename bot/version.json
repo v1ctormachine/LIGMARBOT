@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "1.2.6-alpha",
-    "description":  "basement logic fix: visited-tile suppression, clear-before-end, knowledge completion, proper exit settle",
-    "builtAt":  "2026-05-30T13:02:50.3336429+03:00",
+    "version":  "1.2.7-alpha",
+    "description":  "basement gameplay fix: disable entry when off, basement-wide champion override, hard-block entrance tile, champion clear then knowledge exit",
+    "builtAt":  "2026-05-30T14:47:01.6016784+03:00",
     "history":  [
+                    {
+                        "version":  "1.2.7-alpha",
+                        "description":  "basement gameplay fix: disable entry when off, basement-wide champion override, hard-block entrance tile, champion clear then knowledge exit",
+                        "date":  "2026-05-30T14:47:01.6016784+03:00"
+                    },
                     {
                         "version":  "1.2.6-alpha",
                         "description":  "basement logic fix: visited-tile suppression, clear-before-end, knowledge completion, proper exit settle",
@@ -247,11 +252,6 @@
                         "version":  "0.3.198",
                         "description":  "plannerUi prefs persist openerFollowUpSkillDepth",
                         "date":  "2026-05-13T19:49:39.8807686+03:00"
-                    },
-                    {
-                        "version":  "0.3.197",
-                        "description":  "default openerFollowUpSkillDepth 2 for queue+horizon lookahead",
-                        "date":  "2026-05-13T19:42:59.2939481+03:00"
                     }
                 ]
 }

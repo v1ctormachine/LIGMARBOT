@@ -6170,6 +6170,286 @@
         addCheck("v125_exit_step_blocks_on_settle_timeout", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
       }
 
+      // ===================================================================================================
+      // v1.2.7-alpha — Basement gameplay correction: entry suppression when off, hard-block (0,0), gated
+      //   basement-wide champion override, champion-tile HP/MP gate, immediate-exit after knowledge settle.
+      // ===================================================================================================
+
+      // v126_1) Basement entry click is suppressed when farming is disabled.
+      try {
+        if (typeof maybeApplyBasementTransitionAroundLoot !== "function" || typeof setBasementFarmingEnabled !== "function") {
+          addCheck("v126_entry_suppressed_when_farming_off", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startFarm = typeof getBasementFarmingEnabled === "function" ? getBasementFarmingEnabled() : false;
+          setBasementFarmingEnabled(false);
+          // Inject a synthetic basement-entry button (highlighted-collect with "Basement" text).
+          const btn = document.createElement("div");
+          btn.className = "battle-event-button highlight";
+          btn.style.position = "absolute"; btn.style.left = "-9999px"; btn.style.top = "-9999px";
+          btn.style.width = "10px"; btn.style.height = "10px"; btn.style.display = "block";
+          btn.textContent = "Basement";
+          document.body.appendChild(btn);
+          let lootFnCalled = false;
+          const result = await maybeApplyBasementTransitionAroundLoot(async () => {
+            lootFnCalled = true;
+            return { ok: true, clicked: true, verified: true };
+          });
+          if (btn.parentNode) btn.parentNode.removeChild(btn);
+          setBasementFarmingEnabled(startFarm);
+          const ok = result && result.ok === true && result.skipped === true &&
+            result.reason === "farming_disabled_entry_suppressed" && lootFnCalled === false;
+          addCheck("v126_entry_suppressed_when_farming_off", ok, { result: result, lootFnCalled: lootFnCalled }, false);
+        }
+      } catch (err) {
+        addCheck("v126_entry_suppressed_when_farming_off", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // v126_2) Non-entry collect button still passes through when farming is off.
+      try {
+        if (typeof maybeApplyBasementTransitionAroundLoot !== "function" || typeof setBasementFarmingEnabled !== "function") {
+          addCheck("v126_nonentry_passthrough_when_farming_off", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startFarm = typeof getBasementFarmingEnabled === "function" ? getBasementFarmingEnabled() : false;
+          setBasementFarmingEnabled(false);
+          let lootFnCalled = false;
+          const result = await maybeApplyBasementTransitionAroundLoot(async () => {
+            lootFnCalled = true;
+            return { ok: true, clicked: true, verified: true, kind: "chest" };
+          });
+          setBasementFarmingEnabled(startFarm);
+          const ok = result && result.ok === true && lootFnCalled === true && result.kind === "chest";
+          addCheck("v126_nonentry_passthrough_when_farming_off", ok, { result: result, lootFnCalled: lootFnCalled }, false);
+        }
+      } catch (err) {
+        addCheck("v126_nonentry_passthrough_when_farming_off", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // v126_3) Champion override is GATED on farmingOn — disabled when farming is off, even inside basement.
+      try {
+        if (typeof scoreScannedTile !== "function" || typeof setBasementFarmingEnabled !== "function" ||
+            typeof setAvoidChampions !== "function" || typeof markBasementEntered !== "function" ||
+            typeof markBasementExited !== "function") {
+          addCheck("v126_champion_override_gated_on_farming", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startFarm = typeof getBasementFarmingEnabled === "function" ? getBasementFarmingEnabled() : false;
+          const startAvoid = typeof getAvoidChampions === "function" ? getAvoidChampions() : true;
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          setAvoidChampions(true);
+          // Case A: farming OFF — champion in basement should be AVOIDED (negative score).
+          setBasementFarmingEnabled(false);
+          markBasementEntered({ source: "test_v126_override_gated_off" });
+          const tileBoss = {
+            ok: true, classification: "walkable", key: "TR",
+            enemies: 1, allies: 0,
+            lootIcons: ["mob-type-champion event-champion"]
+          };
+          const scoreOff = scoreScannedTile(tileBoss);
+          markBasementExited({ reason: "test_v126_override_gated_off_done" });
+          // Case B: farming ON — champion in basement should be ENGAGED (positive score).
+          setBasementFarmingEnabled(true);
+          markBasementEntered({ source: "test_v126_override_gated_on" });
+          const scoreOn = scoreScannedTile(tileBoss);
+          markBasementExited({ reason: "test_v126_override_gated_on_done" });
+          setBasementFarmingEnabled(startFarm);
+          setAvoidChampions(startAvoid);
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.phase = startSnap.phase || "idle";
+            Runtime.basement.active = !!startSnap.active;
+          }
+          const ok = scoreOff < 0 && scoreOn > 0;
+          addCheck("v126_champion_override_gated_on_farming", ok, { scoreOff: scoreOff, scoreOn: scoreOn }, false);
+        }
+      } catch (err) {
+        addCheck("v126_champion_override_gated_on_farming", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // v126_4) Hard block: entrance tile (0,0) returns -9999 while exploring.
+      try {
+        if (typeof scoreScannedTile !== "function" || typeof learnDirectionOffsetFromMove !== "function" ||
+            typeof markBasementEntered !== "function" || typeof markBasementExited !== "function") {
+          addCheck("v126_hard_block_entrance_while_exploring", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          markBasementEntered({ source: "test_v126_hard_block", entranceTileKey: "0,0", entranceCoords: { x: 0, y: 0 } });
+          // Learn offset: direction L moves (-1, 0). Position bot at (1, 0) so L predicts (0, 0).
+          learnDirectionOffsetFromMove("L", { x: 1, y: 0 }, { x: 0, y: 0 });
+          Runtime.basement.lastTileCoords = { x: 1, y: 0 };
+          // Synthetic walkable tile in direction L — should hard-reject.
+          const tile = { ok: true, classification: "walkable", key: "L", enemies: 0, allies: 0, lootIcons: [] };
+          const score = scoreScannedTile(tile);
+          markBasementExited({ reason: "test_v126_hard_block_done" });
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.phase = startSnap.phase || "idle";
+            Runtime.basement.active = !!startSnap.active;
+          }
+          const ok = score === -9999;
+          addCheck("v126_hard_block_entrance_while_exploring", ok, { score: score }, false);
+        }
+      } catch (err) {
+        addCheck("v126_hard_block_entrance_while_exploring", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // v126_5) Hard block does NOT apply once phase is "complete" or "returning" (we WANT to head back).
+      try {
+        if (typeof scoreScannedTile !== "function" || typeof learnDirectionOffsetFromMove !== "function" ||
+            typeof basementSetPhase !== "function" || typeof markBasementEntered !== "function" ||
+            typeof markBasementExited !== "function") {
+          addCheck("v126_hard_block_lifts_after_complete", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          markBasementEntered({ source: "test_v126_lift", entranceTileKey: "0,0", entranceCoords: { x: 0, y: 0 } });
+          learnDirectionOffsetFromMove("L", { x: 1, y: 0 }, { x: 0, y: 0 });
+          Runtime.basement.lastTileCoords = { x: 1, y: 0 };
+          basementSetPhase("complete", "test_v126_lift_complete");
+          const tile = { ok: true, classification: "walkable", key: "L", enemies: 0, allies: 0, lootIcons: [] };
+          const score = scoreScannedTile(tile);
+          markBasementExited({ reason: "test_v126_lift_done" });
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.phase = startSnap.phase || "idle";
+            Runtime.basement.active = !!startSnap.active;
+          }
+          // Phase "complete" uses scoreReturningDirectionAdjust which prefers the entrance direction.
+          const ok = score > 0;
+          addCheck("v126_hard_block_lifts_after_complete", ok, { score: score }, false);
+        }
+      } catch (err) {
+        addCheck("v126_hard_block_lifts_after_complete", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // v126_6) Champion-tile pre-move HP/MP gate is no-op when no champion target.
+      try {
+        if (typeof maybeWaitForBasementChampionResources !== "function") {
+          addCheck("v126_champion_gate_skips_non_boss", false, { reason: "missing_helper" }, false);
+        } else {
+          const targetEmpty = { key: "R", lootIcons: [] };
+          const r = await maybeWaitForBasementChampionResources(targetEmpty);
+          const ok = r && r.gated === false && r.reason === "not_champion_target";
+          addCheck("v126_champion_gate_skips_non_boss", ok, { result: r }, false);
+        }
+      } catch (err) {
+        addCheck("v126_champion_gate_skips_non_boss", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // v126_7) Champion-tile gate is no-op when farming is off.
+      try {
+        if (typeof maybeWaitForBasementChampionResources !== "function" || typeof setBasementFarmingEnabled !== "function") {
+          addCheck("v126_champion_gate_skips_when_farming_off", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startFarm = typeof getBasementFarmingEnabled === "function" ? getBasementFarmingEnabled() : false;
+          setBasementFarmingEnabled(false);
+          const targetBoss = { key: "R", lootIcons: ["mob-type-champion event-champion"] };
+          const r = await maybeWaitForBasementChampionResources(targetBoss);
+          setBasementFarmingEnabled(startFarm);
+          const ok = r && r.gated === false && r.reason === "not_in_farming_basement";
+          addCheck("v126_champion_gate_skips_when_farming_off", ok, { result: r }, false);
+        }
+      } catch (err) {
+        addCheck("v126_champion_gate_skips_when_farming_off", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // v126_8) Champion-tile gate is no-op when both thresholds are 0.
+      try {
+        if (typeof maybeWaitForBasementChampionResources !== "function" || typeof setBasementFarmingEnabled !== "function" ||
+            typeof markBasementEntered !== "function" || typeof markBasementExited !== "function") {
+          addCheck("v126_champion_gate_skips_when_thresholds_disabled", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startFarm = typeof getBasementFarmingEnabled === "function" ? getBasementFarmingEnabled() : false;
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          const startHp = Config.basement.championPreMoveMinHpPct;
+          const startMp = Config.basement.championPreMoveMinMpPct;
+          Config.basement.championPreMoveMinHpPct = 0;
+          Config.basement.championPreMoveMinMpPct = 0;
+          setBasementFarmingEnabled(true);
+          markBasementEntered({ source: "test_v126_thresholds_zero" });
+          const targetBoss = { key: "R", lootIcons: ["mob-type-champion event-champion"] };
+          const r = await maybeWaitForBasementChampionResources(targetBoss);
+          markBasementExited({ reason: "test_v126_thresholds_zero_done" });
+          Config.basement.championPreMoveMinHpPct = startHp;
+          Config.basement.championPreMoveMinMpPct = startMp;
+          setBasementFarmingEnabled(startFarm);
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.phase = startSnap.phase || "idle";
+            Runtime.basement.active = !!startSnap.active;
+          }
+          const ok = r && r.gated === false && r.reason === "thresholds_disabled";
+          addCheck("v126_champion_gate_skips_when_thresholds_disabled", ok, { result: r }, false);
+        }
+      } catch (err) {
+        addCheck("v126_champion_gate_skips_when_thresholds_disabled", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // v126_9) Knowledge-settle wrapper triggers immediate exit when Exiting button is visible at end tile.
+      try {
+        if (typeof maybeApplyBasementTransitionAroundLoot !== "function" || typeof setBasementFarmingEnabled !== "function" ||
+            typeof markBasementEntered !== "function" || typeof markBasementExited !== "function" ||
+            typeof basementSetPhase !== "function") {
+          addCheck("v126_immediate_exit_after_knowledge_settle", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startFarm = typeof getBasementFarmingEnabled === "function" ? getBasementFarmingEnabled() : false;
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          const startKnowTimeout = Config.basement.knowledgeSettleTimeoutMs;
+          const startStable = Config.basement.settleStableMs;
+          Config.basement.knowledgeSettleTimeoutMs = 800;
+          Config.basement.settleStableMs = 80;
+          setBasementFarmingEnabled(true);
+          markBasementEntered({ source: "test_v126_immediate_exit" });
+          basementSetPhase("atEnd", "test_v126_immediate_exit_force_atEnd");
+          // Synthetic loot fn that "succeeds" — wrapper then runs knowledge settle, finds knowledge button absent
+          //   and busy text absent (clean DOM), promotes to complete, sees Exiting button, calls maybeUseBasementExit.
+          //   We DO NOT inject an Exiting button here, so the wrapper should fall through to "returning" instead of
+          //   firing the immediate-exit attempt. This test verifies the BRANCH that takes returning.
+          const result = await maybeApplyBasementTransitionAroundLoot(async () => ({ ok: true, clicked: true, verified: true }));
+          const phaseAfter = Runtime.basement.phase;
+          markBasementExited({ reason: "test_v126_immediate_exit_done" });
+          Config.basement.knowledgeSettleTimeoutMs = startKnowTimeout;
+          Config.basement.settleStableMs = startStable;
+          setBasementFarmingEnabled(startFarm);
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.phase = startSnap.phase || "idle";
+            Runtime.basement.active = !!startSnap.active;
+          }
+          // Without exit button visible: phase should auto-transition complete → returning.
+          const ok = result && result.ok === true && phaseAfter === "returning";
+          addCheck("v126_immediate_exit_after_knowledge_settle", ok, { result: result, phaseAfter: phaseAfter }, false);
+        }
+      } catch (err) {
+        addCheck("v126_immediate_exit_after_knowledge_settle", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // v126_10) Basement state is cleanly reset on exit (re-verify with new fields).
+      try {
+        if (typeof markBasementEntered !== "function" || typeof markBasementExited !== "function" ||
+            typeof addBasementVisitedTile !== "function") {
+          addCheck("v126_state_reset_clean_on_exit", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          markBasementEntered({ source: "test_v126_reset_clean", entranceTileKey: "0,0", entranceCoords: { x: 0, y: 0 } });
+          addBasementVisitedTile("1,2");
+          Runtime.basement.objectiveCompleteAt = Date.now();
+          Runtime.basement.knowledgeAttemptedAt = Date.now();
+          Runtime.basement.knowledgeSettledAt = Date.now();
+          Runtime.basement.exitClickedAt = Date.now();
+          Runtime.basement.exitSettledAt = Date.now();
+          markBasementExited({ reason: "test_v126_reset_clean_done" });
+          const cleanVisited = (Runtime.basement.visitedTiles || []).length === 0;
+          const cleanEntrance = Runtime.basement.entranceTileKey === null && Runtime.basement.entranceCoords === null;
+          const cleanLast = Runtime.basement.lastTileKey === null && Runtime.basement.lastTileCoords === null;
+          const cleanEnd = Runtime.basement.endTileKey === null;
+          const cleanCombat = Runtime.basement.combatEngagedThisTile === false;
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.phase = startSnap.phase || "idle";
+            Runtime.basement.active = !!startSnap.active;
+          }
+          const ok = cleanVisited && cleanEntrance && cleanLast && cleanEnd && cleanCombat;
+          addCheck("v126_state_reset_clean_on_exit", ok, {
+            cleanVisited: cleanVisited, cleanEntrance: cleanEntrance, cleanLast: cleanLast,
+            cleanEnd: cleanEnd, cleanCombat: cleanCombat
+          }, false);
+        }
+      } catch (err) {
+        addCheck("v126_state_reset_clean_on_exit", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
       // 15) isBasementKnowledgeButtonVisible distinguishes knowledge from basement entry button.
       try {
         if (typeof isBasementKnowledgeButtonVisible !== "function") {

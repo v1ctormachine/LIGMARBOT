@@ -91,10 +91,20 @@
       // Path-based backtrack depth: the LAST K verified moves are reversed and each reverse direction receives the
       //   backtrack penalty. v1.2.4 effectively used K=1; v1.2.5 default K=4 stops 2-3 step oscillations.
       maxBacktrackDepth: 4,
-      // BASEMENT-WIDE CHAMPION OVERRIDE (v1.2.5-alpha). When true, champions are always engageable inside basements
-      //   regardless of global `avoidChampions`. The end-only override (`endChampionOverride`) is preserved as a
-      //   sub-knob; this top-level flag wins when on.
-      basementWideChampionOverride: true
+      // BASEMENT-WIDE CHAMPION OVERRIDE (v1.2.5-alpha / v1.2.7-alpha). When true AND basement farming is enabled,
+      //   champions are always engageable inside basements regardless of global `avoidChampions`. The end-only
+      //   override (`endChampionOverride`) is preserved as a sub-knob; this top-level flag wins when on.
+      basementWideChampionOverride: true,
+      // AI CHANGED: v1.2.7-alpha — CHAMPION-TILE PRE-MOVE RESOURCE GATE.
+      //   Before `exploreByScan` walks onto a basement tile that has a champion icon, require at least these
+      //   percentages of HP and MP. While waiting, OOC HP/MP top-off helpers run (same primitives the Hard combat
+      //   mode explore gate uses). Setting either to 0 disables the corresponding check; setting both to 0 disables
+      //   the gate entirely. `championPreMoveMaxWaitMs` caps the total wait so a stuck top-off doesn't freeze the
+      //   bot indefinitely; on timeout the gate gives up and lets the move happen anyway.
+      championPreMoveMinHpPct: 0.95,
+      championPreMoveMinMpPct: 0.95,
+      championPreMovePollMs: 500,
+      championPreMoveMaxWaitMs: 30000
     },
     // AI CHANGED: Added action verification timing config for click+confirm flows.
     verification: {
