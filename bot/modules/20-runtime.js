@@ -213,18 +213,25 @@
       detectAttempts: 0,
       manualOverride: null
     },
-    // AI CHANGED: v1.2.0-alpha — basement farming runtime state.
-    //   v1.2.2-alpha — Promoted to a real phase state machine to fix the immediate-exit bug. Phases:
-    //     "idle"     — not in a basement (default).
-    //     "active"   — inside basement, exploring forward. Ladder click is SUPPRESSED in this phase so the bot does
-    //                  not exit on the first cycle after entering.
-    //     "atEnd"    — current tile is (or was) showing a champion icon — we have reached the end of the run. Set on
-    //                  the rising edge by `updateBasementEndTileFlagFromVisibleIcons`. Sticky once set this run.
-    //     "complete" — objective is done (knowledge looted at end tile, OR ladder-only at end after enough suppressed
-    //                  cycles). Ladder click is now ALLOWED and exits the basement.
-    //   `active` boolean is kept in sync (`phase !== "idle"`) for backward compatibility. `atEndTile` boolean still
-    //   tracks live UI state ("champion icon visible NOW") but the phase machine takes the rising edge so `phase`
-    //   stays at "atEnd" / "complete" even after the champion dies and its icon disappears.
+    // AI CHANGED: v1.2.0-alpha / v1.2.2-alpha / v1.2.4-alpha — basement farming runtime state.
+    //   Phases (canonical):
+    //     "idle"      — not in a basement (default).
+    //     "exploring" — inside basement, moving forward. Both the legacy highlighted-collect ladder AND the dedicated
+    //                   in-basement `Exiting` button are SUPPRESSED in this phase so the bot does not exit on the
+    //                   first cycle after entering (immediate-exit fix). v1.2.2 used the legacy name "active" for
+    //                   this phase; "active" is still accepted as an input synonym for compatibility.
+    //     "atEnd"     — current tile is (or was) showing a champion icon. Sticky once set.
+    //     "complete"  — knowledge looted (or threshold fallback). Exit click ALLOWED. If we are not already on the
+    //                   entrance tile, the wrapper auto-transitions to "returning" so scoring drives the bot back.
+    //     "returning" — bot is heading back to the basement entrance tile to use the `Exiting` button. Scoring
+    //                   reverses the forward backtrack penalty (we now PREFER the reverse-of-stack-top direction).
+    //   `active` boolean is kept in sync (`phase !== "idle"`) for backward compatibility.
+    //   v1.2.4 adds:
+    //     - `entranceTileKey` / `entranceCoords` snapshot — recorded on basement entry; null when popup wasn't open.
+    //     - `moveStack` — array of direction codes (TL/TR/L/R/BL/BR) pushed by `exploreByScan` after every verified
+    //       move while phase is exploring/atEnd. `returning` POPS one entry per verified move so the bot retraces.
+    //     - `exitSuppressedExploringCount` — separate counter for `Exiting` clicks suppressed during the exploring
+    //       phase (distinct from the atEnd-counter that drives the threshold-fallback completion).
     basement: {
       active: false,
       phase: "idle",
@@ -236,14 +243,44 @@
       atEndTile: false,
       mobsKilledHere: 0,
       tilesAdvanced: 0,
+      entranceTileKey: null,
+      entranceCoords: null,
+      moveStack: [],
       // Diagnostic counters reset on entry. `exitSuppressedAtEndCount` doubles as a fallback completion signal:
       //   when it crosses `Config.basement.exitSuppressedAtEndPromoteThreshold` we promote phase to "complete"
-      //   even without a knowledge-loot click (covers basements where the only highlighted button is the ladder).
+      //   even without a knowledge-loot click.
       exitSuppressedCount: 0,
+      exitSuppressedExploringCount: 0,
       exitSuppressedAtEndCount: 0,
       knowledgeLootedCount: 0,
       lastPhaseTransitionAt: null,
-      lastPhaseTransitionReason: null
+      lastPhaseTransitionReason: null,
+      // AI CHANGED: v1.2.5-alpha — VISITED-TILE MEMORY. Live coord-based set so scoring can suppress already-visited
+      //   tiles and reject early backtracking to the entrance. Populated from the per-tile popup (`x,y` keys); written
+      //   on every cycle by `recordCurrentBasementTileVisitedIfPossible`. Reset by `markBasementEntered`.
+      visitedTiles: [],
+      lastTileKey: null,
+      lastTileCoords: null,
+      // The tile where atEnd was first locked in (after combat clear + champion icon). Used to recognize repeated
+      //   atEnd cycles on the same tile vs a stale flag carried into a different tile.
+      endTileKey: null,
+      // Per-tile combat-engagement flag. Set true by `secureTileAndLootOnce` whenever it observes enemyCount > 0;
+      //   cleared by `exploreByScan` after a successful verified MOVE. The atEnd rising-edge transition requires
+      //   this to be true so we never lock in atEnd just because a champion icon happened to be on the very first
+      //   tile we walked onto without fighting.
+      combatEngagedThisTile: false,
+      // EMPIRICAL HEX-DIRECTION OFFSETS. Learned over time: after each verified move the runtime compares
+      //   `prevTileCoords` and `currentTileCoords` (when both popup reads succeeded) and stores the delta keyed by
+      //   the move direction code (TL/TR/L/R/BL/BR). When known, scoring uses these offsets to predict candidate
+      //   scan-tile coordinates and check them against `visitedTiles` / `entranceCoords`. Empty until we observe
+      //   the first reliable move pair; partial maps are fine (predictTileCoord returns null for unknown directions).
+      directionOffsets: {},
+      // Knowledge / exit settle telemetry.
+      knowledgeAttemptedAt: null,
+      knowledgeSettledAt: null,
+      objectiveCompleteAt: null,
+      exitClickedAt: null,
+      exitSettledAt: null
     },
     // AI CHANGED: Track whether we've already zoomed the map to minimum so scans use calibrated step distances.
     zoom: {

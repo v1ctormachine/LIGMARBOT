@@ -1,8 +1,23 @@
 ﻿{
-    "version":  "1.2.3-alpha",
-    "description":  "basement refinement: explicit current-tile popup for end-champion detection",
-    "builtAt":  "2026-05-29T22:57:28.6787698+03:00",
+    "version":  "1.2.6-alpha",
+    "description":  "basement logic fix: visited-tile suppression, clear-before-end, knowledge completion, proper exit settle",
+    "builtAt":  "2026-05-30T13:02:50.3336429+03:00",
     "history":  [
+                    {
+                        "version":  "1.2.6-alpha",
+                        "description":  "basement logic fix: visited-tile suppression, clear-before-end, knowledge completion, proper exit settle",
+                        "date":  "2026-05-30T13:02:50.3336429+03:00"
+                    },
+                    {
+                        "version":  "1.2.5-alpha",
+                        "description":  "basement logic fix: visited-tile suppression, clear-before-end, knowledge completion, proper exit settle",
+                        "date":  "2026-05-30T13:01:06.7460788+03:00"
+                    },
+                    {
+                        "version":  "1.2.4-alpha",
+                        "description":  "basement exit logic: dedicated Exiting button, entrance memory, return-to-exit flow",
+                        "date":  "2026-05-30T00:22:47.4660932+03:00"
+                    },
                     {
                         "version":  "1.2.3-alpha",
                         "description":  "basement refinement: explicit current-tile popup for end-champion detection",
@@ -237,21 +252,6 @@
                         "version":  "0.3.197",
                         "description":  "default openerFollowUpSkillDepth 2 for queue+horizon lookahead",
                         "date":  "2026-05-13T19:42:59.2939481+03:00"
-                    },
-                    {
-                        "version":  "0.3.196",
-                        "description":  "TEST: opener context check waives detail when horizon prefers basic",
-                        "date":  "2026-05-13T19:30:19.3660885+03:00"
-                    },
-                    {
-                        "version":  "0.3.195",
-                        "description":  "enemy DB: buff label signature + per-signature hp_drop buckets; TEST + fieldValidation",
-                        "date":  "2026-05-13T19:18:07.3816980+03:00"
-                    },
-                    {
-                        "version":  "0.3.194",
-                        "description":  "queue v3: plannerBuildCombatQueueAction uses openerFollowUpSkillDepth lookahead; TEST queueScoreDepth",
-                        "date":  "2026-05-13T19:06:34.0289400+03:00"
                     }
                 ]
 }

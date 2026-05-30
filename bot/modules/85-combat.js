@@ -5480,6 +5480,14 @@
       }
     }
 
+    // AI CHANGED: v1.2.5-alpha — Mark combat engagement when this cycle observes any enemy on the current tile.
+    //   Used by `updateBasementEndTileFlagFromVisibleIcons` to gate the rising edge `exploring → atEnd` so we never
+    //   lock atEnd on a freshly-walked-onto champion tile that has not been fought yet.
+    if (typeof markBasementCombatEngagedThisTile === "function" && isInBasement() &&
+        typeof startState.combat.enemyCount === "number" && startState.combat.enemyCount > 0) {
+      try { markBasementCombatEngagedThisTile(); } catch (markErr) {}
+    }
+
     // AI CHANGED: Surface secure-tile preparation as live status.
     setBotStatus("preparing", `secure-tile cycle (enemies=${startState.combat.enemyCount})`);
     Logger.log("LOOP", "Secure-tile cycle started", { enemyCount: startState.combat.enemyCount });
@@ -5821,6 +5829,35 @@
     }
 
     plannerMaybeLogAfterSecureCombat();
+
+    // AI CHANGED: v1.2.5-alpha — POST-COMBAT BASEMENT END-TILE PROBE. The early probe at the top of this function
+    //   skipped (in_combat) when enemies were present. Now that combat is cleared, run it again so the rising
+    //   edge `exploring → atEnd` can fire on this cycle. Gated by combat-engagement (set further up) so we do not
+    //   prematurely lock atEnd on a freshly-walked-onto champion tile.
+    if (typeof updateBasementEndTileFlagFromVisibleIcons === "function" && typeof getBasementFarmingEnabled === "function" && getBasementFarmingEnabled() === true) {
+      try {
+        await updateBasementEndTileFlagFromVisibleIcons({ requireOoc: true });
+      } catch (postCombatProbeErr) {
+        Logger.warn("BASEMENT", "post-combat updateBasementEndTileFlagFromVisibleIcons threw", postCombatProbeErr);
+      }
+    }
+
+    // AI CHANGED: v1.2.4-alpha — REAL BASEMENT EXIT step. Before regular loot, check if the dedicated `Exiting`
+    //   button (in-basement exit control) is visible and the phase machine permits exiting. The handler suppresses
+    //   the click while exploring/atEnd (immediate-exit fix preserved) and clicks it when phase is complete/returning.
+    //   When farming is OFF or we're not in a basement, this is a transparent skip.
+    if (typeof maybeUseBasementExitIfReady === "function") {
+      try {
+        const exitResult = await maybeUseBasementExitIfReady();
+        if (exitResult && exitResult.exited === true) {
+          Logger.log("LOOP", "Secure-tile cycle ended via basement Exiting click", exitResult);
+          return { ok: true, stage: "done_basement_exit", basementExit: exitResult };
+        }
+        // suppressed / no_exit_button / not_applicable / unexpected_phase / click_failed all fall through to normal loot.
+      } catch (basementExitErr) {
+        Logger.warn("BASEMENT", "maybeUseBasementExitIfReady threw", basementExitErr);
+      }
+    }
 
     // AI CHANGED: Surface loot as live status (clickLootOrActivateVerified internally handles "no loot" no-op).
     setBotStatus("looting", "collecting loot / activating event");
