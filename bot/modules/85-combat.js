@@ -5502,6 +5502,29 @@
       setBotStatus("preparing", "new-tile prebuffs (before find-enemy)");
       await maybeApplyPrebuffsForNewMobTile(startState);
       current = readBasicState();
+
+      // AI CHANGED: v1.2.8-alpha — BASEMENT CHAMPION ATTACKERS-POPUP TARGETING (signal-based).
+      //   When entering combat on a tile inside a farming-enabled basement, explicitly open the attackers popup
+      //   and wait (bounded `waitForCondition`) for a champion attacker card to appear, then click it. This is
+      //   the dedicated runtime sequence the user requires for basement champion tiles. Soft-fails on timeout —
+      //   the existing find-enemy + `selectSpecialTileTargetIfDesired` loop below still runs as fallback so
+      //   combat is never stalled (no-basic-attack and unknown-build paths still progress).
+      if (typeof selectBasementChampionFromAttackersPopupIfNeeded === "function") {
+        try {
+          setBotStatus("targeting", "basement: attackers popup → champion card");
+          const champPick = await selectBasementChampionFromAttackersPopupIfNeeded({});
+          if (champPick && champPick.ok && champPick.clicked) {
+            Logger.log("LOOP", "Basement champion locked via attackers popup", {
+              targetName: champPick.targetName || null,
+              verified: !!champPick.verified
+            });
+          } else if (champPick && champPick.skipped !== true) {
+            Logger.log("LOOP", "Basement attackers-popup champion select did not engage; falling back to find-enemy", champPick);
+          }
+        } catch (champErr) {
+          Logger.warn("LOOP", "selectBasementChampionFromAttackersPopupIfNeeded threw", champErr);
+        }
+      }
     }
     let findAttempts = 0;
     while (current.combat.enemyCount > 0 && findAttempts < Config.combat.maxFindEnemyAttempts) {

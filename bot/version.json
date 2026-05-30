@@ -1,8 +1,13 @@
 ﻿{
-    "version":  "1.2.7-alpha",
-    "description":  "basement gameplay fix: disable entry when off, basement-wide champion override, hard-block entrance tile, champion clear then knowledge exit",
-    "builtAt":  "2026-05-30T14:47:01.6016784+03:00",
+    "version":  "1.2.8-alpha",
+    "description":  "basement champion sequence: attackers popup target select, no-basic fallback, knowledge then exit",
+    "builtAt":  "2026-05-30T15:18:11.9829760+03:00",
     "history":  [
+                    {
+                        "version":  "1.2.8-alpha",
+                        "description":  "basement champion sequence: attackers popup target select, no-basic fallback, knowledge then exit",
+                        "date":  "2026-05-30T15:18:11.9829760+03:00"
+                    },
                     {
                         "version":  "1.2.7-alpha",
                         "description":  "basement gameplay fix: disable entry when off, basement-wide champion override, hard-block entrance tile, champion clear then knowledge exit",
@@ -247,11 +252,6 @@
                         "version":  "0.3.199",
                         "description":  "fieldValidation: plannerUiPrefs snapshot for soak exports",
                         "date":  "2026-05-13T20:03:11.6764812+03:00"
-                    },
-                    {
-                        "version":  "0.3.198",
-                        "description":  "plannerUi prefs persist openerFollowUpSkillDepth",
-                        "date":  "2026-05-13T19:49:39.8807686+03:00"
                     }
                 ]
 }

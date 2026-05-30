@@ -347,6 +347,134 @@
     }
   }
 
+  // AI CHANGED: v1.2.8-alpha — BASEMENT CHAMPION ATTACKERS-POPUP TARGETING.
+  //   Dedicated runtime sequence for "we just stepped onto a basement tile and a champion is attacking us".
+  //   Steps:
+  //     1. Gate: only fire when `inBasement` AND basement farming enabled AND
+  //        `Config.basement.attackersPopupChampionEnabled !== false`. (Tests can override via opts.bypassBasementGate.)
+  //     2. Open the attackers popup (if not already open) by clicking `attackersButton`. Wait with bounded
+  //        `waitForCondition` for `getVisibleAttackersPopupCards()` to return ≥1 card.
+  //     3. Wait with bounded `waitForCondition` for a card whose blob (className + outerHTML, lowercased) contains
+  //        any substring in `Config.basement.attackersPopupChampionCardClassSubstrings`. Live observation:
+  //        champion cards normally appear within ~1–2 s of entering the tile, well inside the default 2.5 s cap.
+  //     4. Click that champion card via `clickAttackersPopupCard`. Verify target acquired via
+  //        `waitForTargetAcquired` (best-effort; soft-true even if it returns false because some builds register
+  //        the target before the visible target panel updates).
+  //   The helper is bounded everywhere — there is NO `sleep(N_seconds)` as the primary wait. On timeout / soft fail,
+  //   the result is `{ ok: false, reason: ... }` and callers (specifically `secureTileAndLootOnce`) continue to
+  //   the existing `clickFindEnemyVerified` / `selectSpecialTileTargetIfDesired` path so combat is never stalled.
+  //
+  //   Returns: `{ ok, clicked, verified, reason?, openedPopup, championCardSeen, cardCount, targetName? }`.
+  async function selectBasementChampionFromAttackersPopupIfNeeded(opts) {
+    const cfg = (opts && typeof opts === "object") ? opts : {};
+    const bypassGate = cfg.bypassBasementGate === true;
+    if (!bypassGate) {
+      const inBasementNow = typeof isInBasement === "function" && isInBasement();
+      const farmingOn = typeof getBasementFarmingEnabled === "function" ? getBasementFarmingEnabled() : false;
+      const enabled = !(Config && Config.basement && Config.basement.attackersPopupChampionEnabled === false);
+      if (!inBasementNow || !farmingOn || !enabled) {
+        return {
+          ok: false, skipped: true,
+          reason: !enabled ? "feature_off" : "not_in_farming_basement",
+          inBasement: inBasementNow, farmingOn: farmingOn, enabled: enabled
+        };
+      }
+    }
+    const openTimeoutMs = Number.isFinite(cfg.openTimeoutMs)
+      ? cfg.openTimeoutMs
+      : (Config && Config.basement && Number.isFinite(Config.basement.attackersPopupOpenTimeoutMs) ? Config.basement.attackersPopupOpenTimeoutMs : 1500);
+    const championTimeoutMs = Number.isFinite(cfg.championTimeoutMs)
+      ? cfg.championTimeoutMs
+      : (Config && Config.basement && Number.isFinite(Config.basement.attackersPopupChampionWaitTimeoutMs) ? Config.basement.attackersPopupChampionWaitTimeoutMs : 2500);
+    const pollMs = Number.isFinite(cfg.pollMs)
+      ? cfg.pollMs
+      : (Config && Config.basement && Number.isFinite(Config.basement.attackersPopupPollMs) ? Config.basement.attackersPopupPollMs : 100);
+    const subs = Config && Config.basement && Array.isArray(Config.basement.attackersPopupChampionCardClassSubstrings)
+      ? Config.basement.attackersPopupChampionCardClassSubstrings.map(function (s) { return String(s || "").toLowerCase(); })
+      : ["mob-type-champion", "event-champion", "champion"];
+    function cardIsChampion(card) {
+      if (!card) return false;
+      const blob = ((card.getAttribute("class") || "") + " " + (card.outerHTML || "")).toLowerCase();
+      for (let i = 0; i < subs.length; i += 1) {
+        const s = subs[i];
+        if (s && blob.indexOf(s) !== -1) return true;
+      }
+      return false;
+    }
+    let cards = typeof getVisibleAttackersPopupCards === "function" ? getVisibleAttackersPopupCards() : [];
+    let openedPopup = cards.length > 0;
+    if (!openedPopup) {
+      const clicked = typeof clickAttackersButton === "function" ? clickAttackersButton() : false;
+      if (!clicked) {
+        return {
+          ok: false, reason: "attackers_button_click_failed",
+          openedPopup: false, championCardSeen: false, cardCount: 0
+        };
+      }
+      openedPopup = await waitForCondition(
+        "basement champion: attackers popup open",
+        () => {
+          const rows = typeof getVisibleAttackersPopupCards === "function" ? getVisibleAttackersPopupCards() : [];
+          return rows.length > 0;
+        },
+        { timeoutMs: openTimeoutMs, pollMs: pollMs }
+      );
+      if (!openedPopup) {
+        return {
+          ok: false, reason: "popup_not_open",
+          openedPopup: false, championCardSeen: false, cardCount: 0
+        };
+      }
+    }
+    let championCard = null;
+    const championFound = await waitForCondition(
+      "basement champion: champion card visible",
+      () => {
+        cards = typeof getVisibleAttackersPopupCards === "function" ? getVisibleAttackersPopupCards() : [];
+        for (let i = 0; i < cards.length; i += 1) {
+          if (cardIsChampion(cards[i])) {
+            championCard = cards[i];
+            return true;
+          }
+        }
+        return false;
+      },
+      { timeoutMs: championTimeoutMs, pollMs: pollMs }
+    );
+    if (!championFound || !championCard) {
+      return {
+        ok: false, reason: "no_champion_card_within_timeout",
+        openedPopup: true, championCardSeen: false, cardCount: cards.length
+      };
+    }
+    const nameNode = championCard.querySelector(Config.selectors.attackersPopupCardName);
+    const targetName = nameNode ? (nameNode.textContent || "").trim() : "";
+    const clickedCard = typeof clickAttackersPopupCard === "function"
+      ? clickAttackersPopupCard(championCard, targetName ? `basement-champion-card-${targetName}` : "basement-champion-card")
+      : false;
+    if (!clickedCard) {
+      return {
+        ok: false, reason: "card_click_failed",
+        openedPopup: true, championCardSeen: true, cardCount: cards.length, targetName: targetName || null
+      };
+    }
+    let verified = false;
+    try {
+      verified = !!(typeof waitForTargetAcquired === "function" ? await waitForTargetAcquired() : false);
+    } catch (err) {
+      verified = false;
+    }
+    Logger.log("BASEMENT", "selectBasementChampionFromAttackersPopupIfNeeded clicked champion card", {
+      targetName: targetName || null, verified: verified, cardCount: cards.length
+    });
+    return {
+      ok: true, clicked: true, verified: verified,
+      via: "attackers_popup_basement_champion",
+      openedPopup: true, championCardSeen: true,
+      cardCount: cards.length, targetName: targetName || null
+    };
+  }
+
   // AI CHANGED: Fast retarget via attackers popup after one kill in a multi-mob pull; falls back elsewhere if popup path is unavailable.
   async function clickAttackersRetargetVerified() {
     if (Config.combat && Config.combat.useAttackersPanelRetargetAfterKill === false) {

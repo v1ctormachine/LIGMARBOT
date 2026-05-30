@@ -6450,6 +6450,239 @@
         addCheck("v126_state_reset_clean_on_exit", false, { error: String(err && err.message ? err.message : err) }, false);
       }
 
+      // ===================================================================================================
+      // v1.2.8-alpha — Basement champion attackers-popup target select.
+      // ===================================================================================================
+
+      const __v127_makeAttackersList = function (childrenSpec) {
+        // Synthetic attackers popup root + cards. childrenSpec: array of { kind: "champion"|"normal", name }.
+        const list = document.createElement("div");
+        list.className = "member-list";
+        list.style.position = "absolute"; list.style.left = "-9999px"; list.style.top = "-9999px";
+        list.style.width = "10px"; list.style.height = "10px"; list.style.display = "block";
+        for (let i = 0; i < (childrenSpec || []).length; i += 1) {
+          const spec = childrenSpec[i] || {};
+          const card = document.createElement("app-battle-member-card");
+          card.className = "battle-member" + (spec.kind === "champion" ? " mob-type-champion event-champion" : "");
+          card.style.position = "absolute"; card.style.left = "-9999px"; card.style.top = "-9999px";
+          card.style.width = "10px"; card.style.height = "10px"; card.style.display = "block";
+          const name = document.createElement("div");
+          name.className = "info-top";
+          name.textContent = spec.name || (spec.kind === "champion" ? "Test Champion" : "Test Mob");
+          card.appendChild(name);
+          list.appendChild(card);
+        }
+        document.body.appendChild(list);
+        return list;
+      };
+
+      // v127_1) Helper soft-fails with `not_in_farming_basement` when not in a basement.
+      try {
+        if (typeof selectBasementChampionFromAttackersPopupIfNeeded !== "function") {
+          addCheck("v127_basement_champion_popup_skips_outside_basement", false, { reason: "missing_helper" }, false);
+        } else {
+          // Save state so we can restore.
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          // Force basement.active = false.
+          if (Runtime.basement) Runtime.basement.active = false;
+          const r = await selectBasementChampionFromAttackersPopupIfNeeded({});
+          if (Runtime.basement && startSnap) Runtime.basement.active = !!startSnap.active;
+          const ok = r && r.ok === false && r.skipped === true && r.reason === "not_in_farming_basement";
+          addCheck("v127_basement_champion_popup_skips_outside_basement", ok, { result: r }, false);
+        }
+      } catch (err) {
+        addCheck("v127_basement_champion_popup_skips_outside_basement", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // v127_2) Helper soft-fails with `feature_off` when Config.basement.attackersPopupChampionEnabled === false.
+      try {
+        if (typeof selectBasementChampionFromAttackersPopupIfNeeded !== "function" || typeof setBasementFarmingEnabled !== "function") {
+          addCheck("v127_basement_champion_popup_feature_off", false, { reason: "missing_helpers" }, false);
+        } else {
+          const startSnap = typeof getBasementState === "function" ? getBasementState() : null;
+          const startFarm = typeof getBasementFarmingEnabled === "function" ? getBasementFarmingEnabled() : false;
+          const startEnabled = Config.basement.attackersPopupChampionEnabled;
+          setBasementFarmingEnabled(true);
+          markBasementEntered({ source: "test_v127_feature_off" });
+          Config.basement.attackersPopupChampionEnabled = false;
+          const r = await selectBasementChampionFromAttackersPopupIfNeeded({});
+          Config.basement.attackersPopupChampionEnabled = startEnabled;
+          markBasementExited({ reason: "test_v127_feature_off_done" });
+          setBasementFarmingEnabled(startFarm);
+          if (Runtime.basement && startSnap) {
+            Runtime.basement.phase = startSnap.phase || "idle";
+            Runtime.basement.active = !!startSnap.active;
+          }
+          const ok = r && r.ok === false && r.skipped === true && r.reason === "feature_off";
+          addCheck("v127_basement_champion_popup_feature_off", ok, { result: r }, false);
+        }
+      } catch (err) {
+        addCheck("v127_basement_champion_popup_feature_off", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // v127_3) Bounded wait: when attackers popup never opens, helper times out with `popup_not_open` and does
+      //         not stall longer than the configured cap.
+      try {
+        if (typeof selectBasementChampionFromAttackersPopupIfNeeded !== "function") {
+          addCheck("v127_basement_champion_popup_open_timeout_bounded", false, { reason: "missing_helper" }, false);
+        } else {
+          // Force attackers button + popup-list selectors to bogus values so the helper can never see either.
+          const startBtnSel = Config.selectors.attackersButton;
+          const startListSel = Config.selectors.attackersPopupList;
+          Config.selectors.attackersButton = "div.__v127_no_such_attackers_button__";
+          Config.selectors.attackersPopupList = "div.__v127_no_such_member_list__";
+          const startMs = Date.now();
+          const r = await selectBasementChampionFromAttackersPopupIfNeeded({
+            bypassBasementGate: true,
+            openTimeoutMs: 250,
+            championTimeoutMs: 250,
+            pollMs: 50
+          });
+          const elapsedMs = Date.now() - startMs;
+          Config.selectors.attackersButton = startBtnSel;
+          Config.selectors.attackersPopupList = startListSel;
+          // Click failure path is the deterministic outcome with bogus selector. popup_not_open is also acceptable.
+          const ok = r && r.ok === false &&
+            (r.reason === "attackers_button_click_failed" || r.reason === "popup_not_open") &&
+            elapsedMs < 1500;
+          addCheck("v127_basement_champion_popup_open_timeout_bounded", ok, { result: r, elapsedMs: elapsedMs }, false);
+        }
+      } catch (err) {
+        addCheck("v127_basement_champion_popup_open_timeout_bounded", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // v127_4) Bounded wait: popup opens but no champion card appears → soft-fail `no_champion_card_within_timeout`.
+      try {
+        if (typeof selectBasementChampionFromAttackersPopupIfNeeded !== "function") {
+          addCheck("v127_basement_champion_popup_no_champion_card", false, { reason: "missing_helper" }, false);
+        } else {
+          // Inject popup with NORMAL mobs only — no champion card.
+          const list = __v127_makeAttackersList([
+            { kind: "normal", name: "Goblin" },
+            { kind: "normal", name: "Skeleton" }
+          ]);
+          const startMs = Date.now();
+          const r = await selectBasementChampionFromAttackersPopupIfNeeded({
+            bypassBasementGate: true,
+            openTimeoutMs: 250,
+            championTimeoutMs: 350,
+            pollMs: 50
+          });
+          const elapsedMs = Date.now() - startMs;
+          if (list.parentNode) list.parentNode.removeChild(list);
+          const ok = r && r.ok === false && r.reason === "no_champion_card_within_timeout" &&
+            r.openedPopup === true && r.championCardSeen === false && elapsedMs < 1200;
+          addCheck("v127_basement_champion_popup_no_champion_card", ok, { result: r, elapsedMs: elapsedMs }, false);
+        }
+      } catch (err) {
+        addCheck("v127_basement_champion_popup_no_champion_card", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
+      // v127_5) Champion card present from the start → helper detects, clicks the champion card.
+      try {
+        if (typeof selectBasementChampionFromAttackersPopupIfNeeded !== "function") {
+          addCheck("v127_basement_champion_popup_clicks_champion_card", false, { reason: "missing_helper" }, false);
+        } else {
+          const list = __v127_makeAttackersList([
+            { kind: "normal", name: "Goblin" },
+            { kind: "champion", name: "Basement Champion" },
+            { kind: "normal", name: "Skeleton" }
+          ]);
+          // Track the champion card click via mousedown listener.
+          let championCardClicked = false;
+          const champCard = list.querySelector(".mob-type-champion");
+          if (champCard) {
+            champCard.addEventListener("mousedown", function () { championCardClicked = true; }, { once: true });
+          }
+          const startMs = Date.now();
+          const r = await selectBasementChampionFromAttackersPopupIfNeeded({
+            bypassBasementGate: true,
+            openTimeoutMs: 250,
+            championTimeoutMs: 1200,
+            pollMs: 50
+          });
+          const elapsedMs = Date.now() - startMs;
+          if (list.parentNode) list.parentNode.removeChild(list);
+          // ok=true: clicked champion card. verified may be true or false depending on env.
+          const ok = r && r.ok === true && r.clicked === true &&
+            r.championCardSeen === true && r.via === "attackers_popup_basement_champion" &&
+            (r.targetName === "Basement Champion") && elapsedMs < 1500;
+          addCheck("v127_basement_champion_popup_clicks_champion_card", ok, {
+            result: r, championCardClicked: championCardClicked, elapsedMs: elapsedMs
+          }, false);
+        }
+      } catch (err) {
+        addCheck("v127_basement_champion_popup_clicks_champion_card", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // v127_6) Champion card appears AFTER a short delay → helper waits via signal, not blind sleep.
+      try {
+        if (typeof selectBasementChampionFromAttackersPopupIfNeeded !== "function") {
+          addCheck("v127_basement_champion_popup_waits_for_late_card", false, { reason: "missing_helper" }, false);
+        } else {
+          // Start with no champion card; inject one after ~150 ms.
+          const list = __v127_makeAttackersList([{ kind: "normal", name: "Goblin" }]);
+          const injectAt = Date.now() + 150;
+          setTimeout(function () {
+            if (!list.parentNode) return;
+            const card = document.createElement("app-battle-member-card");
+            card.className = "battle-member mob-type-champion event-champion";
+            card.style.position = "absolute"; card.style.left = "-9999px"; card.style.top = "-9999px";
+            card.style.width = "10px"; card.style.height = "10px"; card.style.display = "block";
+            const name = document.createElement("div");
+            name.className = "info-top";
+            name.textContent = "Late Champion";
+            card.appendChild(name);
+            list.appendChild(card);
+          }, 150);
+          const startMs = Date.now();
+          const r = await selectBasementChampionFromAttackersPopupIfNeeded({
+            bypassBasementGate: true,
+            openTimeoutMs: 200,
+            championTimeoutMs: 800,
+            pollMs: 50
+          });
+          const elapsedMs = Date.now() - startMs;
+          if (list.parentNode) list.parentNode.removeChild(list);
+          const sawLateCard = elapsedMs >= 100; // proves we waited (not instant)
+          const ok = r && r.ok === true && r.targetName === "Late Champion" && sawLateCard && elapsedMs < 1200 &&
+            elapsedMs >= (injectAt - startMs - 50);
+          addCheck("v127_basement_champion_popup_waits_for_late_card", ok, { result: r, elapsedMs: elapsedMs }, false);
+        }
+      } catch (err) {
+        addCheck("v127_basement_champion_popup_waits_for_late_card", false, { error: String(err && err.message ? err.message : err), threw: true }, false);
+      }
+
+      // v127_7) Soft-fail (not throw) when attackers button click fails — combat must NOT be blocked by helper failures.
+      try {
+        if (typeof selectBasementChampionFromAttackersPopupIfNeeded !== "function") {
+          addCheck("v127_basement_champion_popup_soft_fail_no_throw", false, { reason: "missing_helper" }, false);
+        } else {
+          const startBtnSel = Config.selectors.attackersButton;
+          const startListSel = Config.selectors.attackersPopupList;
+          Config.selectors.attackersButton = "div.__v127_no_such_attackers_button__";
+          Config.selectors.attackersPopupList = "div.__v127_no_such_member_list__";
+          let threw = false;
+          let r = null;
+          try {
+            r = await selectBasementChampionFromAttackersPopupIfNeeded({
+              bypassBasementGate: true,
+              openTimeoutMs: 200,
+              championTimeoutMs: 200,
+              pollMs: 50
+            });
+          } catch (innerErr) {
+            threw = true;
+          }
+          Config.selectors.attackersButton = startBtnSel;
+          Config.selectors.attackersPopupList = startListSel;
+          const ok = !threw && r && r.ok === false;
+          addCheck("v127_basement_champion_popup_soft_fail_no_throw", ok, { result: r, threw: threw }, false);
+        }
+      } catch (err) {
+        addCheck("v127_basement_champion_popup_soft_fail_no_throw", false, { error: String(err && err.message ? err.message : err) }, false);
+      }
+
       // 15) isBasementKnowledgeButtonVisible distinguishes knowledge from basement entry button.
       try {
         if (typeof isBasementKnowledgeButtonVisible !== "function") {

@@ -104,7 +104,34 @@
       championPreMoveMinHpPct: 0.95,
       championPreMoveMinMpPct: 0.95,
       championPreMovePollMs: 500,
-      championPreMoveMaxWaitMs: 30000
+      championPreMoveMaxWaitMs: 30000,
+      // AI CHANGED: v1.2.8-alpha — BASEMENT CHAMPION ATTACKERS-POPUP TARGETING.
+      //   When the bot enters combat on a tile inside a farming-enabled basement,
+      //   `selectBasementChampionFromAttackersPopupIfNeeded` opens the attackers popup, waits with a bounded
+      //   `waitForCondition` for a champion attacker card to appear (championship card class blob includes
+      //   `mob-type-champion` / `event-champion`), then clicks that card to lock the champion as active target.
+      //   The waits are signal-based — no blind sleep is used as the primary wait. Both timeouts are bounded; on
+      //   timeout the helper soft-fails and the existing find-enemy + selectSpecialTileTargetIfDesired path runs
+      //   as fallback so combat is never stalled.
+      //   `attackersPopupChampionEnabled` master switch; set false to disable the basement-champion popup path
+      //     entirely and rely on the legacy tile-popup helper.
+      //   `attackersPopupOpenTimeoutMs` cap on waiting for the attackers popup to OPEN after the click.
+      //   `attackersPopupChampionWaitTimeoutMs` cap on waiting for a champion CARD to appear in the open popup.
+      //     Live observation: champion cards usually appear within ~1–2 s of stepping onto the tile.
+      //   `attackersPopupPollMs` polling cadence inside both bounded waits.
+      //   `attackersPopupChampionCardClassSubstrings` lowercase substrings searched against `card.outerHTML` /
+      //     `card.className` to identify a champion card. Defaults match the same blobs `parseLootKindsFromMarkers`
+      //     uses, plus a generic "champion" fallback for localized DOM variants.
+      attackersPopupChampionEnabled: true,
+      attackersPopupOpenTimeoutMs: 1500,
+      attackersPopupChampionWaitTimeoutMs: 2500,
+      attackersPopupPollMs: 100,
+      attackersPopupChampionCardClassSubstrings: [
+        "mob-type-champion",
+        "event-champion",
+        "icon-src-mob-type-champion",
+        "champion"
+      ]
     },
     // AI CHANGED: Added action verification timing config for click+confirm flows.
     verification: {
