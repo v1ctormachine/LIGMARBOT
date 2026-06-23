@@ -4,6 +4,7 @@
 // @version      1.3.1-beta
 // @description  Beta easy-mode skill policy forbidden skill instant combat buffs and input blocker
 // @match        *://ligmar.io/game/*
+// @match        *://ligmar.fich.team/game/*
 // @grant        none
 // ==/UserScript==
 
