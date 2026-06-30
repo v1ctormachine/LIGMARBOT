@@ -1,0 +1,394 @@
+  // --- Layer 6 Module: 90-ui.js (Sleek UI Panel & Self-Diagnostic Suite) ---
+  // Rebuilt from scratch based on user specifications.
+  // Implements a clean, modern floating panel and a complete self-diagnostic test suite.
+  // Test suite automatically copies results to the clipboard upon completion.
+
+  let uiPanel = null;
+  let statusTicker = null;
+  let uiPanelCollapsed = false;
+
+  // 1. Create and Mount Floating GUI Overlay
+  function createRebuiltControlPanel() {
+    if (uiPanel) {
+      return uiPanel;
+    }
+
+    const panel = document.createElement("div");
+    panel.id = "rebuilt-ligmar-panel";
+    panel.style.position = "fixed";
+    panel.style.top = "15px";
+    panel.style.right = "15px";
+    panel.style.width = "300px";
+    panel.style.background = "rgba(10, 14, 26, 0.94)";
+    panel.style.backdropFilter = "blur(8px)";
+    panel.style.border = "1px solid rgba(75, 117, 255, 0.4)";
+    panel.style.borderRadius = "12px";
+    panel.style.padding = "14px";
+    panel.style.zIndex = "999999";
+    panel.style.fontFamily = "'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
+    panel.style.color = "#e1e7f5";
+    panel.style.boxShadow = "0 6px 20px rgba(0,0,0,0.5)";
+    panel.style.userSelect = "none";
+    panel.style.pointerEvents = "auto";
+    panel.style.transition = "transform 0.2s ease";
+
+    // Header component
+    const header = document.createElement("div");
+    header.style.borderBottom = "1px solid rgba(75, 117, 255, 0.25)";
+    header.style.paddingBottom = "8px";
+    header.style.marginBottom = "10px";
+
+    const titleRow = document.createElement("div");
+    titleRow.style.display = "flex";
+    titleRow.style.justifyContent = "space-between";
+    titleRow.style.alignItems = "center";
+
+    const titleText = document.createElement("span");
+    titleText.textContent = "LIGMARBOT Rebuilt";
+    titleText.style.fontWeight = "bold";
+    titleText.style.fontSize = "14px";
+    titleText.style.color = "#4b8bf5";
+    titleText.style.textShadow = "0 0 8px rgba(75,139,245,0.4)";
+
+    const versionText = document.createElement("span");
+    versionText.id = "rebuilt-panel-version";
+    versionText.textContent = `v${BotVersion.version}`;
+    versionText.style.fontSize = "11px";
+    versionText.style.background = "rgba(75, 117, 255, 0.2)";
+    versionText.style.border = "1px solid rgba(75, 117, 255, 0.4)";
+    versionText.style.borderRadius = "4px";
+    versionText.style.padding = "2px 6px";
+    versionText.style.fontFamily = "monospace";
+
+    const collapseBtn = document.createElement("button");
+    collapseBtn.id = "rebuilt-panel-collapse";
+    collapseBtn.textContent = uiPanelCollapsed ? "▸" : "▾";
+    collapseBtn.title = "Collapse / expand panel";
+    collapseBtn.style.marginLeft = "6px";
+    collapseBtn.style.width = "24px";
+    collapseBtn.style.height = "22px";
+    collapseBtn.style.border = "1px solid rgba(75, 117, 255, 0.45)";
+    collapseBtn.style.borderRadius = "5px";
+    collapseBtn.style.background = "rgba(75, 117, 255, 0.12)";
+    collapseBtn.style.color = "#9db8ff";
+    collapseBtn.style.cursor = "pointer";
+    collapseBtn.style.fontSize = "13px";
+    collapseBtn.style.lineHeight = "18px";
+    collapseBtn.addEventListener("click", () => {
+      setControlPanelCollapsed(!uiPanelCollapsed);
+    });
+
+    const headerRight = document.createElement("div");
+    headerRight.style.display = "flex";
+    headerRight.style.alignItems = "center";
+    headerRight.appendChild(versionText);
+    headerRight.appendChild(collapseBtn);
+
+    titleRow.appendChild(titleText);
+    titleRow.appendChild(headerRight);
+    header.appendChild(titleRow);
+
+    const descText = document.createElement("div");
+    descText.textContent = `“${BotVersion.description}”`;
+    descText.style.fontSize = "11px";
+    descText.style.opacity = "0.7";
+    descText.style.fontStyle = "italic";
+    descText.style.marginTop = "4px";
+    header.appendChild(descText);
+    panel.appendChild(header);
+
+    const bodyContainer = document.createElement("div");
+    bodyContainer.id = "rebuilt-panel-body";
+    panel.appendChild(bodyContainer);
+
+    // Live Metrics Section
+    const metricsGrid = document.createElement("div");
+    metricsGrid.style.display = "grid";
+    metricsGrid.style.gridTemplateColumns = "1fr 1fr";
+    metricsGrid.style.gap = "8px";
+    metricsGrid.style.marginBottom = "12px";
+
+    function makeMetricLabel(label, initialVal, id) {
+      const box = document.createElement("div");
+      box.style.background = "rgba(255,255,255,0.03)";
+      box.style.border = "1px solid rgba(255,255,255,0.05)";
+      box.style.borderRadius = "6px";
+      box.style.padding = "6px";
+      box.style.textAlign = "center";
+
+      const title = document.createElement("div");
+      title.textContent = label;
+      title.style.fontSize = "9px";
+      title.style.opacity = "0.6";
+      title.style.textTransform = "uppercase";
+
+      const val = document.createElement("div");
+      val.id = id;
+      val.textContent = initialVal;
+      val.style.fontSize = "13px";
+      val.style.fontWeight = "bold";
+      val.style.marginTop = "2px";
+
+      box.appendChild(title);
+      box.appendChild(val);
+      return box;
+    }
+
+    const statusBox = makeMetricLabel("Bot Status", "OFFLINE", "rebuilt-stat-status");
+    statusBox.querySelector("#rebuilt-stat-status").style.color = "#999";
+    const cyclesBox = makeMetricLabel("Cycles", "0", "rebuilt-stat-cycles");
+
+    metricsGrid.appendChild(statusBox);
+    metricsGrid.appendChild(cyclesBox);
+    bodyContainer.appendChild(metricsGrid);
+
+    // Combat Mode Controls
+    const modeRow = document.createElement("div");
+    modeRow.style.display = "flex";
+    modeRow.style.gap = "6px";
+    modeRow.style.marginBottom = "10px";
+
+    function makeModeBtn(mode, label) {
+      const btn = document.createElement("button");
+      btn.id = `rebuilt-mode-${mode}`;
+      btn.textContent = label;
+      btn.style.flex = "1";
+      btn.style.padding = "6px";
+      btn.style.borderRadius = "6px";
+      btn.style.border = "1px solid rgba(255,255,255,0.12)";
+      btn.style.background = "rgba(255,255,255,0.05)";
+      btn.style.color = "#e1e7f5";
+      btn.style.fontSize = "11px";
+      btn.style.cursor = "pointer";
+      btn.addEventListener("click", () => {
+        setCombatMode(mode);
+        updateRebuiltPanelMetrics();
+      });
+      return btn;
+    }
+
+    modeRow.appendChild(makeModeBtn("easy", "Easy"));
+    modeRow.appendChild(makeModeBtn("normal", "Normal"));
+    modeRow.appendChild(makeModeBtn("hard", "Hard"));
+    bodyContainer.appendChild(modeRow);
+
+    // Preference Checkboxes
+    const prefBox = document.createElement("div");
+    prefBox.style.display = "grid";
+    prefBox.style.gridTemplateColumns = "1fr";
+    prefBox.style.gap = "5px";
+    prefBox.style.marginBottom = "10px";
+    prefBox.style.fontSize = "11px";
+
+    function makeCheckbox(id, label, initial, onChange) {
+      const wrap = document.createElement("label");
+      wrap.style.display = "flex";
+      wrap.style.alignItems = "center";
+      wrap.style.gap = "6px";
+      wrap.style.opacity = "0.9";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.id = id;
+      cb.checked = !!initial;
+      cb.addEventListener("change", () => {
+        onChange(cb.checked);
+        updateRebuiltPanelMetrics();
+      });
+      wrap.appendChild(cb);
+      wrap.appendChild(document.createTextNode(label));
+      return wrap;
+    }
+
+    prefBox.appendChild(makeCheckbox(
+      "rebuilt-pref-avoid-champions",
+      "Avoid Champions",
+      Runtime && Runtime.preferences ? Runtime.preferences.avoidChampions : true,
+      setAvoidChampions
+    ));
+    prefBox.appendChild(makeCheckbox(
+      "rebuilt-pref-avoid-bosses",
+      "Avoid Bosses",
+      Runtime && Runtime.preferences ? Runtime.preferences.avoidBosses !== false : true,
+      setAvoidBosses
+    ));
+    prefBox.appendChild(makeCheckbox(
+      "rebuilt-pref-basement",
+      "Basement Farming",
+      Runtime && Runtime.preferences ? Runtime.preferences.basementFarmingEnabled : false,
+      setBasementFarmingEnabled
+    ));
+    prefBox.appendChild(makeCheckbox(
+      "rebuilt-pref-use-shortbuffs",
+      "Use Shortbuffs",
+      Runtime && Runtime.preferences ? Runtime.preferences.useShortBuffs !== false : true,
+      setUseShortBuffs
+    ));
+    prefBox.appendChild(makeCheckbox(
+      "rebuilt-pref-use-longbuffs",
+      "Use Longbuffs",
+      Runtime && Runtime.preferences ? Runtime.preferences.useLongBuffs !== false : true,
+      setUseLongBuffs
+    ));
+    prefBox.appendChild(makeCheckbox(
+      "rebuilt-pref-use-combatbuffs",
+      "Use CombatBuffs",
+      Runtime && Runtime.preferences ? Runtime.preferences.useCombatBuffs !== false : true,
+      setUseCombatBuffs
+    ));
+    bodyContainer.appendChild(prefBox);
+
+    // Combined START/STOP Toggle Button
+    const btnRow = document.createElement("div");
+    btnRow.style.display = "flex";
+    btnRow.style.gap = "8px";
+    btnRow.style.marginBottom = "10px";
+
+    const autoToggleBtn = document.createElement("button");
+    autoToggleBtn.id = "rebuilt-auto-toggle";
+    autoToggleBtn.style.flex = "1";
+    autoToggleBtn.style.padding = "9px";
+    autoToggleBtn.style.border = "none";
+    autoToggleBtn.style.borderRadius = "6px";
+    autoToggleBtn.style.fontWeight = "bold";
+    autoToggleBtn.style.fontSize = "12px";
+    autoToggleBtn.style.cursor = "pointer";
+    autoToggleBtn.style.color = "#ffffff";
+    autoToggleBtn.style.transition = "background 0.2s, transform 0.1s";
+    autoToggleBtn.addEventListener("mousedown", () => { autoToggleBtn.style.transform = "scale(0.97)"; });
+    autoToggleBtn.addEventListener("mouseup", () => { autoToggleBtn.style.transform = "scale(1)"; });
+    autoToggleBtn.addEventListener("click", () => {
+      if (Runtime && Runtime.autoFarm && Runtime.autoFarm.running) {
+        stopAutoFarmLoop();
+      } else {
+        startAutoFarmLoop();
+      }
+      updateRebuiltPanelMetrics();
+    });
+    btnRow.appendChild(autoToggleBtn);
+    bodyContainer.appendChild(btnRow);
+
+    document.body.appendChild(panel);
+    uiPanel = panel;
+    applyControlPanelCollapsedState();
+
+    // Start Live Refresh Ticker (Every 300ms)
+    statusTicker = setInterval(updateRebuiltPanelMetrics, 300);
+    Logger.log("UI", "Rebuilt Sleek Control Panel mounted successfully");
+    return panel;
+  }
+
+  function applyControlPanelCollapsedState() {
+    if (!uiPanel) {
+      return;
+    }
+    const body = uiPanel.querySelector("#rebuilt-panel-body");
+    const btn = uiPanel.querySelector("#rebuilt-panel-collapse");
+    const header = uiPanel.firstChild;
+    if (body) {
+      body.style.display = uiPanelCollapsed ? "none" : "block";
+    }
+    if (btn) {
+      btn.textContent = uiPanelCollapsed ? "▸" : "▾";
+      btn.title = uiPanelCollapsed ? "Expand panel" : "Collapse panel";
+    }
+    if (header && header.style) {
+      header.style.marginBottom = uiPanelCollapsed ? "0" : "10px";
+      header.style.paddingBottom = uiPanelCollapsed ? "0" : "8px";
+      header.style.borderBottom = uiPanelCollapsed ? "none" : "1px solid rgba(75, 117, 255, 0.25)";
+    }
+    uiPanel.style.width = uiPanelCollapsed ? "260px" : "300px";
+  }
+
+  function setControlPanelCollapsed(collapsed) {
+    uiPanelCollapsed = !!collapsed;
+    applyControlPanelCollapsedState();
+    return { ok: true, collapsed: uiPanelCollapsed };
+  }
+
+  function isControlPanelCollapsed() {
+    return uiPanelCollapsed;
+  }
+
+  // 2. Metrics Updater Tick
+  function updateRebuiltPanelMetrics() {
+    if (!uiPanel) {
+      return;
+    }
+
+    const statusText = uiPanel.querySelector("#rebuilt-stat-status");
+    const cyclesText = uiPanel.querySelector("#rebuilt-stat-cycles");
+
+    const mode = Runtime && Runtime.preferences ? Runtime.preferences.combatMode : "normal";
+    ["easy", "normal", "hard"].forEach((m) => {
+      const btn = uiPanel.querySelector(`#rebuilt-mode-${m}`);
+      if (btn) {
+        const active = m === mode;
+        btn.style.background = active ? "rgba(75, 117, 255, 0.35)" : "rgba(255,255,255,0.05)";
+        btn.style.borderColor = active ? "rgba(75, 117, 255, 0.85)" : "rgba(255,255,255,0.12)";
+        btn.style.color = active ? "#ffffff" : "#e1e7f5";
+      }
+    });
+
+    const avoidCb = uiPanel.querySelector("#rebuilt-pref-avoid-champions");
+    if (avoidCb && Runtime && Runtime.preferences) {
+      avoidCb.checked = !!Runtime.preferences.avoidChampions;
+    }
+    const bossCb = uiPanel.querySelector("#rebuilt-pref-avoid-bosses");
+    if (bossCb && Runtime && Runtime.preferences) {
+      bossCb.checked = Runtime.preferences.avoidBosses !== false;
+    }
+    const basementCb = uiPanel.querySelector("#rebuilt-pref-basement");
+    if (basementCb && Runtime && Runtime.preferences) {
+      basementCb.checked = !!Runtime.preferences.basementFarmingEnabled;
+    }
+    const shortBuffCb = uiPanel.querySelector("#rebuilt-pref-use-shortbuffs");
+    if (shortBuffCb && Runtime && Runtime.preferences) {
+      shortBuffCb.checked = Runtime.preferences.useShortBuffs !== false;
+    }
+    const longBuffCb = uiPanel.querySelector("#rebuilt-pref-use-longbuffs");
+    if (longBuffCb && Runtime && Runtime.preferences) {
+      longBuffCb.checked = Runtime.preferences.useLongBuffs !== false;
+    }
+    const combatBuffCb = uiPanel.querySelector("#rebuilt-pref-use-combatbuffs");
+    if (combatBuffCb && Runtime && Runtime.preferences) {
+      combatBuffCb.checked = Runtime.preferences.useCombatBuffs !== false;
+    }
+
+    const status = getBotStatus();
+    const runtimeRunning = Runtime && Runtime.autoFarm && Runtime.autoFarm.running;
+    const autoToggleBtn = uiPanel.querySelector("#rebuilt-auto-toggle");
+    if (autoToggleBtn) {
+      autoToggleBtn.textContent = runtimeRunning ? "STOP AUTO" : "START AUTO";
+      autoToggleBtn.style.background = runtimeRunning ? "#dc3545" : "#28a745";
+    }
+
+    if (statusText) {
+      if (runtimeRunning) {
+        statusText.textContent = (status.stage || "ACTIVE").toUpperCase();
+        statusText.style.color = "#28a745";
+        statusText.style.textShadow = "0 0 6px rgba(40,167,69,0.3)";
+      } else {
+        statusText.textContent = "OFFLINE";
+        statusText.style.color = "#dc3545";
+        statusText.style.textShadow = "0 0 6px rgba(220,53,69,0.3)";
+      }
+    }
+
+    if (cyclesText) {
+      cyclesText.textContent = Runtime && Runtime.autoFarm ? String(Runtime.autoFarm.cyclesCompleted) : "0";
+    }
+  }
+
+  // 4. Expose UI Cleanup to prevent duplicates on refresh
+  function destroyRebuiltControlPanel() {
+    if (statusTicker) {
+      clearInterval(statusTicker);
+      statusTicker = null;
+    }
+    if (uiPanel) {
+      try {
+        uiPanel.remove();
+      } catch (err) {}
+      uiPanel = null;
+    }
+  }

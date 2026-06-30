@@ -1,0 +1,252 @@
+{
+  "version": "1.4.3-beta",
+  "description": "Fix diagnostic clipboard recursion soften sustain HP-drop confirmation and add Archer Sniper Shot finisher",
+  "builtAt": "2026-06-29T11:08:49.652Z",
+  "history": [
+    {
+      "version": "1.4.3-beta",
+      "description": "Fix diagnostic clipboard recursion soften sustain HP-drop confirmation and add Archer Sniper Shot finisher",
+      "date": "2026-06-29T11:08:49.652Z"
+    },
+    {
+      "version": "1.4.2-beta",
+      "description": "Add buff toggles red champion dice pathing and sustain HP-drop combat interrupt",
+      "date": "2026-06-28T20:42:57.957Z"
+    },
+    {
+      "version": "1.4.1-beta",
+      "description": "Add crash reports and recent-cycle diagnostics",
+      "date": "2026-06-25T15:21:35.286Z"
+    },
+    {
+      "version": "1.4.0-beta",
+      "description": "Boss avoidance toggle threat-priority attacker targeting and normal Windy Dome buff handling",
+      "date": "2026-06-24T11:37:12.034Z"
+    },
+    {
+      "version": "1.3.2-beta",
+      "description": "Disable GUI auto-mount and remove unused UI planner code",
+      "date": "2026-06-23T18:57:48.589Z"
+    },
+    {
+      "version": "1.3.1-beta",
+      "description": "Beta easy-mode skill policy forbidden skill instant combat buffs and input blocker",
+      "date": "2026-06-23T05:45:44.285Z"
+    },
+    {
+      "version": "1.2.9-beta",
+      "description": "Public beta retarget queue lock and basement entry suppression",
+      "date": "2026-06-22T15:52:09.996Z"
+    },
+    {
+      "version": "1.2.8",
+      "description": "Enforce DoT fresh opener and clear queue after AoE cancel",
+      "date": "2026-06-22T14:28:20.277Z"
+    },
+    {
+      "version": "1.2.7",
+      "description": "Close coord popup before non-combat sustain and scan completion",
+      "date": "2026-06-22T13:44:38.015Z"
+    },
+    {
+      "version": "1.2.6",
+      "description": "Cancel active AoE cast after target death before retarget",
+      "date": "2026-06-22T13:10:13.014Z"
+    },
+    {
+      "version": "1.2.5",
+      "description": "Use explicit fresh-target opener flag for DoT priority",
+      "date": "2026-06-22T12:31:47.842Z"
+    },
+    {
+      "version": "1.2.4",
+      "description": "Prioritize AoE by attackers count instead of enemy count",
+      "date": "2026-06-22T12:07:29.686Z"
+    },
+    {
+      "version": "1.2.3",
+      "description": "Prioritize AoE by enemy count, survival control under low HP, and DoT openers",
+      "date": "2026-06-22T11:46:00.849Z"
+    },
+    {
+      "version": "1.2.2",
+      "description": "Fix comma-number damage parsing for skill scoring",
+      "date": "2026-06-22T10:50:59.512Z"
+    },
+    {
+      "version": "1.2.1",
+      "description": "Use Close tag for AoE and Attack reset target text for target-reset skills",
+      "date": "2026-06-22T10:50:32.507Z"
+    },
+    {
+      "version": "1.2.0",
+      "description": "Streamline GUI controls and tune combat skill scoring under pressure",
+      "date": "2026-06-22T02:35:50.177Z"
+    },
+    {
+      "version": "1.1.0",
+      "description": "Stable lens-aware ring exploration",
+      "date": "2026-06-22T02:12:24.035Z"
+    },
+    {
+      "version": "1.0.33-alpha",
+      "description": "Use action-bar disabled cooldown state for HP MP potions",
+      "date": "2026-06-22T01:36:15.354Z"
+    },
+    {
+      "version": "1.0.32-alpha",
+      "description": "Restrict running recovery to potions only",
+      "date": "2026-06-22T01:23:24.809Z"
+    },
+    {
+      "version": "1.0.31-alpha",
+      "description": "Global HP/MP sustain gates, emergency run mechanic and 18s loot settle",
+      "date": "2026-06-22T01:20:03.621Z"
+    },
+    {
+      "version": "1.0.30-alpha",
+      "description": "Retry movement once on coordinate mismatch before stopping",
+      "date": "2026-06-22T00:46:12.500Z"
+    },
+    {
+      "version": "1.0.29-alpha",
+      "description": "Add collapsible GUI panel",
+      "date": "2026-06-22T00:36:36.400Z"
+    },
+    {
+      "version": "1.0.28-alpha",
+      "description": "Use scanned target coords as primary movement verification",
+      "date": "2026-06-22T00:35:05.373Z"
+    },
+    {
+      "version": "1.0.27-alpha",
+      "description": "Treat post-move coordinate mismatch as movement failure",
+      "date": "2026-06-22T00:21:26.635Z"
+    },
+    {
+      "version": "1.0.26-alpha",
+      "description": "Use visible Exiting button after basement knowledge loot",
+      "date": "2026-06-21T23:55:52.047Z"
+    },
+    {
+      "version": "1.0.25-alpha",
+      "description": "Reset basement movement direction and use champion end detection before knowledge loot",
+      "date": "2026-06-21T23:24:04.277Z"
+    },
+    {
+      "version": "1.0.24-alpha",
+      "description": "Enter basement only after clearing entrance tile enemies",
+      "date": "2026-06-21T23:02:04.259Z"
+    },
+    {
+      "version": "1.0.23-alpha",
+      "description": "Detect basement portal action by highlighted icon and set loot timeout to 15s",
+      "date": "2026-06-21T22:48:41.332Z"
+    },
+    {
+      "version": "1.0.22-alpha",
+      "description": "Use map recenter verification after movement before reading current tile coords",
+      "date": "2026-06-21T21:22:19.401Z"
+    },
+    {
+      "version": "1.0.21-alpha",
+      "description": "Complete baseline basement farming flow with entry, movement verification, visited suppression, champion override and safe exit",
+      "date": "2026-06-21T21:10:35.472Z"
+    },
+    {
+      "version": "1.0.20-alpha",
+      "description": "Delay center-tile verification click until map recenter settles",
+      "date": "2026-06-21T20:22:35.840Z"
+    },
+    {
+      "version": "1.0.19-alpha",
+      "description": "Gate basement entry by preference and fix safe basement exit handling",
+      "date": "2026-06-21T20:18:04.503Z"
+    },
+    {
+      "version": "1.0.18-alpha",
+      "description": "Use progressbar visibility for loot settle instead of stale status text",
+      "date": "2026-06-21T19:46:44.605Z"
+    },
+    {
+      "version": "1.0.17-alpha",
+      "description": "Handle no-enemy Find Enemy result and make loot timeout hold with diagnostics",
+      "date": "2026-06-20T21:12:00.977Z"
+    },
+    {
+      "version": "1.0.16-alpha",
+      "description": "Wait for loot settle before next scan and add map-center settle",
+      "date": "2026-06-20T20:47:19.205Z"
+    },
+    {
+      "version": "1.0.15-alpha",
+      "description": "Hold occupied tile on Find Enemy lock failure and add verified Find Enemy click diagnostics",
+      "date": "2026-06-20T20:10:45.930Z"
+    },
+    {
+      "version": "1.0.14-alpha",
+      "description": "Ensure map open before scans and avoid skipping combat on stale enemy count",
+      "date": "2026-06-20T19:40:26.759Z"
+    },
+    {
+      "version": "1.0.13-alpha",
+      "description": "Fix attackers counter selector for button-icon-counter DOM",
+      "date": "2026-06-20T19:28:30.520Z"
+    },
+    {
+      "version": "1.0.12-alpha",
+      "description": "Close tile popup before combat target acquisition",
+      "date": "2026-06-20T19:16:35.414Z"
+    },
+    {
+      "version": "1.0.11-alpha",
+      "description": "Track longbuff expiry and refresh only near expiration",
+      "date": "2026-06-20T19:09:36.408Z"
+    },
+    {
+      "version": "1.0.10-alpha",
+      "description": "Detect real buff cooldown from span.skill-cooldown only",
+      "date": "2026-06-20T18:57:58.469Z"
+    },
+    {
+      "version": "1.0.9-alpha",
+      "description": "Wait for real buff cooldown digits instead of cast-time disabled state",
+      "date": "2026-06-20T18:50:09.417Z"
+    },
+    {
+      "version": "1.0.8-alpha",
+      "description": "Make prebuff sequencing wait for each buff cooldown before next cast",
+      "date": "2026-06-20T18:21:45.711Z"
+    },
+    {
+      "version": "1.0.7-alpha",
+      "description": "Fix prebuff casting from scan state with popup cleanup and confirmed cast settle",
+      "date": "2026-06-20T17:40:00.308Z"
+    },
+    {
+      "version": "1.0.6-alpha",
+      "description": "Restore GUI controls, potion icon detection and target selection flow",
+      "date": "2026-06-20T16:41:44.165Z"
+    },
+    {
+      "version": "1.0.5-alpha",
+      "description": "Fix rebuilt header version sync, boot panel gate and snapshot ticker",
+      "date": "2026-06-20T16:22:08.749Z"
+    },
+    {
+      "version": "1.0.4-alpha",
+      "description": "Fix isInBasement false positive at 0,0, buff cast settle timeout and signal order, map re-centering",
+      "date": "2026-06-20T12:36:04.729Z"
+    },
+    {
+      "version": "1.0.3-alpha",
+      "description": "Scan timing 50ms per tile, Find Enemy retries, party buff fix",
+      "date": "2026-06-20T11:14:37.463Z"
+    },
+    {
+      "version": "1.0.2-alpha",
+      "description": "Unified targeting, AoE planner, skill metadata & buff repair, basement state machine",
+      "date": "2026-06-20T09:46:20.380Z"
+    }
+  ]
+}

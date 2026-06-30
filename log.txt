@@ -1,0 +1,256 @@
+  // --- Layer 6 Module: 99-bootstrap.js (Initialization & Exposing Debug APIs) ---
+  // Initializes the rebuilt Ligmar farming bot and mounts standard window namespaces.
+
+  function start() {
+    Logger.log("BOOT", `Ligmar Farming Bot Rebuilt version ${BotVersion.version} loaded!`);
+    
+    // Wire up global Debug API namespace
+    window.ligmarBot = {
+      version: BotVersion,
+      Config: Config,
+      Runtime: Runtime,
+      Logger: Logger,
+      
+      // Diagnostics
+      getRecentCycleDiagnostics: getRecentCycleDiagnostics,
+      getCurrentCycleDiagnostics: getCurrentCycleDiagnostics,
+      getLastCrashReport: getLastCrashReport,
+      copyLastCrashReport: copyLastCrashReport,
+      createDiagnosticReport: createDiagnosticReport,
+      recordDiagnosticDecision: recordDiagnosticDecision,
+      recordDiagnosticSnapshot: recordDiagnosticSnapshot,
+      
+      // Basic Actions
+      clickActionBarSlot: clickActionBarSlot,
+      isActionBarSlotShowingCooldown: isActionBarSlotShowingCooldown,
+      getActionBarSlotCooldownSpanText: getActionBarSlotCooldownSpanText,
+      isActionBarSlotShowingCooldownDigits: isActionBarSlotShowingCooldownDigits,
+      clickBasicAttack: clickBasicAttack,
+      clickAttackersButton: clickAttackersButton,
+      getVisibleAttackersPopupCards: getVisibleAttackersPopupCards,
+      clickAttackersPopupCard: clickAttackersPopupCard,
+      
+      // States and scrapers
+      readBasicState: readBasicState,
+      readCurrentCoordsFromPopup: readCurrentCoordsFromPopup,
+      readTilePopupDetails: readTilePopupDetails,
+      readEnemyCount: readEnemyCount,
+      
+      // Verifications
+      waitForCondition: waitForCondition,
+      ensureMapOpen: ensureMapOpen,
+      ensureMapZoomedOut: ensureMapZoomedOut,
+      clickMapCenterTile: clickMapCenterTile,
+      clickMapRelative: clickMapRelative,
+      ensureMapCentered: ensureMapCentered,
+      scanNeighborRing: scanNeighborRing,
+      clickFindEnemyVerified: clickFindEnemyVerified,
+      isFindEnemyButtonReady: isFindEnemyButtonReady,
+      parseAttackersPopupCardThreat: parseAttackersPopupCardThreat,
+      chooseBestAttackersPopupCard: chooseBestAttackersPopupCard,
+      selectTargetFromAttackersPopup: selectTargetFromAttackersPopup,
+      
+      // Spatial Map / Movement
+      reverseDirection: reverseDirection,
+      parseLootKindsFromMarkers: parseLootKindsFromMarkers,
+      scoreScannedTile: scoreScannedTile,
+      chooseBestScannedNeighbor: chooseBestScannedNeighbor,
+      tileHasUsefulLoot: tileHasUsefulLoot,
+      ringHasUsefulLoot: ringHasUsefulLoot,
+      chooseStepTowardRingTarget: chooseStepTowardRingTarget,
+      chooseBestUsefulRingTarget: chooseBestUsefulRingTarget,
+      isMovementInProgress: isMovementInProgress,
+      waitUntilNotMoving: waitUntilNotMoving,
+      waitForMoveButtonEnabled: waitForMoveButtonEnabled,
+      doubleClickMapPoint: doubleClickMapPoint,
+      moveToScannedNeighbor: moveToScannedNeighbor,
+      getSecondRingOffsets: getSecondRingOffsets,
+      getThirdRingOffsets: getThirdRingOffsets,
+      scanRingForColorInSingleCapture: scanRingForColorInSingleCapture,
+      scanSecondRingClickable: scanSecondRingClickable,
+      scanSecondRingForDie: scanSecondRingForDie,
+      scanSecondRingForChampion: scanSecondRingForChampion,
+      scanThirdRingForColor: scanThirdRingForColor,
+      getLensState: getLensState,
+      setLensStateOverride: setLensStateOverride,
+      detectLensState: detectLensState,
+      
+      // Hero & Skills Scanners
+      parseHeroCombatStatsFromParamItems: parseHeroCombatStatsFromParamItems,
+      parseHeroCombatStatsFromText: parseHeroCombatStatsFromText,
+      mergeHeroCombatStats: mergeHeroCombatStats,
+      collectHeroStatsTextBlob: collectHeroStatsTextBlob,
+      clickHeroProfileAvatar: clickHeroProfileAvatar,
+      findHeroStatsTab: findHeroStatsTab,
+      clickHeroStatsTab: clickHeroStatsTab,
+      clickHeroBattleFooter: clickHeroBattleFooter,
+      readHeroCombatStats: readHeroCombatStats,
+      
+      // Skills
+      normalizeSkillName: normalizeSkillName,
+      getDescriptionText: getDescriptionText,
+      getSkillTags: getSkillTags,
+      normalizeCastTimeSec: normalizeCastTimeSec,
+      getSkillParams: getSkillParams,
+      parseSkillEffects: parseSkillEffects,
+      inferSkillConception: inferSkillConception,
+      scanSkills: scanSkills,
+      
+      // Combat & Pipelines
+      startAutoFarmLoop: startAutoFarmLoop,
+      stopAutoFarmLoop: stopAutoFarmLoop,
+      getBotStatus: getBotStatus,
+      setBotStatus: setBotStatus,
+      isInBasement: isInBasement,
+      enableGameInputBlocker: enableGameInputBlocker,
+      disableGameInputBlocker: disableGameInputBlocker,
+      isGameInputBlocked: isGameInputBlocked,
+      isSkillForbiddenForAutomation: isSkillForbiddenForAutomation,
+      hasBasicAttackOnBar: hasBasicAttackOnBar,
+      isAutoFarmEasyMode: isAutoFarmEasyMode,
+      isImmediateCombatBuff: isImmediateCombatBuff,
+      tryUseImmediateCombatBuffIfReady: tryUseImmediateCombatBuffIfReady,
+      getBasementState: getBasementState,
+      basementSetPhase: basementSetPhase,
+      markBasementEntered: markBasementEntered,
+      markBasementExited: markBasementExited,
+      detectBasementExitButton: detectBasementExitButton,
+      detectBasementPortalActionButton: detectBasementPortalActionButton,
+      detectBasementEntryButton: detectBasementEntryButton,
+      maybeEnterBasementAfterMove: maybeEnterBasementAfterMove,
+      isBasementPortalTile: isBasementPortalTile,
+      isBasementEndCandidateTile: isBasementEndCandidateTile,
+      addBasementVisitedTile: addBasementVisitedTile,
+      isBasementTileVisited: isBasementTileVisited,
+      getBasementVisitedTiles: getBasementVisitedTiles,
+      predictBasementTileCoord: predictBasementTileCoord,
+      getActiveModeSettings: getActiveModeSettings,
+      normalizeCombatModeName: normalizeCombatModeName,
+      setCombatMode: setCombatMode,
+      setAvoidChampions: setAvoidChampions,
+      setAvoidBosses: setAvoidBosses,
+      setBasementFarmingEnabled: setBasementFarmingEnabled,
+      setUseShortBuffs: setUseShortBuffs,
+      setUseLongBuffs: setUseLongBuffs,
+      setUseCombatBuffs: setUseCombatBuffs,
+      getBotPreferences: getBotPreferences,
+      readAttackersCount: readAttackersCount,
+      readAttackersCounterDetail: readAttackersCounterDetail,
+      findBestPotionSlot: findBestPotionSlot,
+      evaluateAndUsePotions: evaluateAndUsePotions,
+      getPotionSlotState: getPotionSlotState,
+      isPotionSlotReady: isPotionSlotReady,
+      isPotionSlotUnavailable: isPotionSlotUnavailable,
+      waitForPotionSlotUnavailable: waitForPotionSlotUnavailable,
+      runGlobalSustainCheck: runGlobalSustainCheck,
+      waitForTravelResourcesForCurrentMode: waitForTravelResourcesForCurrentMode,
+      shouldCloseCoordPopupBeforeSustain: shouldCloseCoordPopupBeforeSustain,
+      closeCoordPopupBeforeSustainIfNeeded: closeCoordPopupBeforeSustainIfNeeded,
+      isHealthAmuletInCooldown: isHealthAmuletInCooldown,
+      detectRunButton: detectRunButton,
+      clickRunButton: clickRunButton,
+      isRunningStateActive: isRunningStateActive,
+      isRunButtonInCooldown: isRunButtonInCooldown,
+      waitForRunningRecovery: waitForRunningRecovery,
+      maybeTriggerEmergencyRun: maybeTriggerEmergencyRun,
+      tryUseRecoverySkill: tryUseRecoverySkill,
+      classifySupportBuff: classifySupportBuff,
+      resolveSupportBuffDurationSec: resolveSupportBuffDurationSec,
+      getSupportBuffTrackingDurationSec: getSupportBuffTrackingDurationSec,
+      waitForSupportBuffSlotCooldownStarted: waitForSupportBuffSlotCooldownStarted,
+      waitForSupportCastResolved: waitForSupportCastResolved,
+      maintainLongbuffsOutOfCombat: maintainLongbuffsOutOfCombat,
+      getSupportBuffAssumedDurationTrackingSnapshot: getSupportBuffAssumedDurationTrackingSnapshot,
+      clearSupportBuffAssumedDurationTracking: clearSupportBuffAssumedDurationTracking,
+      closeHexPopupIfVisible: closeHexPopupIfVisible,
+      closeHexPopupBeforePrebuffIfNeeded: closeHexPopupBeforePrebuffIfNeeded,
+      applyPreMoveSupportBuffsIfNeeded: applyPreMoveSupportBuffsIfNeeded,
+      readBattleProgressState: readBattleProgressState,
+      waitForLootSettled: waitForLootSettled,
+      secureTileAndLootOnce: secureTileAndLootOnce,
+      detectActiveAoeCast: detectActiveAoeCast,
+      detectPressToCancelElement: detectPressToCancelElement,
+      clearCombatQueueAfterAoeCancel: clearCombatQueueAfterAoeCancel,
+      cancelActiveAoeCastIfNeeded: cancelActiveAoeCastIfNeeded,
+      maybeUseArcherSniperShotFinisher: maybeUseArcherSniperShotFinisher,
+      
+      // Planner
+      plannerSeqNormalizeOneSkill: plannerSeqNormalizeOneSkill,
+      plannerCalculateSkillUtility: plannerCalculateSkillUtility,
+      plannerPickSkillOpeningPick: plannerPickSkillOpeningPick,
+      armPostRetargetQueuePolicy: armPostRetargetQueuePolicy,
+      clearPostRetargetQueuePolicy: clearPostRetargetQueuePolicy,
+      plannerManageQueueTick: plannerManageQueueTick,
+      
+      // UI / Diagnostics Panel
+      createControlPanel: createRebuiltControlPanel,
+      destroyControlPanel: destroyRebuiltControlPanel,
+      setControlPanelCollapsed: setControlPanelCollapsed,
+      isControlPanelCollapsed: isControlPanelCollapsed,
+      
+      // Utilities
+      sleep: sleep,
+      isElementVisible: isElementVisible,
+      dispatchUserClickSequence: dispatchUserClickSequence,
+      clickElementSafe: clickElementSafe,
+      dispatchClickAt: dispatchClickAt,
+      dispatchCanvasClickAt: dispatchCanvasClickAt,
+      dispatchCanvasDblClickAt: dispatchCanvasDblClickAt,
+      parseStatNumber: parseStatNumber,
+      parseFractionText: parseFractionText,
+      parseFirstInt: parseFirstInt,
+      parseCoordsText: parseCoordsText
+    };
+
+    Logger.log("BOOT", "Debug API exposed as window.ligmarBot");
+    
+    // Mount the overlay only when explicitly enabled. The control API remains available
+    // through window.ligmarBot.createControlPanel() for manual / desktop-app diagnostics.
+    if (Config.bootGui && Config.bootGui.autoMountPanel !== false && typeof createRebuiltControlPanel === "function") {
+      try {
+        destroyRebuiltControlPanel();
+        createRebuiltControlPanel();
+      } catch (err) {
+        Logger.error("BOOT", "Failed to mount Control Panel", err);
+      }
+    } else {
+      Logger.log("BOOT", "Control panel auto-mount skipped by Config.bootGui.autoMountPanel");
+    }
+    
+    if (!window.__ligmarBotDiagHandlersInstalled) {
+      window.__ligmarBotDiagHandlersInstalled = true;
+      window.addEventListener("error", (ev) => {
+        try { createDiagnosticReport("window_error", { message: ev.message, filename: ev.filename, lineno: ev.lineno, colno: ev.colno, error: ev.error && (ev.error.stack || String(ev.error)) }); } catch (err) {}
+      });
+      window.addEventListener("unhandledrejection", (ev) => {
+        try {
+          const rawReason = ev && ev.reason ? (ev.reason.stack || String(ev.reason)) : "";
+          const now = Date.now();
+          const isClipboardNoise = String(rawReason || "").indexOf("Clipboard") !== -1 || String(rawReason || "").indexOf("writeText") !== -1;
+          if (isClipboardNoise && ev && typeof ev.preventDefault === "function") {
+            ev.preventDefault();
+          }
+          if (!window.__ligmarBotLastUnhandledReportAt || now - window.__ligmarBotLastUnhandledReportAt > 5000) {
+            window.__ligmarBotLastUnhandledReportAt = now;
+            createDiagnosticReport("unhandled_rejection", { reason: rawReason }, { autoCopy: false });
+          } else if (Logger && Logger.debug) {
+            Logger.debug("DIAG", "Suppressed repeated unhandled rejection report", { reason: rawReason });
+          }
+        } catch (err) {}
+      });
+    }
+
+    // Optional state snapshots. Do not poll readBasicState() when snapshots are disabled.
+    if (Config.logging && Config.logging.stateSnapshots) {
+      const snapshotTickMs = (Config.timings && Number.isFinite(Config.timings.stateSnapshotTickMs))
+        ? Config.timings.stateSnapshotTickMs
+        : 1000;
+      setInterval(() => {
+        const state = readBasicState();
+        Logger.log("STATE", "Basic snapshot", state);
+      }, snapshotTickMs);
+    }
+  }
+
+  start();
+})();

@@ -1,394 +1,512 @@
-# Ligmarbot roadmap
+# Ligmar Farming Bot Rebuilt Architecture
 
-Baseline **v1.0.0-alpha+** (game-stable DOM epoch; legacy **v0.3.x** in history only). **Going forward: bigger releases** — see **§ Release cadence** below; no more one-line-per-patch unless it’s an emergency hotfix. **TEST** stays the full in-game validator via **`ligmarBot.runUiTestBundle()`** (console) when a version needs checks (see **`ARCHITECTURE.md`** versioning + **`.cursor/rules/ligmarbot-ship-version.mdc`**).
+Current implementation version: **1.4.3-beta**  
+Current active source directory: **`rebuilt_src/`**
 
-## Release cadence (bigger steps)
+This document describes the **current rebuilt implementation**, not older roadmap/speculative architecture.
 
-Ship **fewer, fatter** versions so each refresh feels worth it:
+---
 
-| Prefer | Avoid |
-|--------|--------|
-| One **headline** per bump (e.g. “loot + inventory hardening”, “scan speed pack”) | Dedicated patch for return-value / hint / single API only |
-| Batch until **gameplay** or **multi-file** feature is done | “Slice 37: tweak `Logger` text” as its own version |
-| Collect small tweaks on a branch → **one** `build.ps1 -Description "…"` | Daily micro-bumps that only change console ergonomics |
-| **`-NoBump`** for **docs / rules-only** commits | Bumping `loader.user.js` when nothing in the bundle changed |
+## 1. Build and delivery model
 
-Emergency **hotfix** (crash / wrong click): ship immediately, even if tiny.
+The bot is a Tampermonkey userscript built from ordered modules.
 
-## Done recently
+```txt
+rebuilt_src/modules/*.js
+  → rebuilt_src/build.mjs
+  → rebuilt_src/rebuilt_bot.user.js
+  → rebuilt_src/loader.user.js
+```
 
-- **Universal Multi-Class Combat Model: magic-attack stats, multi-class parser/fallbacks, Sniper Shot finisher (ship — v1.2.9-alpha)** — Four small, additive phases (U1–U4) on top of the stable `v1.2.8-alpha` baseline that lift the planner / parser pipeline above its Archer-/Assassin-shaped assumptions so non-Archer builds (Mage, Priest, Warrior, hybrid) can produce non-zero damage estimates and tactically reasonable openers without per-skill recipes. Legacy Archer behavior is unchanged when the new fields are unset.
-  - **U1 — hero stats model** — `parseStatNumber` now treats min-max ranges (`"17-30"` → 17, `"150-200"` → 150) as the minimum value for conservative damage estimation; negative singletons (`"-5"`) still parse correctly. `parseHeroCombatStatsFromText` (regex `/magic\s+attack\s*[:\s]+([\d.,-]+)/i`), `parseHeroCombatStatsFromParamItems` (`name === "magic attack"` row), and `mergeHeroCombatStats` add `magicAttack` as a first-class stat. `Runtime.hero.combatStats` documents the merged shape; `magicAttack` is initialized to `null` everywhere physical attack is.
-  - **U2 — multi-class parser coverage** — `SkillEffectPatterns` adds `flat_direct_damage` (class-agnostic flat instant damage incl. comma/and/or/`,` prefixes and `min → max` upgrade arrows; takes the lower number), `gear_direct_damage` (`"N% physical/magic damage from gear/equipment"` → `gear_direct_damage` with `percent` property), and `heal_hp_advanced` (Mage/Priest health-by-N + magic-attack scaling clause → `heal` effect with `percentOfMagicAttack`). The legacy `(?:additional|additionally)\s+...` fallback at the bottom of `parseSkillEffects` is removed because `flat_direct_damage` is a strict superset. The two `basic_proc` branches collapse to one regex `/deals\s+(?:basic|base)\s+(physical|magic|magical)\s+damage/i` so Mage/Priest "Deals base magic damage" descriptions emit `basic_proc{magic}`. Pattern-loop guards skip `gear_direct_damage` when `channel_gear` matched (Sniper Shot bundles), and `flat_direct_damage` when EITHER `channel_gear` or `gear_direct_damage` already fired (avoids gear's `"N%"` substring re-capturing as flat).
-  - **U3 — fallback damage model** — `plannerSeqNormalizeOneSkill` resolves typed bases: `physBase` (`stats.physicalAttack` → `expectedBasicHit` → 0) and `magicBase` (`stats.magicAttack` → `physBase`). Magic-tagged `basic_proc` / `channel_gear` lines now use `magicBase`; `gear_direct_damage` becomes a flat immediate hit `baseDamage * (percent / 100) * mobFactor`. **Generic fallback**: when an attack skill (`row.isAttack && row.targetsEnemy`) parses to ZERO immediate AND zero DoT damage, the planner seeds `Config.planner.fallbackDamageMultiplier * baseAttack` (default 1.5×) into the matching damage bucket. Damage type follows `detectProfileClassKey()` — mage/priest → magic against `magicBase`; otherwise physical against `physBase`. This prevents new / un-mapped class skills from being silently ranked as 0 by sequence search and opener horizon.
-  - **U4a — Sniper Shot finisher rule** — In `plannerBuildChargeReleasePlan`, before the dynamic-candidate loop, the planner now checks for the snipershot identity AND a valid live target HP. If `targetHp.cur <= expectedBasicHit * (1 + (gearPct / 100) * stepFraction)` (the immediate-cancel damage at the minimum release fraction, defaults `≈ 1.02 * baseHit`), it returns a dedicated finisher plan with `releaseMs = 50` and `releaseSource = "snipershot_finisher_window"` (`selectionMode: "snipershot_finisher_instant_cancel"`). Above that threshold (or with no live target HP) the rule is a no-op and the existing dynamic search runs unchanged. The legacy pressure-aware finisher penalties in `plannerSeqExplainSemantic` continue to gate full-charge under pressure.
-  - **U4b — class-agnostic semantics** — New helper `plannerSeqClassAgnosticTacticalAdj(node, combatState)` summed into `plannerSeqScoreNode` AFTER the existing `semanticAdjSec`. Three rules, each bounded TTK-equivalent seconds:
-    - **Mana management**: penalty when simulated `mpCur/mpMax < 0.3` AND `manaCost / mpMax >= 0.25` (default +0.6 s).
-    - **Emergency protection**: bonus when simulated `playerHp/max < 0.4` AND skill is heal (`tacticalRoles.includes("recovery")`) or shield (`semantic.role === "defensive_utility"`) (default −1.0 s).
-    - **AoE under pressure**: bonus when `skill.isAoe === true` AND `pre.effectiveActiveAttackers >= 2` (default −0.7 s).
-    - All knobs live in `Config.planner.sequencePlanner.*` and default to mild adjustments so the rules nudge close decisions instead of dominating the score.
-  - **TEST extensions** — 5 new `v128_*` deterministic tests cover: range parsing minimum, magic-skill parsing (flat / gear / heal / base verb), fallback damage estimation (1.5 × baseAttack), Sniper Shot finisher fraction (override at low target HP, no-op at full target HP), and class-agnostic adjustments (positive sanity check on AoE + emergency-heal node).
-  - **Public API additions** — `parseStatNumber`, `parseHeroCombatStatsFromText`, `mergeHeroCombatStats`, `parseSkillEffects`, `plannerSeqNormalizeOneSkill`, `plannerBuildChargeReleasePlan`, `plannerSeqClassAgnosticTacticalAdj` exposed on `window.ligmarBot`.
-  - Files: `bot/modules/81-hero.js` (range parsing + magic attack), `bot/modules/82-skills.js` (3 new patterns + unified `basic_proc`), `bot/modules/86-planner.js` (typed bases, gear-direct, fallback, Sniper Shot finisher rule, class-agnostic helper), `bot/modules/10-config.js` (`fallbackDamageMultiplier` + sequencePlanner tactical knobs), `bot/modules/20-runtime.js` (combatStats shape comment), `bot/modules/90-ui.js` (5 new `v128_*` tests), `bot/modules/99-bootstrap.js` (helpers exposed), `ARCHITECTURE.md`, `ROADMAP.md`.
+Build command:
 
-- **Basement champion-tile combat sequence: attackers-popup target select with bounded waits (ship — v1.2.8-alpha)** — Focused champion-tile combat sequence patch on top of `v1.2.7-alpha`. The user's live clarification: when the bot steps onto a basement champion tile, the champion starts attacking almost immediately and its card appears in the **attackers popup** within ~1–2 seconds — and we must use a bounded `waitForCondition` for that signal, not a blind delay.
-  - **`selectBasementChampionFromAttackersPopupIfNeeded(opts)`** in `70-verify.js`: new dedicated runtime sequence. Gated on `inBasement && farmingEnabled && Config.basement.attackersPopupChampionEnabled !== false`. Steps: open attackers popup → bounded wait for popup to actually open (`Config.basement.attackersPopupOpenTimeoutMs`, default 1500 ms) → bounded wait for a champion attacker CARD to appear (`Config.basement.attackersPopupChampionWaitTimeoutMs`, default 2500 ms) → click champion card via `clickAttackersPopupCard` → best-effort `waitForTargetAcquired`. Champion-card detection matches the same `mob-type-champion` / `event-champion` blobs used elsewhere; substring list is configurable via `Config.basement.attackersPopupChampionCardClassSubstrings`.
-  - **No blind delays as the primary wait** — every wait is `waitForCondition` with a bounded `timeoutMs` and `pollMs`. The helper soft-fails on every step (`{ ok: false, reason: "..." }`) and never throws.
-  - **Wired into `secureTileAndLootOnce`** — after the per-tile prebuff pass and BEFORE the find-enemy loop, the cycle now calls `selectBasementChampionFromAttackersPopupIfNeeded({})`. On soft-fail the existing find-enemy + `selectSpecialTileTargetIfDesired` (tile-popup) path runs as fallback so combat is never blocked.
-  - **No-basic-attack builds do not stall** — the new helper is a pure target-select primitive; it does not click `Attack`. The existing combat flow already handles "no usable basic attack" (`clickBasicAttack` returns false → planner/ranked-skill path takes over). Combined with the new helper, a no-basic build immediately gets the champion locked and starts skill-driven combat.
-  - **Knowledge → exit flow unchanged** — v1.2.5/v1.2.6 already require knowledge settle (highlighted-collect button gone AND busy text gone) before promoting `atEnd → complete`, and v1.2.7 added immediate exit after settle when the `Exiting` button is visible. v1.2.8 only adds the missing target-select primitive for the champion combat tile.
-  - **TEST extensions** — 7 new `v127_*` deterministic tests cover: skips when not in basement, skips when feature flag is off, bounded popup-open timeout (no stall), bounded champion-card timeout when popup has only normal mobs, clicks champion card when present from start, waits for late-arriving champion card via signal (proves wait was signal-based), soft-fail does not throw on attackers-button click failure.
-  - **Public API additions** — `selectBasementChampionFromAttackersPopupIfNeeded` exposed on `window.ligmarBot`.
-  - Files: `bot/modules/10-config.js` (basement attackers-popup knobs), `bot/modules/70-verify.js` (new helper), `bot/modules/85-combat.js` (wire helper after prebuffs, before find-enemy), `bot/modules/90-ui.js` (7 new `v127_*` tests), `bot/modules/99-bootstrap.js` (1 new helper exposed), `ARCHITECTURE.md`, `ROADMAP.md`.
+```bash
+cd botscript/rebuilt_src
+node build.mjs --desc "Short patch description"
+```
 
-- **Basement gameplay correction: entry suppressed when off, basement-wide champion override gated on farming, hard-block (0,0) entrance, champion-tile HP/MP gate, immediate exit after knowledge settle (ship — v1.2.7-alpha)** — Focused gameplay correction on top of `v1.2.6-alpha`. Live-play feedback identified that v1.2.6 still let the bot click into basements when farming was OFF, allowed the entrance tile to win scoring late in a run, and required two outer cycles between knowledge settle and exit click.
-  - **Entry click suppressed when farming disabled** — `maybeApplyBasementTransitionAroundLoot` runs `detectBasementEntryFromUi` BEFORE the no-farming fast-path. When the highlighted-collect button is a basement entry (ladder/"Basement"), the click is hard-suppressed with `reason: "farming_disabled_entry_suppressed"` even when farming is off. Non-entry collect buttons still pass through.
-  - **Hard-block `[0;0]` entrance tile while exploring** — `scoreScannedTile` returns `-9999` for any candidate scan tile whose predicted coord (via `predictTileCoord(lastTileCoords, tile.key)` using empirically-learned `directionOffsets`) matches either the canonical `"0,0"` or the recorded `entranceTileKey`, while `phase ∈ {exploring, atEnd}`. The hard block lifts at `complete` / `returning` so the bot CAN walk back to use `Exiting`.
-  - **Basement-wide champion override now requires `farmingEnabled === true`** — `scoreScannedTile` and `selectSpecialTileTargetIfDesired` both require `inBasement && basementFarmingEnabled && Config.basement.basementWideChampionOverride !== false`. With farming off, champion avoidance reverts to the legacy phase-aware end-only override (which still respects `Config.basement.endChampionOverride`).
-  - **Champion-tile pre-move resource gate** — new `maybeWaitForBasementChampionResources(target)` helper is called from `exploreByScan` BEFORE `moveToMapPoint`. Requires `Config.basement.championPreMoveMinHpPct` (default 0.95) and `championPreMoveMinMpPct` (default 0.95) before walking onto a basement champion tile, with OOC top-off helpers running while waiting. Soft-fails on `Config.basement.championPreMoveMaxWaitMs` timeout (default 30 000 ms). Existing `maybeApplyPrebuffsForNewMobTile` at `secureTileAndLootOnce` start and `selectSpecialTileTargetIfDesired` (champion icon click in attackers popup) handle the rest of the champion-clear sequence; v1.2.7 only adds the missing pre-move HP/MP gate.
-  - **Immediate exit after knowledge settle** — when the wrapper promotes `atEnd → complete` after a successful knowledge settle AND the dedicated `Exiting` button is visible right then (end-tile == entrance edge case), it calls `maybeUseBasementExitIfReady()` in the SAME cycle instead of waiting for the next outer iteration. When `Exiting` is not visible, the wrapper still falls through to `returning` and the next cycle handles the click after the bot walks back.
-  - **TEST extensions** — 10 new `v126_*` deterministic tests cover entry suppressed when farming off, non-entry passthrough when farming off, champion override gated on farming, hard-block entrance while exploring, hard-block lifts after complete, champion gate skips non-boss / farming-off / thresholds-disabled paths, immediate-exit-after-knowledge-settle wrapper transitions to returning when no Exiting visible, and basement state reset cleanly on exit (with new fields).
-  - **Public API additions** — `maybeWaitForBasementChampionResources` exposed on `window.ligmarBot`.
-  - Files: `bot/modules/10-config.js` (championPreMove* knobs), `bot/modules/70-verify.js` (selectSpecialTileTargetIfDesired farming gate), `bot/modules/80-map.js` (entry suppression when farming off, hard-block in scoreScannedTile, champion-tile gate, immediate-exit branch), `bot/modules/90-ui.js` (10 new `v126_*` tests), `bot/modules/99-bootstrap.js` (1 new helper exposed), `ARCHITECTURE.md`, `ROADMAP.md`.
+Set exact version:
 
-- **Basement logic correction: visited-tile suppression, clear-before-end, knowledge completion gate, true exit settle (ship — v1.2.6-alpha)** — Targeted live-play correction on top of v1.2.4-alpha. Three classes of failure that v1.2.4 still allowed are addressed:
-  1. **Bot returned to entrance early** because backtrack rejection was only one step deep — the path-based penalty in `scoreScannedTile` only matched the reverse of the most recent move, so 2- and 3-step oscillations could lead the bot back through the entrance/visited tiles.
-  2. **`atEnd` could lock in prematurely** — the rising edge fired the moment a champion icon was visible on the current tile, regardless of whether the tile had been fought. Walking onto a champion tile would set atEnd before any combat happened.
-  3. **Knowledge & `Exiting` clicks resumed on a blind `sleep(300)`** — the outer cycle could continue before the in-game transition finished, leading to inconsistent state and double-clicks on residual highlight buttons.
-  - **Visited-tile memory + empirical hex offsets** — `Runtime.basement.visitedTiles` is a coord-keyed list ("x,y") populated on every cycle by `recordCurrentBasementTileVisitedFromPopup`. `Runtime.basement.directionOffsets` is learned at runtime: after each verified move where both previous and current tile coords are readable, the runtime stores the delta keyed by direction (TL/TR/L/R/BL/BR). New helper `predictTileCoord(currentCoords, direction)` uses this map to project candidate scan-tile coords; `scoreExploringBackAndVisitedAdjust` rejects any scan tile whose predicted coord matches the entrance (`Config.basement.entranceTilePenalty`, default 1.2M) or any visited tile (`Config.basement.visitedTilePenalty`, default 700k). Soft-fail when offsets are unknown — preserves legacy path-based behavior.
-  - **Multi-step backtrack penalty** — `scoreExploringBackAndVisitedAdjust` now penalizes the reverse of the last K verified moves (`Config.basement.maxBacktrackDepth`, default 4) with linearly decaying weights. This stops 2-3 step oscillations even when learned hex offsets aren't yet available.
-  - **Clear-before-end gate** — `Runtime.basement.combatEngagedThisTile` is set true by `secureTileAndLootOnce` whenever the cycle observes enemies, and cleared by `exploreByScan` after every verified move. `updateBasementEndTileFlagFromVisibleIcons` rising edge `exploring → atEnd` now requires BOTH (a) `combatEngagedThisTile === true` AND (b) `readBasicState().combat.enemyCount === 0`. The function is also called a SECOND time inside `secureTileAndLootOnce` AFTER the combat loop clears, so the rising edge can fire on the same cycle the champion is killed.
-  - **Knowledge settle gate** — `maybeApplyBasementTransitionAroundLoot` `await`s `waitForBasementKnowledgeSettle({})` after a non-entry loot click at `atEnd`. Settle requires BOTH the highlighted-collect button AND the busy `app-battle-status-bar span.value` text to be absent for `Config.basement.settleStableMs` (default 350 ms) consecutive ms (overall timeout `Config.basement.knowledgeSettleTimeoutMs`, default 4500 ms). Only on a successful settle is phase promoted to `complete` (and to `returning` if `Exiting` not visible). Timeout means no promotion and the bot retries.
-  - **Exit click true settle** — `clickBasementExitButton` replaces blind `await sleep(300)` with `await waitForBasementExitSettle({})` which waits for BOTH `detectBasementExitButton().found === false` AND `isBasementBusyVisible() === false` for `settleStableMs` consecutive ms (overall timeout `Config.basement.exitSettleTimeoutMs`, default 4500 ms). `markBasementExited` is called ONLY after a successful settle. Timeout returns `{ ok: false, reason: "exit_settle_timeout" }` and `maybeUseBasementExitIfReady` propagates without clearing basement state.
-  - **Basement-wide champion override** — `Config.basement.basementWideChampionOverride` (default `true`) makes champion avoidance ignored for ALL tiles inside a basement (not just at the end). `scoreScannedTile` and `selectSpecialTileTargetIfDesired` both honor it. The legacy phase-aware end-only override is preserved as a fallback when explicitly disabled.
-  - **Knowledge ≠ entry distinction** — `isBasementKnowledgeButtonVisible` shares the highlighted-collect selector with the entry detector but excludes any visible button whose text/aria matches `entryDetectSubstrings`, so the entrance-tile ladder is never mistaken for a knowledge button.
-  - **State + telemetry** — `getBasementState()` now exposes `visitedTiles`, `lastTileKey`, `lastTileCoords`, `endTileKey`, `combatEngagedThisTile`, `directionOffsets`, `knowledgeAttemptedAt`, `knowledgeSettledAt`, `objectiveCompleteAt`, `exitClickedAt`, `exitSettledAt`. All run-scoped fields are cleared by `markBasementExited`.
-  - **TEST extensions** — 15 new `v125_*` deterministic tests cover entrance-tile remembered + seeded into visited, visited-tile suppression score, entrance-tile dominates visited score, atEnd HELD without combat engagement, atEnd FIRES after combat clear, knowledge settle ok when DOM clean, knowledge settle timeout when button persists, exit settle timeout when button persists, `clickBasementExitButton` blocked by persistent button, basement-wide champion override across all phases, hex offset learn + predict, exit clears all run memory, multi-step backtrack penalty (depth >= 2), `maybeUseBasementExitIfReady` blocks on settle timeout, knowledge button distinguishes from entry button.
-  - **Public API additions** — `addBasementVisitedTile`, `isBasementTileVisited`, `getBasementVisitedTiles`, `isBasementKnowledgeButtonVisible`, `isBasementBusyVisible`, `waitForBasementKnowledgeSettle`, `waitForBasementExitSettle`, `markBasementCombatEngagedThisTile`, `clearBasementCombatEngagedAfterMove`, `learnDirectionOffsetFromMove`, `predictTileCoord` exposed on `window.ligmarBot`.
-  - Files: `bot/modules/10-config.js` (knowledge/exit settle timeouts, visited/entrance penalties, max backtrack depth, basement-wide champion override flag), `bot/modules/20-runtime.js` (visitedTiles, lastTileKey, lastTileCoords, endTileKey, combatEngagedThisTile, directionOffsets, knowledge/exit timing telemetry), `bot/modules/70-verify.js` (selectSpecialTileTargetIfDesired honors basement-wide override), `bot/modules/80-map.js` (visited-tile helpers, hex offset learning, scoring rewrite, atEnd rising-edge gate, knowledge/exit settle waiters, clickBasementExitButton uses settle, knowledge wrapper requires settle), `bot/modules/85-combat.js` (combat-engagement marker on enter-cycle, post-combat basement probe), `bot/modules/90-ui.js` (15 new `v125_*` tests), `bot/modules/99-bootstrap.js` (11 new helpers exposed), `ARCHITECTURE.md`, `ROADMAP.md`.
+```bash
+node build.mjs --setversion <version> --desc "..."
+```
 
-- **Basement exit logic: dedicated `Exiting` button + entrance memory + return-to-exit flow (ship — v1.2.4-alpha)** — Real fix for basement farming. Previously the runtime treated the OUTSIDE basement entry button (`battle-event-button.highlight` matching basement substrings) and the INSIDE basement exit as the same control; the immediate-exit suppression gate (v1.2.2) hid the bug rather than fixing it. v1.2.4 makes the runtime aware that the in-basement entrance tile renders a **dedicated `Exiting` button** (`app-button-icon` with `.button-icon-text = "Exiting"`).
-  - **Three distinct interactions** are now cleanly separated: (A) outside basement entry — `maybeApplyBasementTransitionAroundLoot` + `detectBasementEntryFromUi`, (B) inside basement exit — new `maybeUseBasementExitIfReady` + `detectBasementExitButton` / `clickBasementExitButton`, (C) end-tile knowledge loot — non-substring loot click while at `atEnd` (still goes through the loot wrapper).
-  - **Phase machine extended** — canonical phases are now `idle`, `exploring` (replaces legacy `"active"`, which is still accepted as a synonym), `atEnd`, `complete`, `returning`. `getBasementCanExit()` is `true` for `complete` and `returning`. `Runtime.basement.objectiveComplete` is `true` for both. `selectSpecialTileTargetIfDesired` and `scoreScannedTile` end-champion override accept all post-objective phases (atEnd / complete / returning) so the override is stable end-to-end.
-  - **Entrance memory + move stack** — `markBasementEntered` records `entranceTileKey` / `entranceCoords` (best-effort coord snapshot from any open popup) and resets `moveStack: []`. `markBasementExited` clears all three. `exploreByScan` PUSHES `target.key` after every verified move while in `exploring` / `atEnd`, and POPS one entry per verified move while in `returning` / `complete`. New `scoreReturningDirectionAdjust(tile, penalty)` helper drives scoring: while returning the tile in `reverseDirection(stackTop)` is rewarded by `Config.basement.returningReverseBonusMult * penalty` (default 2x) and the forward `stackTop` direction is penalized.
-  - **`Exiting` detector + click + in-cycle handler** — `detectBasementExitButton()` queries `.button-icon-text` (configurable via `Config.basement.exitButtonTextSelector`) for substrings in `Config.basement.exitDetectSubstrings` (default `["exiting", "выход", "exit"]`) and walks up to a clickable parent matching `Config.basement.exitButtonClickableTags` (default `["app-button-icon", "button"]`). Soft-fails to `{ ok: true, found: false }`. `clickBasementExitButton()` dispatches mousedown/mouseup/click and sleeps 300 ms. `maybeUseBasementExitIfReady()` is called from `secureTileAndLootOnce` AFTER combat clears, BEFORE the loot wrapper: if farming is OFF or we're not in a basement → skip; if button not visible AND phase is `complete` → transition to `returning` (we're not on entrance, head back); if phase is `exploring` or `atEnd` (below threshold) → SUPPRESS; if phase is `complete` or `returning` → CLICK and `markBasementExited`.
-  - **Auto `complete → returning` transition** — `maybeApplyBasementTransitionAroundLoot` now checks `detectBasementExitButton()` after a successful knowledge-loot promotion to `complete`. If the `Exiting` button is NOT visible (we are not on the entrance tile), it auto-transitions `complete → returning` so scoring drives the bot back. When `Exiting` IS visible (one-tile basement, or knowledge looted directly on entrance), phase stays `complete` and the next cycle's `maybeUseBasementExitIfReady` clicks the button.
-  - **Legacy collect-button suppression preserved** — `maybeApplyBasementTransitionAroundLoot` still suppresses the highlighted-collect ladder when `detectBasementEntryFromUi` matches AND phase is `exploring` / `atEnd` (below threshold). This is a defensive double-gate so basements that use the same DOM element for entry and exit cannot exit prematurely. The dedicated `Exiting` button is the canonical exit; the collect-button path is kept for safety.
-  - **Public API** — `detectBasementExitButton`, `clickBasementExitButton`, `maybeUseBasementExitIfReady` are exposed on `window.ligmarBot` for desktop-app diagnostics.
-  - **TEST extensions** — 15 new `v124_*` checks covering: detector shape (found / not-found), suppression while exploring, suppression while atEnd, click + exit when complete, click + exit when returning, `complete` without exit button transitions to `returning`, `markBasementEntered` initializes moveStack + entrance fields, entrance meta is persisted, `markBasementExited` clears entrance memory, returning-phase scoring prefers reverse, `basementSetPhase("active")` alias normalizes to `"exploring"`, end champion override during `returning`, wrapper transitions `complete → returning` when `Exiting` not visible, `clickBasementExitButton` soft-fails when no button. Pre-existing v122/v123 tests updated to use canonical phase name `"exploring"`.
-  - Files: `bot/modules/10-config.js` (`Config.basement.exitDetectSubstrings`, `exitButtonTextSelector`, `exitButtonClickableTags`, `returningReverseBonusMult`, `exitSuppressedExploringPromoteToAtEndThreshold`), `bot/modules/20-runtime.js` (extended `Runtime.basement` schema: `entranceTileKey`, `entranceCoords`, `moveStack`, `exitSuppressedExploringCount`; phase canonical name update), `bot/modules/70-verify.js` (special-target sticky override accepts `returning`), `bot/modules/80-map.js` (rename canonical phase to `exploring`, accept `active` synonym, new `detectBasementExitButton` / `clickBasementExitButton` / `maybeUseBasementExitIfReady` / `scoreReturningDirectionAdjust`, refactored `maybeApplyBasementTransitionAroundLoot` with `complete → returning` auto-transition, refactored `markBasementEntered` / `markBasementExited` for entrance memory + move stack, `exploreByScan` pushes/pops moveStack, `scoreScannedTile` uses returning-direction adjust), `bot/modules/85-combat.js` (`secureTileAndLootOnce` calls `maybeUseBasementExitIfReady` BEFORE loot wrapper), `bot/modules/90-ui.js` (15 new `v124_*` TEST checks, v122/v123 phase-name updates), `bot/modules/99-bootstrap.js` (3 new helpers exposed on `window.ligmarBot`), `ARCHITECTURE.md`, `ROADMAP.md`.
+Syntax check:
 
-- **Basement refinement: explicit current-tile popup for end-champion detection (ship — v1.2.3-alpha)** — Small refinement on top of v1.2.2-alpha. The end-tile detection helper used to read whatever hex event icons happened to be in the DOM, but live game behavior is that the champion / end icon is only reliably visible inside the per-tile popup. v1.2.3 makes the probe explicit.
-  - **`updateBasementEndTileFlagFromVisibleIcons()` is now async** and follows the canonical popup-open flow: `ensureMapOpen()` → `clickCenterMapVerified()` → `clickMapCenterTile()` → `waitForCondition` on `readTilePopupDetails()` returning a popup with coords (bounded ~1.5s, `pollMs=100`). Champion-class icons are read from `det.lootIcons` (popup-derived; canonical) with a passive-selector fallback for the `skipPopup: true` opt-out path used by tests and external callers.
-  - **Safety gates** — short-circuits when phase is already sticky `"atEnd"` or `"complete"` (no need to re-probe). Soft-fails to a structured `{ ok: false, skipped: true, reason: ... }` on every step (`map_not_open`, `center_failed`, `center_tile_click_failed`, `popup_timeout`) without mutating `atEndTile` in either direction. `requireOoc: true` option (passed by the combat caller) makes the probe skip with `reason: "in_combat"` when `enemyCount > 0` so the destructive popup probe never fires mid-fight.
-  - **Phase machine invariants preserved** — rising edge `"active" → "atEnd"` still fires only on a successful probe that finds a champion icon. Sticky-once-set: phase never regresses on a transient probe miss. The immediate-exit fix from v1.2.2 is unchanged (still uses the pre-click suppression gate in `maybeApplyBasementTransitionAroundLoot`).
-  - **Call site update** — `secureTileAndLootOnce` now `await`s the probe with `requireOoc: true`. Non-basement behavior is untouched (the helper short-circuits with `not_in_basement` before any await).
-  - **TEST extensions** — 5 new `v123_*` checks covering: sticky short-circuit at `"atEnd"`, sticky short-circuit at `"complete"`, `skipPopup` fallback finds a champion icon and transitions phase, `skipPopup` with no champion does NOT transition, helper returns a Promise. The pre-existing `v121_basement_end_flag_short_circuit_outside` test was updated to await the now-async helper.
-  - Files: `bot/modules/80-map.js` (helper rewritten as async with popup-open flow), `bot/modules/85-combat.js` (call site now awaits with `requireOoc: true`), `bot/modules/90-ui.js` (`v121_*` test now awaits, 5 new `v123_*` tests), `ARCHITECTURE.md`, `ROADMAP.md`.
+```bash
+node --check rebuilt_bot.user.js
+```
 
-- **Basement completion: prevent immediate exit, require objective completion, preserve end champion override (ship — v1.2.2-alpha)** — Targeted completion pass on top of v1.2.1-alpha. The previous wrapper toggled basement state on every basement-substring loot click, so on the cycle right after entry the entrance ladder click was misinterpreted as an exit and the bot immediately left the basement. v1.2.2 introduces a real phase state machine and a pre-click suppression gate.
-  - **Phase state machine** — `Runtime.basement.phase` becomes the source of truth: `"idle"` (not in basement) → `"active"` (just entered, exploring forward) → `"atEnd"` (champion icon seen on current tile this run; sticky) → `"complete"` (objective done; ladder click allowed). `Runtime.basement.active` boolean is kept in sync (`phase !== "idle"`). `Runtime.basement.objectiveComplete` is true iff phase is `"complete"`. New helper `basementSetPhase(nextPhase, reason)` is the single mutator — logs every from/to/reason for diagnostics. New helper `getBasementCanExit()` returns boolean for desktop-app panels.
-  - **Pre-click suppression gate** in `maybeApplyBasementTransitionAroundLoot` — checks `detectBasementEntryFromUi()` BEFORE the click. If the highlighted button matches a basement substring AND phase is `"active"` or `"atEnd"`, the wrapper SUPPRESSES the click and returns `{ ok: true, skipped: true, reason: "basement_exit_suppressed", phase: ... }` without calling the loot fn. This is the fix for the immediate-exit bug. `secureTileAndLootOnce` treats the suppressed result as a successful no-loot cycle, so the bot moves to the next tile.
-  - **Knowledge loot promotes complete** — non-ladder loot clicks that succeed while at `"atEnd"` promote phase to `"complete"`. The next cycle's ladder click is then allowed and exits the basement.
-  - **Fallback completion** for basements without a separate knowledge button — after `Config.basement.exitSuppressedAtEndPromoteThreshold` (default 2) suppressed ladder cycles at `"atEnd"`, the wrapper auto-promotes to `"complete"` and falls through to actually click the ladder. This guarantees we never get stuck at the end tile.
-  - **Sticky end-champion override** — `scoreScannedTile()` and `selectSpecialTileTargetIfDesired()` now accept either the live `Runtime.basement.atEndTile` UI flag OR the sticky `phase === "atEnd"` / `"complete"` so the override stays valid throughout the kill (champion icon disappears mid-fight, but phase remains stable).
-  - **Forward-progress preference** — unchanged from v1.2.0/v1.2.1: `scoreScannedTile()` applies `Config.basement.backtrackPenalty` (default 800k) to the tile direction matching the reverse of `Runtime.exploration.lastMoveDir`. The `lastMoveDir` field is updated by `exploreByScan` after each verified move (line 1438 in `80-map.js`).
-  - **Counters reset on entry** — `markBasementEntered` resets `exitSuppressedCount`, `exitSuppressedAtEndCount`, `knowledgeLootedCount`, `atEndTile`, `mobsKilledHere`, `tilesAdvanced`, `lastDirection` so a fresh basement run starts clean.
-  - **Disabled-passthrough invariant preserved** — when basement farming is OFF (`Runtime.preferences.basementFarmingEnabled === false`), the wrapper is a transparent pass-through. Non-basement farming behavior unchanged.
-  - **TEST extensions** (deterministic, no live game): 10 new `v122_*` checks covering full phase cycle (idle→active→atEnd→complete→idle), entry resets counters, wrapper suppresses active-phase ladder, wrapper suppresses atEnd-phase ladder until threshold then promotes, knowledge loot at atEnd promotes complete, wrapper allows exit when complete, idle-entry click marks entered, end-champion override sticky across phase, farming-disabled wrapper passthrough, `getBasementCanExit()` only true when complete.
-  - Files: `bot/modules/10-config.js` (`exitSuppressedAtEndPromoteThreshold`), `bot/modules/20-runtime.js` (extended `Runtime.basement` schema with `phase` + counters), `bot/modules/70-verify.js` (special-target sticky override), `bot/modules/80-map.js` (`basementSetPhase`, refactored `markBasementEntered/Exited/setBasementAtEndTile/getBasementState`, refactored `maybeApplyBasementTransitionAroundLoot` with decision tree, rising-edge phase transition in `updateBasementEndTileFlagFromVisibleIcons`, sticky override in `scoreScannedTile`, new `getBasementCanExit`), `bot/modules/90-ui.js` (10 new `v122_*` TEST checks), `bot/modules/99-bootstrap.js` (new helpers exposed on `window.ligmarBot`), `ARCHITECTURE.md`, `ROADMAP.md`.
+`build.mjs` rewrites final Tampermonkey header version/description so `@version`, `BotVersion.version`, `version.json`, and `loader.user.js` stay aligned.
 
-- **Desktop-app feature completion — special-target flow + auto lens detect + real basement automation (ship — v1.2.1-alpha)** — Targeted completion pass on top of v1.2.0-alpha. Fixes three concrete gaps and tightens the manual chat model. No new architecture, no broad refactor.
-  - **Active special-target click flow rewritten** — `selectSpecialTileTargetIfDesired()` (`70-verify.js`) now follows the exact required flow: `ensureMapOpen()` → `clickCenterMapVerified()` → `clickMapCenterTile()` (opens per-tile popup; same primitive `scanNeighborRing` uses) → `waitForCondition` on `readTilePopupDetails()` confirming the popup is showing OUR tile → query champion/goblin icons via `Config.selectors.hexEventIcons` within that popup → click the matching one. The previous version called only `clickCenterMap()` (camera recenter button) which did NOT open the per-tile event popup; champion/goblin icons were therefore never queryable. Champion priority over goblin preserved. Basement-end champion override preserved. Soft-fail on every step (combat falls back to `clickFindEnemyVerified()`).
-  - **Automatic lens detection** — New `maybeAutoDetectLensIfNeeded()` (`80-map.js`) is called from `startAutoFarmLoop` on the first SAFE OOC boundary every session. Latch `Runtime.autoFarm.lensAutoDetectDone` ensures one dispatch per session; reset on both `startAutoFarmLoop` AND `stopAutoFarmLoop` so the next session re-probes. Manual override (`setLensStateOverride`) wins over auto-detection (latches without dispatching the destructive probe). Already-known state (boolean `hasLens`) latches without probing. `Config.vision.lensProbeEnabled === false` latches without probing. Unsafe conditions (in combat, dead, poor connection, moving, no state) do NOT flip the latch so a later cycle can retry. Third-ring scan in `exploreByScan()` already gates on `Runtime.vision.hasLens === true`.
-  - **Real basement automation** — New `maybeApplyBasementTransitionAroundLoot(lootFn)` (`80-map.js`) wraps the `clickLootOrActivateVerified()` call in `secureTileAndLootOnce`. It snapshots `detectBasementEntryFromUi()` BEFORE the click (the highlighted button vanishes after a successful click) and flips `Runtime.basement.active` AFTER the click succeeds — entering when previously inactive, exiting when previously active. Transparent pass-through when basement farming is OFF. New `updateBasementEndTileFlagFromVisibleIcons()` reads visible hex event icons; if a champion-class icon is visible while inside a basement, sets `Runtime.basement.atEndTile = true`. This drives the basement-end champion override in `scoreScannedTile()` AND the active-targeting helper. Forward-objective scoring + end-champion override now run on real runtime state instead of operator-driven helpers.
-  - **Manual chat primary runtime model** — `Config.chat.useUserMessages !== false` is the new runtime contract: `pickAutoChatSpammerDispatch()` and `maybeRunAutoChatSpammer()` consult `Runtime.autoFarm.chatSpammer.userMessages` round-robin and skip with `reason: "no_user_messages"` when empty. Legacy banks path preserved but ONLY consulted when operator explicitly sets `Config.chat.useUserMessages = false`; the legacy code is clearly isolated by a comment block and no longer part of documented runtime.
-  - **TEST extensions** (deterministic, no DOM): 10 new `v121_*` checks covering special-target soft-fail shape (acceptable failure reasons enumerated), lens auto-detect manual-override short-circuit, lens auto-detect already-known latching, lens auto-detect outside-AUTO no-latch, basement loot wrapper passthrough when OFF, basement loot wrapper non-basement no-flip, basement end-flag short-circuit when outside basement, basement entry/exit lifecycle shape, manual chat primary mode default, lens latch reset on stop.
-  - Files: `bot/modules/20-runtime.js` (`Runtime.autoFarm.lensAutoDetectDone` latch), `bot/modules/70-verify.js` (`selectSpecialTileTargetIfDesired` rewrite), `bot/modules/80-map.js` (`maybeAutoDetectLensIfNeeded`, `maybeApplyBasementTransitionAroundLoot`, `updateBasementEndTileFlagFromVisibleIcons`), `bot/modules/85-combat.js` (lens latch reset on start/stop, lens auto-detect call in loop, basement wrapper around loot call, end-tile flag refresh in `secureTileAndLootOnce`, manual chat path comments), `bot/modules/90-ui.js` (10 new `v121_*` TEST checks), `bot/modules/99-bootstrap.js` (new helpers exposed on `window.ligmarBot`), `ARCHITECTURE.md`, `ROADMAP.md`.
+---
 
-- **Desktop-app oriented controls — avoidance toggles, lens scan, basement farming, manual chat API, mode rename (ship — v1.2.0-alpha)** — One coherent pass that turns the bot into a stable callable surface for an external desktop control app. The legacy in-page Tampermonkey panel is no longer auto-mounted (`Config.bootGui.autoMountPanel` defaults **false**). Console TEST flow (`ligmarBot.runUiTestBundle()`) and the existing debug API are unchanged.
-  - **In-page GUI removal** — `99-bootstrap.js` no longer calls `createControlPanel()` at boot. Instead it explicitly loads persisted prefs (auto-farm UI, planner UI, combat UI, auto-chat, bot preferences) so combat mode + night mode + chat settings still resume after a refresh. Operators can opt back into the panel via `ligmarBot.createControlPanel()` or by setting `Config.bootGui.autoMountPanel = true` before the script runs.
-  - **Champion / goblin avoidance toggles** — `Runtime.preferences.avoidChampions` (default `true`, preserves prior behavior) and `Runtime.preferences.avoidGoblins` (default `false`, preserves prior behavior). When champions are NOT avoided `scoreScannedTile()` ranks champion tiles **above any loot tier** so the bot actively targets them. When goblins are avoided, goblin tiles are hard-avoided. Setters: `setAvoidChampions(bool)`, `setAvoidGoblins(bool)`. Persisted to `ligmarbot.botPreferences.v1`.
-  - **Active special-target click on tile** — `selectSpecialTileTargetIfDesired()` (`70-verify.js`) opens the center-tile event popup and clicks the champion/goblin event icon (using the same `Config.selectors.hexEventIcons` selector the scan path uses). Wired into `secureTileAndLootOnce()` once before find-enemy. Champion has priority over goblin when both are present and both are not avoided. Basement-end override still routes through this path so the basement-end champion is engaged.
-  - **Champion red 2-ring scan** — `scanSecondRingForChampion()` samples the 2-ring for `#aa4040`. Only invoked when champion avoidance is OFF; champion red dominates yellow die when both fire. New config block `Config.scan.secondRing.championRedColor / championRedTolerance / championRedMinMatchRatio`.
-  - **Lens detection + 3-ring scan** — `Runtime.vision.hasLens` starts null. `detectLensState()` clicks one second-ring tile and treats the lens as equipped if `Runtime.exploration.lastKnownCoords` change (game accepts the 2-step move). `setLensStateOverride(true|false|null)` lets operators short-circuit the destructive probe. When lens is equipped and 1+2 ring scans yield no usable target, `exploreByScan()` calls `scanThirdRingForColor()` for yellow + (champion red if not avoided). 18 third-ring offsets generated in `getThirdRingOffsets()`.
-  - **Basement farming with forward objective + end-champion override** — New `Runtime.basement` state machine with `active`, `enteredAt`, `lastDirection`, `atEndTile`, `mobsKilledHere`, `tilesAdvanced`. Setters: `setBasementFarmingEnabled(bool)`, `markBasementEntered({ source })`, `markBasementExited()`, `setBasementAtEndTile(bool)`. While inside a basement, `scoreScannedTile()` applies `Config.basement.backtrackPenalty` (default 800,000) to the tile in the **reverse direction** of `Runtime.exploration.lastMoveDir` so the bot keeps moving forward toward the end. When `atEndTile === true` and `Config.basement.endChampionOverride` is on, champion tiles are engaged **even with global champion avoidance enabled** — basement-end-only override, never a global avoidance bypass. `detectBasementEntryFromUi()` matches the highlighted collect-button text/aria-label against `Config.basement.entryDetectSubstrings`.
-  - **Combat mode rename — Fast → Normal, Safe → Hard** — Internal canonical values are `"normal"` / `"hard"` / `"easy"`. `normalizeCombatModeName()` accepts legacy `"fast"` / `"safe"` aliases (returns the canonical name). `getAutoFarmCombatMode()` exposes the canonical mode. The legacy panel buttons (only when manually mounted) are now labeled **Normal / Hard / Easy** and write the canonical key.
-  - **Manual auto-chat API (no default pool)** — `Config.chat.useUserMessages = true` (new default) makes the spammer pick from `Runtime.autoFarm.chatSpammer.userMessages` round-robin. Hardcoded time-of-day banks are still in code for backward compat (set `useUserMessages = false` to revert) but **not consulted** by default. `Config.chat.autoLocalPromocodeSpammerEnabled` is now **false** by default. New API: `setAutoChatMessages([...])`, `addAutoChatMessage(s)`, `removeAutoChatMessage(idxOrText)`, `clearAutoChatMessages()`, `setAutoChatIntervalRange(min, max)`, `getAutoChatIntervalRange()`, `setAutoChatEnabled(bool)`. Persisted to `ligmarbot.autoChat.v1`. With user-mode on and `userMessages` empty, `maybeRunAutoChatSpammer()` returns `{ ok: false, skipped: true, reason: "no_user_messages" }`.
-  - **TEST extensions** (deterministic, no DOM): 16 new bundle checks under `v120_*` covering panel auto-mount default, mode aliasing, avoidance preference shape + score honoring, champion red scanner shape, lens runtime shape, third-ring helper shape, basement preference shape, basement-end champion override, basement forward-objective penalty, manual chat API CRUD, manual chat dispatcher behavior, interval range setter, champion red gating shape, special-target helper skip-shape.
-  - Files: `bot/modules/10-config.js` (new namespaces: `bootGui`, `exploration`, `vision`, `basement`, `scan.thirdRing`, `chat.useUserMessages`, plus `championRed*` in `scan.secondRing`), `bot/modules/20-runtime.js` (new top-level `preferences`, `vision`, `basement`; `chatSpammer.userMessages` + `intervalOverrides`; combatMode default flipped to `"normal"`; `exploration.lastMoveDir` + new ring-scan snapshots), `bot/modules/70-verify.js` (`selectSpecialTileTargetIfDesired`), `bot/modules/80-map.js` (avoidance/basement helpers, `scanSecondRingForChampion`, `getThirdRingOffsets`, `scanThirdRingForColor`, `detectLensState`, `setLensStateOverride`, `getLensState`, basement state machine, preference persistence, scoring with avoidance + forward-objective + end-champion override), `bot/modules/85-combat.js` (combat mode rename + alias normalization, `applyAutoFarmCombatMode` rewrite, manual chat API + persistence, `pickAutoChatSpammerDispatch` user-mode branch, `selectSpecialTileTargetIfDesired` wiring), `bot/modules/90-ui.js` (panel labels Normal/Hard, prefs snapshot uses `normalizeCombatModeName`, 16 new TEST checks), `bot/modules/99-bootstrap.js` (panel auto-mount disabled by default, all new helpers exposed on `window.ligmarBot`), `ARCHITECTURE.md`, `ROADMAP.md`.
+## 2. Module map
 
-- **Planner Part 2 retarget fix — cancel post-retarget auto-basic + lethal guard against finisher overcommit (ship — v1.1.3-alpha)** — Targeted runtime/planner-executor correction. Fixes two observed live bugs inside the existing execution-plan model — no architectural rewrite, no broad refactor.
-  - **POST-RETARGET POLICY CHANGED** — Old policy (deleted as the default) intentionally preserved the game's auto-started basic attack as the first action of the burst and queued the planner skill onto the basic's cast bar (the deprecated `applyPostRetargetQueueOpenerPick` default path), which delayed real skill pressure by a full basic cast and made the burst "feel late". New policy: after a successful retarget the runtime IMMEDIATELY tries to cancel the auto-basic via the new `cancelPostRetargetAutoBasic()` helper and then drives the planner-selected skill as the actual first opener click via the same `applyPlannerOpeningPick()` used for normal openers. The legacy queue-on-game-basic path is **opt-in only** via `Config.combat.postRetargetQueueOnGameBasicFallback === true` AND only fires when the cancel could not be dispatched (UI hidden, etc.).
-  - **`cancelPostRetargetAutoBasic()` cancel helper** (`85-combat.js`) — uses `clickChargeCancelViaMapToggleCanvasGap()` (the same map-toggle/canvas gap "empty UI" tap that already exists for charge cancellation; the game treats that tap as a universal in-flight action cancel). Returns `{ ok, cancelled, reason, method }` (reasons: `stop_requested`, `disabled_by_config`, `click_dispatched`, `click_failed`, `click_threw`, `no_method_available`). Stop-cooperative; respects `Config.combat.postRetargetCancelAutoBasic` (default `true`); short settle controlled by `Config.combat.postRetargetCancelSettleMs` (default 60ms).
-  - **Plan cursor integrity preserved** — the cancel itself does NOT advance the execution plan. Only a real planned skill commit (opener click → `plannerAdvanceExecutionPlanStep("opener_fired")`) or a queue fire of a plan-sourced step moves `plan.currentIndex`. The first-burst-after-retarget episode telemetry no longer constructs a phantom `post_retarget_after_implicit_basic` queued action — the post-retarget burst is now structurally identical to a normal opener pick.
-  - **LETHAL GUARD HELPER** — new `plannerWouldCommittedActionAlreadyKillTarget(opts)` in `86-planner.js` predicts whether the just-fired (or about-to-be-anchored) action is by itself enough to kill the live target. Reads predicted damage from (in priority order) explicit `committedPredictedDamage`, the active execution plan's `predictedDamageDealt` at the committed step, or the normalized skill record (immediate damage only — DoTs intentionally ignored to avoid false positives). Conservative confidence factor `Config.planner.lethalGuardConfidenceFactor` (default **1.3**, ≈ require ≥30% overkill margin) — guard prefers FALSE NEGATIVES (still queue the follow-up "just in case") over FALSE POSITIVES (skip a needed follow-up).
-  - **LETHAL GUARD WIRING** — two integration sites in `85-combat.js`:
-    - **Opener-time** in `attackUntilProgress` (after the opener fires + plan cursor advances, before arming the queue follow-up): if `plannerWouldCommittedActionAlreadyKillTarget(...)` reports `wouldKill: true`, the queue is NOT armed at all. This is the primary fix for the observed `Sniper Shot` overcommit (Sniper-after-already-lethal-Piercing-Strike is the canonical case the user reported).
-    - **Chain-time** in `fireCombatActionQueue` (after a queued action fires, before computing the next chained action): if the just-fired action is itself already lethal, the chain is broken via `clearCombatActionQueue("lethal_committed_action_no_chain", ...)` and the response carries `lethalGuardSkippedChain: true`.
-  - **Diagnostics** — `Runtime.autoFarm.combatExecution` now exposes `lastPostRetargetCancel`, `postRetargetCancelDispatches`, `lastLethalGuardEvent` (`{ at, site: "opener" | "fire_chain", wouldKill, predictedDamage, targetHpCur, confidenceFactor, requiredPredicted, source, reason, committedSlot }`), and `lethalGuardSkips`. Both helpers are exposed on `window.ligmarBot`.
-  - **TEST extensions** (deterministic, no DOM): `post_retarget_cancel_helper_shape`, `planner_lethal_guard_basic_shape` (5 sub-cases incl. conservative-borderline + target-already-dead + no-predicted), `planner_sniper_shot_overcommit_regression` (synthetic plan with Piercing Strike lethal + queued Sniper Shot → guard returns `wouldKill: true` from `plan_step_index_0`), `post_retarget_cancel_does_not_advance_plan_cursor`, `post_retarget_policy_default_is_cancel_not_queue`.
-  - Files: `bot/modules/85-combat.js` (post-retarget flow + cancel helper + lethal guard wiring), `bot/modules/86-planner.js` (`plannerWouldCommittedActionAlreadyKillTarget`), `bot/modules/10-config.js` (new knobs), `bot/modules/20-runtime.js` (combatExecution telemetry fields), `bot/modules/90-ui.js` (5 new TEST checks), `bot/modules/99-bootstrap.js` (window.ligmarBot exposure), `ARCHITECTURE.md`, `ROADMAP.md`.
+| File | Purpose |
+|---|---|
+| `00-header.js` | Tampermonkey header and IIFE open. Final header is rewritten by build. |
+| `05-version.js` | Auto-generated `BotVersion`. |
+| `10-config.js` | Static selectors/timings/config, deep-frozen. |
+| `15-logger.js` | Logger with duplicate collapse and ring buffer. |
+| `20-runtime.js` | Central mutable state tree. |
+| `30-utils.js` | Sleep, click dispatch, visibility, parsing. |
+| `40-state.js` | DOM state readers for coords/tile/enemy/HP/MP. |
+| `60-actions.js` | Action-bar and attackers-popup raw actions. |
+| `70-verify.js` | Wait utilities, map open/center, 1-ring scan, Find Enemy, attackers targeting. |
+| `80-map.js` | Scoring, movement, ring offsets, pixel scan, lens/vision. |
+| `81-hero.js` | Hero stat scan. |
+| `82-skills.js` | Skill scan and effect parsing. |
+| `85-combat.js` | Main automation loop, sustain, run, buffs, basement, combat orchestration. |
+| `86-planner.js` | Simplified utility planner and queue manager. |
+| `87-skill-master.generated.js` | Auto-generated skill DB. |
+| `90-ui.js` | Floating GUI, collapsible. |
+| `99-bootstrap.js` | Starts script and exposes `window.ligmarBot`. |
 
-- **Planner tactical tuning — pressure evolution + Sniper / Distracting / Fan Volley / Piercing / Ice Shard decision quality (ship — v1.1.2-alpha)** — Quality / tactical pass on top of the v1.1.x execution-plan plumbing. The architecture is unchanged; only sequence scoring, simulated state transitions, and per-action diagnostic surfaces are improved so good tactical lines naturally win without hardcoded combos.
-  - **Keystone fix — `next.pressure` now evolves**. In v1.1.x, `simState.pressure` was *copied unchanged* through every action; Distracting Shot / Ice Shard relief only mattered for HP-loss math on the very same step. The planner's downstream pressure-sensitive choices (Sniper Shot full-charge gating, Distracting Shot re-evaluation, Fan Volley threat scaling) therefore saw *stale* pressure for the entire sequence. `plannerSeqSimulateAction()` now recomputes `next.pressure` at end-of-step using the SAME formula `plannerSeqBuildCombatState()` uses, against the now-current effective attacker count (post-distract), effective incoming HP loss (post-slow + post-distract scale), and player HP dip threshold. Subsequent step `pre.pressure` therefore reflects the simulated moment, not the initial snapshot.
-  - **Pressure-evolution sanity in TEST** — `tactical_pressure_evolves_after_distracting_shot` simulates a Distracting Shot in a 3-attacker / pressure 2.2 / incoming 50 HP/s state and asserts `next.pressure < initial - 0.5` AND `hasDistract === true`. `tactical_pressure_evolves_after_ice_shard` simulates Ice Shard and asserts `next.hpLost < piercingStrike_hpLost - 1` (slow's incoming-damage reduction is real).
-  - **Sniper Shot scoring** — preserved: `chargeFullPressurePenaltySec` (1.6s when full charge under pressure ≥ 1), `finisherBonusSec` (-0.8s when target HP ≤ 45%). New: `finisherLowHpExtraBonusSec` (-0.4s when target HP ≤ 25%, lethal window) AND `fullChargeFullHpOpenerPenaltySec` (+1.0s when full-charge is the *opener* AND target HP ≥ 80%, since this is exactly the "wasted finisher value + slow ramp" pattern the user called out).
-  - **Distracting Shot scoring** — preserved: `calmOpenerPenaltySec` (+1.4s at calm opener), `pressureReliefBonusSec` (-1.2s under attacker ≥ 2 / pressure ≥ 1.2). New: `calmOpenerFullTargetExtraPenaltySec` (+0.6s when calm opener AND target HP ≥ 85%) so a Distracting Shot at fresh-target / calm gets a sharper push toward "this is not your opener" without affecting mid-sequence distract picks under pressure.
-  - **Fan Volley scoring** — preserved: `singleTargetMisusePenaltySec` (+1.8s when only 1 enemy), `mpHeavyPenaltySec` (+0.4s when ≤ 1 attacker AND ≤ 2 enemies). New: `mpFractionHighPenaltySec` (+0.7s when `skill.manaCost / pre.mpMax ≥ 0.4`, so FV is meaningfully penalized when it commits a big chunk of MP without justification) AND `trueMultiThreatBonusSec` (-1.0s when ≥ 2 enemies AND ≥ 2 active attackers, so FV wins in real cleave situations).
-  - **Piercing Strike sequence-level setup detection** — new scoring rule. The pre-existing `plannerSeqMagicShredBonus` already added the 20% magic-damage boost in the simulator when shred was active. We now also walk the sequence in scoring: if Piercing Strike has a magic-typed follow-up within the 15s shred window (`damageType === "magic"` OR `immediateDamageByType.magic > 0` OR `dotPerSecByType.magic > 0` on a later action), add `setupBonusWithMagicFollowUpSec` (-0.6s); if NOT, add `wastedSetupPenaltySec` (+0.5s). This makes PS a *deliberate setup choice* in scoring, not an accidental pick when no magic follow-up exists.
-  - **Ice Shard tempo bonus** — new scoring rule. `tempoBonusUnderPressureSec` (-0.9s) when effective active attackers ≥ 2 OR pressure ≥ 1 at moment of cast. No calm penalty — Ice Shard is a real damage skill and shouldn't be punished for being chosen at low pressure; it just doesn't earn the tempo bonus.
-  - **Per-action diagnostic surface** — `plannerSeqScoreNode()` and `plannerSeqDescribeNode()` now share one source of truth via a new extracted helper `plannerSeqExplainSemantic(node, combatState)`. The describe output embeds per-action `reasonTags: string[]` (e.g. `["snipershot_finisher_window", "snipershot_lethal_window"]`) and `scoreContributions: Record<string, seconds>` (negative = bonus, positive = penalty), plus a top-level `semanticAdjSec` summing the lot. `previewPlannerSequences()` returns these on every sequence so `ligmarBot.previewPlannerSequences()` shows WHY one sequence beat another. `survivalSummary.pressureEnd` was also added so post-sequence pressure is visible.
-  - **Mana-cost + magic-typed hints on action.skill subset** — the `action.skill` slice attached to each sequence step now carries `manaCost`, `immediateMagic`, `dotMagicPerSec`, and `isAoe` so the scoring helper can run mp-fraction checks and PS setup-detection without needing the full normalized skill object.
-  - **Exposed on `ligmarBot`** — new accessor `ligmarBot.plannerSeqExplainSemantic(node, combatState)` for console-level inspection.
-  - **TEST extensions in `90-ui.js`** — new tactical block adds 13 deterministic checks driving the sequence search over synthetic archer skill kits + targeted combat states. Each scenario asserts the EXACT reason tags that the relevant tactical rule should fire (and verifies the opposite tag is absent in the contradicting scenario):
-    1. `tactical_distracting_shot_calm_opener_tagged` — calm 1-attacker state, DS opener tags include `distractingshot_calm_opener` + `distractingshot_calm_opener_full_target`, no `distractingshot_pressure_relief`.
-    2. `tactical_distracting_shot_pressure_relief_tagged` — 3-attacker / pressure 2.2 state, DS opener tags include `distractingshot_pressure_relief`, no calm tag.
-    3. `tactical_sniper_shot_finisher_tagged` — target HP 18%, Sniper opener tags include `snipershot_finisher_window` + `snipershot_lethal_window`.
-    4. `tactical_sniper_shot_full_opener_penalized` — high pressure + full target HP, Sniper-FULL opener tags include BOTH `snipershot_full_under_pressure` AND `snipershot_full_charge_full_hp_opener`.
-    5. `tactical_fan_volley_calm_penalty_tagged` — calm 1-enemy 1-attacker state, FV opener tags include `fanvolley_single_target_misuse` + `fanvolley_mp_heavy` + `fanvolley_mp_fraction_high`, no `fanvolley_true_multi_threat`.
-    6. `tactical_fan_volley_true_multi_threat_tagged` — 3-enemy / 2-attacker state, FV opener tags include `fanvolley_true_multi_threat`, no `fanvolley_single_target_misuse`.
-    7. `tactical_piercing_strike_setup_tagged` — PS → Ice Shard (magic follow-up) sequence, PS step tags include `piercingstrike_setup_with_magic_follow_up`, no `piercingstrike_wasted_setup`.
-    8. `tactical_piercing_strike_wasted_setup_tagged` — PS opener with no magic skills available, PS step tags include `piercingstrike_wasted_setup`, no setup bonus tag.
-    9. `tactical_ice_shard_tempo_under_pressure_tagged` — high-pressure state, Ice Shard opener tags include `iceshard_tempo_under_pressure`.
-    10. `tactical_ice_shard_calm_no_tempo_bonus` — calm state, Ice Shard opener tags do NOT include the tempo bonus tag.
-    11. `tactical_pressure_evolves_after_distracting_shot` — pure simulator-level pressure drop verification (≥ 0.5s reduction).
-    12. `tactical_pressure_evolves_after_ice_shard` — pure simulator-level HP-loss reduction verification (slow saves ≥ 1 HP/0.6s vs identical no-slow scenario).
-    13. `tactical_reason_tags_exposed_on_describe` — every action in `plannerSeqDescribeNode()` output carries `reasonTags` array + `scoreContributions` object, plus `semanticAdjSec` and `survivalSummary.pressureEnd`.
-  - **Files**: `bot/modules/86-planner.js` (simulator pressure evolution + extracted explain helper + scoring refactor), `bot/modules/10-config.js` (new `archerSemantics` knobs), `bot/modules/90-ui.js` (13 new tactical checks + shared archer fixture builders), `bot/modules/99-bootstrap.js` (expose `plannerSeqExplainSemantic`), `ROADMAP.md`. No changes to the combat executor, no changes to the execution-plan layer.
+---
 
-- **Planner rewrite Part 2.1 — active-attacker replan bugfix + between-burst should-replan wiring (ship — v1.1.1-alpha)** — Targeted bugfix pass on top of Part 2. Two real issues observed in the v1.1.0-alpha planner were:
-  1. **`plannerShouldReplanForExecutionPlan()` active-attacker check was structurally dead.** The helper called `readActiveAttackerCount()` (which returns `{ count, buttonVisible, source } | null`) and then did `Number.isFinite(liveAtk)` on the object — always false — so the `active_attacker_count_jumped` replan condition never fired in practice.
-  2. **The helper existed but was not wired into the hot combat loop.** Replanning previously only happened via explicit invalidations (retarget, no-progress, burst rebuild). The inspectable `plannerShouldReplanForExecutionPlan` helper itself was never consulted at a real runtime boundary, so its non-fingerprint conditions (target HP drift, max-HP swap, attacker jump, plan-too-old, step-skill cooldown / MP gate) had no behavioral effect.
-  - **Fix (`86-planner.js`)**: `plannerShouldReplanForExecutionPlan()` now correctly destructures `readActiveAttackerCount()` as `{ count, source }`, falls back to `null` when the reader returns null, and accepts two deterministic test-friendly overrides — `opts.liveAttackerInfo` (the full object shape) and `opts.liveAttackerCount` (number-only) — so unit-test paths can inject attacker counts without DOM mocks. Reader provenance is preserved in `details.liveAttackerSource` (one of `"badge_value" | "button_text" | "popup_card_count" | "button_present_no_badge" | "opts.liveAttackerCount"`) so any replan log shows where the live count came from.
-  - **Fix (`85-combat.js`)**: between bursts in `secureTileAndLootOnce()`, immediately before each `attackUntilProgress(beforeAttack, …)` call, the runtime now calls `plannerShouldReplanForExecutionPlan({ plan: livePlan, liveState: beforeAttack })`. If an active plan exists AND the helper says `shouldReplan: true`, the plan is invalidated with the reported reason + details (logged as `Between-burst replan check invalidated active plan` with `planId`, `burst`, `findAttempts`). The next burst's opener pick rebuilds a fresh plan via the existing `plannerSelectSequencePick → plannerSetActiveExecutionPlan` side-effect path. This is a strictly safer boundary than mid-cast: the previous burst has fully resolved (queue fired / awaited) before the check runs, so it cannot interrupt an in-flight action. Existing retarget / no-progress / clear-episode invalidation paths still run unchanged — this is purely additive.
-  - **TEST**: extends `runUiTestBundle()` in `90-ui.js` with a dedicated check `planner_should_replan_active_attacker_jump` that constructs a known plan with `activeAttackerCount: 1` at build time and proves three things: (a) `liveAttackerInfo: { count: 4, source: "badge_value" }` triggers `shouldReplan: true / reason: "active_attacker_count_jumped"` with `details.liveAttackerSource: "badge_value"`; (b) the `liveAttackerCount` number-only override also triggers the same reason at the Δ=2 threshold with `details.liveAttackerSource: "opts.liveAttackerCount"`; (c) Δ=1 does NOT fire (sub-threshold returns `shouldReplan: false`). The existing `planner_should_replan_helper_shape` check stays green and still covers the other reasons (`target_fingerprint_changed`, `target_died`, `plan_exhausted`, `no_active_plan`, `target_max_hp_changed`, `plan_too_old`).
-  - **Files**: `bot/modules/86-planner.js`, `bot/modules/85-combat.js`, `bot/modules/90-ui.js`, `ROADMAP.md`. No public API or `ligmarBot` surface change beyond the now-honored `opts.liveAttackerInfo` / `opts.liveAttackerCount` injection points.
+## 3. Runtime state
 
-- **Planner rewrite Part 2 — execution-plan layer + plan-driven combat runtime (ship — v1.1.0-alpha)** — Part 2 of the planner rewrite. The planner is no longer a diagnostic/selection engine that only chooses the first action: combat runtime now follows the planner's short sequence step-by-step, advances a cursor as steps fire, and re-plans when the world changes enough that the old line is stale.
-  - **Execution plan as a first-class runtime object** (`Runtime.planner.activeExecutionPlan`, `version: 2`). Built by `plannerBuildExecutionPlan(opts)` and, as a side-effect, by every successful `plannerSelectSequencePick()` (so the existing `plannerPickSkillOpeningPick()` runtime path stays in sync). Shape includes: `planId` (unique), `builtAt`, `targetFingerprint`, `combatStateAtBuild` (compact snapshot — target HP, player HP/MP, fight enemyCount/attackerCount/pressure/mode), `actions[]` (ordered, materialized from `bestSequence.actions` with `index`, `kind`, `slot`, `name`, `normalizedKey`, `damageType`, `chargeMode`, `chargeReleaseFraction`, `predictedDamageDealt`, `predictedActionTimeSec`, `predictedEndElapsedSec`, `reasonTags[]`), `totalActions`, `currentIndex` (cursor), `selectionReason`, `predictedKillAtSec`, `score`, `valid` + `invalidReason` + `replanReason`, `stepHistory[]` (capped at 20), `excludeSlotsApplied`, `disallowChargeSkills`, `firstBurstAfterRetarget`.
-  - **Runtime telemetry** (`Runtime.autoFarm.combatExecution`, exposed via `ligmarBot.getCombatExecutionState()`): `planId`, `currentStepIndex`, `lastStepKind/Slot/Name/Result/At`, `lastReplanReason`, `lastInvalidationReason`, `planFollowedBeyondFirstStep` (counter showing the executor actually advanced past the opener into a planned follow-up), `plansBuilt` / `plansReused` / `plansInvalidated`, `queueAdvancesFromPlan` / `queueAdvancesFromLegacy`.
-  - **Plan-driven combat queue** (`85-combat.js`): after the opener fires, `attackUntilProgress` calls `plannerAdvanceExecutionPlanStep("opener_fired")` and uses the new `plannerNextCombatQueueAction()` (Part 2) to arm the queue against the plan's step 1+. When the queue fires, it advances the plan cursor again and re-arms against step 2+, so a single burst naturally executes opener → step 1 → step 2 → ... while the plan stays valid. `plannerNextCombatQueueAction` transparently SKIPS charge steps (queue cannot drive charges cleanly), and falls back to legacy `plannerBuildCombatQueueAction` when no plan exists (Easy mode, no feasible skill, etc.).
-  - **Inspectable should-replan helper** `plannerShouldReplanForExecutionPlan({ plan, liveState, targetFingerprint, hpDeltaFraction, maxPlanAgeMs })` returns `{ shouldReplan, reason, details }`. Reasons (in evaluation order): `no_active_plan`, `plan_invalid`/`<invalidReason>`, `plan_actions_missing`, `plan_exhausted`, `target_fingerprint_changed`, `target_died`, `no_enemies`, `active_attacker_count_jumped` (Δ≥2), `target_max_hp_changed`, `target_hp_upward_swap` (≥`hpDeltaFraction`, default 0.4), `step_skill_invalid`, `step_skill_on_cooldown`, `step_mp_gate`, `step_charge_disallowed_now`, `plan_too_old` (default 9 s, override via `Config.planner.executionPlan.maxAgeMs`). Last reason mirrored into `Runtime.planner.lastShouldReplanReason` and `Runtime.autoFarm.combatExecution.lastReplanReason`.
-  - **Invalidation propagates structurally**: `clearCombatEpisode(reason)` (called on target-fingerprint change at burst entry + mid-pull retarget + secure-cycle resets) now ALSO calls `plannerInvalidateExecutionPlan(reason)`. The "no progress" terminal path invalidates the plan with `no_progress`. The combatQueue runtime row carries `fromExecutionPlan` + `planStepIndex` so plan-sourced queue advances are inspectable from the panel/TEST.
-  - **Charge steps fit the plan**: charge actions appear in `plan.actions` with `chargeMode` + `chargeReleaseFraction` preserved. `plannerAdaptExecutionPlanStepToOpenerShape(plan, stepIndex)` builds the same `{ slot, record, chargeReleasePlan, queuedAction: null }` shape the legacy executor consumes, applying the planned partial-release fraction with `selectionMode: "execution_plan_override"`.
-  - **Fail-safe fallbacks intact**: when the sequence planner cannot decide (Easy mode, no normalized skills, no feasible skill at depth 0), `plannerBuildExecutionPlan()` returns `null` and the executor's legacy paths (basic attack, alternate ranked opener, post-retarget queue-on-game-basic) still run. Part 2 changes are purely additive on top of Part 1.3 — when no plan exists, behavior matches v1.0.9-alpha.
-  - **New console surface** (`ligmarBot.*`): `plannerBuildExecutionPlan`, `plannerShouldReplanForExecutionPlan`, `plannerInvalidateExecutionPlan`, `plannerAdvanceExecutionPlanStep`, `plannerGetActiveExecutionPlanStep`, `plannerAdaptExecutionPlanStepToOpenerShape`, `plannerNextCombatQueueAction`, `plannerExecutionPlanStepToQueueAction`, `getActiveExecutionPlan`, `getCombatExecutionState`, `getPlannerLastExecutionPlanInvalidationReason`, `getPlannerLastShouldReplanReason`.
-  - **TEST extensions** (Part 2 active architecture): `planner_execution_plan_shape` (synthetic seqPick → plan shape with `planId`/`builtAt`/`version`/`actions[]`/cursor/valid/`combatStateAtBuild`), `planner_execution_plan_step_advance` (cursor 0→1→2, history length 2, `plan_exhausted` invalidation), `planner_should_replan_helper_shape` (7 scenarios: ok / fingerprint change / target died / plan exhausted / no plan / target max HP changed / plan too old), `planner_execution_plan_charge_step_preserved` (charge step shape preserved; queue-action helper returns null for charge; `plannerNextCombatQueueAction` skips charge to basic with `fromExecutionPlan === true`), `planner_execution_plan_invalidates_on_retarget` (invalidating sets `valid: false` + reason + mirrors into runtime + bumps `plansInvalidated`), `planner_execution_plan_runtime_diagnostics` (all Part 2 `ligmarBot.*` accessors present + `combatExecution` shape carries expected keys).
-  - **Files**: `bot/modules/20-runtime.js`, `bot/modules/85-combat.js`, `bot/modules/86-planner.js`, `bot/modules/90-ui.js`, `bot/modules/99-bootstrap.js`, `ARCHITECTURE.md`, `ROADMAP.md`.
-- **Planner rewrite v1.3 — surgical correction pass: singular active basic-timing model, typed-shred helper applied consistently in skill + skill_charge, structural fires-only-once guarantee (ship — v1.0.9-alpha)** — Third correction pass on the new short-sequence planner foundation. Goal: remove ambiguity between v1.2's two-signal "flag + schedule" carry-over check and prove the active runtime path is unambiguous with deterministic pure-logic TESTs.
-  - **Singular schedule-based basic-attack timing model** (`plannerSeqSimulateAction`). Sim state no longer carries `basicAttackLikelyUnderway` — `nextBasicReadyAtSec` is the **single source of truth**. Depth-0 init sets schedule to `0` (underway from combat state) or `Number.POSITIVE_INFINITY` (cold). Carry-over fires AT MOST ONCE when `nextBasicReadyAtSec <= simState.elapsedSec + 1e-9` AND action is skill/charge AND `expectedBasicHit > 0` AND `simBasicSwingsBetweenActions !== false`. After ANY action, schedule = `+Infinity` (consumed/burned) → a second carry-over is **structurally impossible** at depth 1+. "No free basics during cast/channel" is now an invariant of the schedule shape, not a per-call guard.
-  - **Typed magic-shred helper** (`plannerSeqMagicShredBonus`). The Piercing Strike shred bonus lives in ONE helper that returns only the magic-typed bonus (immediate + DoT inside the shred window). The simulator calls it from BOTH the `skill` path (`immediateMultiplier = 1`) and the `skill_charge` path (`immediateMultiplier = gearMultiplier`) — typed semantics live in one place, no blanket "multiply all damage" path anywhere in the active runtime. Multi-type skills only get their magic portion boosted; physical-only skills get nothing; magic charges get magic-typed base × gear × boost. Back-compat fallback for hand-built test skills (`damageType === "magic"` without `immediateDamageByType`) is inside the helper.
-  - **`pre` snapshot diagnostic name** (`plannerSeqSearchSequences`). The per-step `pre` snapshot used by semantic scoring carries `basicCarryOverPending` (derived from the schedule) as the canonical name; the legacy alias `basicAttackLikelyUnderway` is mirrored on the same value for back-compat with diagnostic consumers. Semantic scoring (`Sniper Shot` finisher window via `pre.targetHpPct`, `Distracting Shot` calm-opener / pressure-relief via `pre.effectiveActiveAttackers` + `pre.pressure`, `Fan Volley` single-target misuse via `pre.enemyCount`) keeps v1.2 semantics.
-  - **TEST extensions** (v1.3 active model):
-    - `planner_basic_timing_conservative` extended: 10 sub-cases, including `noStaleFlagOk` (sim state has NO `basicAttackLikelyUnderway` field) and `*SchedOk` (post-action schedule is `+Infinity`).
-    - `planner_basic_carry_over_fires_once` (new): chains the simulator twice from an underway depth-0 sim; first credits exactly 1 carry-over (damage 80+50=130), second credits 0 (damage 60). Proves the structural guarantee.
-    - `planner_typed_shred_only_boosts_magic` extended: now also covers a `skill_charge` magic skill (base 50 × gear 3 = 150 base; magic bonus 50 × 3 × 0.2 = 30; total 180), proving the helper is wired into the charge path with the gear multiplier.
-    - `planner_sniper_shot_charge_guaranteed`, `planner_semantic_uses_simulated_state`, `planner_diagnostics_read_only` retained.
-  - **Files**: `bot/modules/86-planner.js`, `bot/modules/90-ui.js`, `ARCHITECTURE.md`, `ROADMAP.md`.
-- **Planner rewrite v1.2 — basic-timing / typed-damage / Sniper-guarantee / simulated-state semantics / read-only hygiene (ship — v1.0.8-alpha)** — Second correction pass on the new short-sequence planner foundation. Replaces the v1.1 naive interleave model with a conservative schedule-based model; restores typed damage handling; guarantees Sniper Shot is always charge-capable; shifts key semantic tie-breaks to use simulated node state; stops diagnostics from mutating live `Config.planner` via class-profile apply.
-  - **Conservative basic-attack timing model** (`plannerSeqSimulateAction`). Sim state now tracks `nextBasicReadyAtSec`. No basics are credited during a skill / skill_charge cast/channel (cast preempts auto-attack in-game). After any non-basic action `nextBasicReadyAtSec` is rescheduled to `end_of_action + swingInterval`. The only "free" basic is a single **carry-over** at the start of the first action when `simState.basicAttackLikelyUnderway === true` AND the action is skill/charge AND `nextBasicReadyAtSec` has already elapsed. `basicAttackLikelyUnderway` is consumed once and materially affects depth-0 timing only. A `basic` action remains an explicit one-swing action.
-  - **Typed damage in sequence path** (`plannerSeqNormalizeOneSkill`). Normalization now uses `plannerHorizonPaperEffectiveMobFactor(mf, anchoring, damageType)` per effect (legacy typed-blend logic). Each normalized skill carries `immediateDamageByType: { physical, magic, unknown }` and `dotPerSecByType: { physical, magic, unknown }`. The shred boost (Piercing Strike) in the simulator is now **surgical**: it adds `immediateDamageByType.magic * followUpMagicDamageBoost` plus the magic DoT portion inside the shred remaining window — multi-type skills no longer get a free physical boost from shred. Piercing Strike's value derives from damage typing + shred semantics, not a blanket multiplier.
-  - **Sniper Shot charge guarantee** (`plannerSeqNormalizeOneSkill`). If the normalized skill's identity is `snipershot` AND the parser missed `channel_gear`, the normalizer forces `isCharge = true` with fallback `chargeMaxSec = 4` and `chargeGearPct = 200`, and seeds a basic-anchored physical immediate damage so partial-vs-full release scoring still works. Both full and partial release candidates are guaranteed to be generated. NOT combo hardcoding — it is guaranteeing the skill's OWN intrinsic charge semantics.
-  - **Simulated state for semantic tie-breaks** (`plannerSeqScoreNode`). Each candidate-expansion step attaches a `pre` snapshot to the action (`{ elapsedSec, targetHpPct, playerHpPct, pressure, activeAttackers, effectiveActiveAttackers, enemyCount, hasMagicResistShred, hasSlow, hasDistract, basicAttackLikelyUnderway }`) derived from `node.sim` BEFORE simulation. Scoring uses `a.pre.targetHpPct` for Sniper Shot's finisher window (finisher EARNED mid-sequence now properly unlocks the bonus), `a.pre.pressure` for Sniper Shot's pressure penalty, `a.pre.effectiveActiveAttackers + a.pre.pressure` for Distracting Shot (calm-opener gate now uses `pre.elapsedSec === 0` instead of array index so mid-sequence inserts are also judged correctly), and `a.pre.enemyCount + a.pre.effectiveActiveAttackers` for Fan Volley. Falls back to `combatState.fight.*` when `pre` is missing (back-compat for hand-built nodes and legacy tests).
-  - **Read-only diagnostics hygiene**. `plannerComputeClassProfile()` is the new pure function (returns `{ ok, classKey, profileKey, planned }` without mutating Config / Runtime). `plannerApplyClassProfile()` is a thin wrapper that calls compute then mutates. `getPlannerOpeningPickDiagnostics()` now uses the pure compute — console inspection no longer mutates `Config.planner.skillMpReserve` / `openerHorizonMinImprovementFraction` / etc. The actual pick path (`plannerPickSkillOpeningPick`) still calls Apply.
-  - **TEST extensions** (replace v1.1 interleave test): `planner_basic_timing_conservative` (cold-start vs underway carry-over for skill / instant / charge; basic-action explicit swing; post-action `nextBasicReadyAtSec` scheduling; flag-off path); `planner_typed_shred_only_boosts_magic` (magic-only, physical-only, mixed-type skills under shred); `planner_sniper_shot_charge_guaranteed` (synthetic Sniper Shot row with empty effects normalizes as charge with valid duration + both candidates generated); `planner_semantic_uses_simulated_state` (mid-sequence target HP drop unlocks finisher window via `pre.targetHpPct`); `planner_diagnostics_read_only` (sentinel survives diagnostics call).
-  - **Files**: `86-planner.js`, `90-ui.js`, `ARCHITECTURE.md`, `ROADMAP.md`.
-- **Planner rewrite v1.1 — sequence-planner correction pass (ship — v1.0.7-alpha)** — Three planner-correctness blockers in the new short-sequence planner foundation are fixed inside the planner itself instead of relying on outer adaptation:
-  - **`excludeSlots` is now honored INSIDE the sequence planner**. `plannerSelectSequencePick({ excludeSlots: Set | Array<number> })` normalizes the input once and passes it to both the depth-0 feasibility check and the beam search (`plannerSeqSearchSequences` forwards into `plannerSeqBuildCandidateActions(opts.excludeSlots)`). Excluded slots are filtered at every depth — first action AND any later action — matching legacy `openerHorizonSim` hard-exclude semantics so alternate-opener retries from the combat runtime can ask the new planner for the next-best allowed sequence instead of silently falling back to the legacy planner. `plannerPickSkillOpeningPick` now forwards its `exclude` Set directly. The post-adapter `!exclude.has(pickedSlot)` belt-and-suspenders check stays as defense in depth. New telemetry: `Runtime.planner.lastSequencePlan.excludeSlotsApplied` and `lastOpeningPickDetail.excludeSlotsApplied` (array of slot indexes).
-  - **Latent bug: `plannerSeqBuildCandidateActions` read `simState.player.mpCur`** — but the sim state is flat (`simState.playerMpCur`). The TypeError was silently swallowed by the outer try/catch in `plannerPickSkillOpeningPick`, so the new planner had never actually picked a skill in production (every call fell through to legacy `openerHorizonSim`). Fixed: read flat field with a nested fallback for hand-built callers. The new sequence planner is finally live for real combat picks.
-  - **TEST extensions** (v1.1): `planner_sequence_exclude_slots_honored` (synthetic skills + Set/Array `excludeSlots` ⇒ excluded slot absent at depth 0, remaining skill + basic still present). The v1.1 interleave test is REPLACED by the v1.2 conservative-timing test above.
-  - **Note on v1.1 interleave model**: superseded by v1.2 conservative model (see entry above). The `simBasicSwingsBetweenActions` flag still exists but now only gates the carry-over basic credit at depth 0 (not free basics during cast).
-  - **Files**: `86-planner.js`, `90-ui.js`, `ARCHITECTURE.md`, `ROADMAP.md`.
-- **Planner rewrite v1 — short-sequence combat planner foundation (ship — v1.0.6-alpha)** — Part 1 of the planner overhaul: **`86-planner.js`** is no longer opener-only. New core decision engine is a **bounded short-sequence search** (beam search, depth `Config.planner.sequencePlanner.maxActions` default **5**, horizon `maxHorizonSec` default **6**, `beamWidth` default **12**) that compares 2-5-action sequences over up to ~6 seconds. Foundations:
-  - **Combat state model** `plannerSeqBuildCombatState` — structured `{ player, target, fight, timing }` snapshot with player HP/MP/cooldown-readiness/self-buffs/basic-swing interval/`basicAttackLikelyUnderway`, target HP/visible-effects/semantic flags (`hasMagicResistShred`/`hasSlow`/`hasDistract` + remaining seconds)/fingerprint key, fight `enemiesPresent`/`activeAttackerCount`/`activeAttackerSource`/`pressure`/`incomingHpLossPerSec`, timing `maxHorizonSec`/`maxActions`. Best-effort: missing fields are null, never faked.
-  - **Normalized skill layer** `plannerSeqBuildNormalizedSkills` — per-attack-skill view with `slot, name, normalizedKey, manaCost, castTimeSec, cooldownSec, immediateDamage (mob-adjusted), dotTotal/dotDurationSec/dotPerSec, damageType, isCharge/chargeMaxSec/chargeGearPct, isAoe, isControl/controlDurationSec, tacticalRoles, semantic` (skill-OWN intrinsic semantics keyed by normalized name, **NOT** combo recipes).
-  - **Target visible effects** `readTargetVisibleEffects` in `40-state.js` parses `.profile-effects > app-effect-card` with `.effect-time` and inner icon class/src for an effect identity hint. Returns `[]` when no effect cards visible.
-  - **Active attacker count** `readActiveAttackerCount` in `40-state.js` reads the red badge on `app-button-icon.button-attackers` (also falls back to popup card count when popup is open); `null` only when no attackers button is mounted. First-class planner input distinct from `enemyCounter`.
-  - **Bounded beam search + simulator** `plannerSeqSearchSequences` / `plannerSeqSimulateAction` — for each action: basic, every off-CD/MP-affordable skill, plus a partial-release variant for charge skills (`chargePartialReleaseFraction` default **0.55**). Simulates damage/MP/HP/cooldowns + debuff durations; `Ice Shard` reduces incoming damage while slow active; `Distracting Shot` removes one active attacker while distract active.
-  - **TTK-first scoring** `plannerSeqScoreNode` — primary: minimum expected time-to-kill (predicted-kill time when target HP <= 0 inside the sim window; else `elapsed + remHp / basicDps`). Hard suicide guard: if simulated player HP ratio drops below `survivalMinHpRatio` (default **0.18**) the line is heavily penalized; predicted death adds a large extra penalty. Bounded tiebreaks: HP-loss-per-HpMax (`tieBreakHpLossPerHpMaxSec` default **1.5 s**), MP waste at overkill (`tieBreakMpWasteCoefSec`), tempo (`tieBreakTempoCoefSec`). **Skill-own semantic nudges** (NOT combos): `Sniper Shot` `chargeFullPressurePenaltySec` / `finisherBonusSec`; `Distracting Shot` `calmOpenerPenaltySec` / `pressureReliefBonusSec`; `Fan Volley` `singleTargetMisusePenaltySec` / `mpHeavyPenaltySec`. Heuristics only as bounded tiebreaks / missing-data fallback.
-  - **Compatibility adapter** `plannerAdaptSequencePickToOpenerShape` translates the best sequence's first action into the legacy `{ slot, record, chargeReleasePlan, queuedAction }` shape that the current combat executor consumes. Partial-release charge: overrides `releaseMs`/`releaseFraction`/`selectionMode` on the existing `plannerBuildChargeReleasePlan` output. Second action becomes the queued follow-up hint into `plannerBuildCombatQueueAction`. When the best sequence opens with `basic`, returns null cleanly so the basic-fallback path takes over. When the planner cannot decide (Easy mode, no normalized skills, no feasible skill at depth 0, no paper DPS), falls through to the legacy `openerHorizonSim` path — no executor rewrite required for Part 1.
-  - **Hook into `plannerPickSkillOpeningPick`** — sequence planner runs **first** when `Config.planner.useSequencePlannerFoundation !== false`, before legacy horizonSim. Forced-opener TEST path (`Runtime.planner.forcedOpenerSkillName`) is still honored (skips sequence planner so forced soak tests are unaffected). New `Runtime.planner.lastSequencePlan` snapshot records full state + top sequences + chosen first/second action.
-  - **Diagnostics + console API** — `ligmarBot.getPlannerCombatState()`, `getPlannerNormalizedSkills()`, `previewPlannerSequences()`, `plannerSelectSequencePick()`, `plannerAdaptSequencePickToOpenerShape()`, `getPlannerLastSequencePlan()`, `readActiveAttackerCount()`, `readTargetVisibleEffects()`.
-  - **TEST extensions** — `planner_combat_state_shape`, `planner_active_attacker_reader`, `planner_target_effect_reader_shape`, `planner_archer_semantic_table`, `planner_normalized_skill_semantics` (verifies Archer skills on the bar resolve to their `__semKey`), `planner_sequence_preview_shape`, `planner_compat_adapter_shape`, `planner_sequence_logic_archer_smoke` (pure-logic synthetic state: partial Sniper Shot < full Sniper Shot under pressure; Distracting Shot opener calm > basic opener; Distracting Shot opener under active-attacker pressure < basic opener).
-  - **Files**: `10-config.js`, `20-runtime.js`, `40-state.js`, `86-planner.js`, `90-ui.js`, `99-bootstrap.js`, `ARCHITECTURE.md`, `ROADMAP.md`.
-  - **Part 2 (shipped — v1.1.0-alpha)** — full combat-executor integration: the runtime now follows the planner's short sequence step-by-step (opener → planned step 1 → step 2 → …), invalidates the active plan on retarget / fingerprint change / no-progress, and exposes an inspectable should-replan helper. See the v1.1.0-alpha entry above for the full plan/queue/replan/invalidation surface and the new TEST coverage. Still on the **Part 2.1 / Part 3 (next)** list: planner-driven debuff scheduling (explicit Piercing Strike → magic-burst window enforcement during execution); smarter mid-fight re-planning when target HP / pressure changes inside an in-flight burst (rather than between bursts); class-agnostic semantic table extensions; live `cooldownReady` reading from action-bar overlay timer when game exposes it; better partial-release fraction sweep using simulator scoring rather than a fixed default. (Part 1.1 + 1.2 + 1.3 + 2 correction/integration passes shipped — see v1.0.7-alpha + v1.0.8-alpha + v1.0.9-alpha + v1.1.0-alpha entries above.)
-- **Buff system rewrite: OOC longbuffs, tile prebuffs, cast-resolution wait (ship — v1.0.5-alpha)** — Full redesign of the support-buff subsystem driven by the observed bug where bot moves / starts combat before a buff has finished casting and the cast gets cancelled. New central classifier **`classifySupportBuffPolicyForRow(row)`** (`85-combat.js`) splits buffs purely by duration: `<60s ⇒ prebuff`, `≥60s ⇒ longbuff`, safety/emergency (Windy Dome + absorb/incoming heuristic) → excluded. Threshold is **`Config.supportBuffs.longDurationMinSec`** (default **60**). `buildOrderedNewTilePrebuffTargets()` is now a thin wrapper that returns ONLY prebuff-policy rows — longbuffs never leak into the new-tile list. **PREBUFFS are tile-keyed**: new pipeline **`maybeApplyPrebuffsForNewMobTile`** runs once per newly entered mob tile (key from `Runtime.exploration.lastKnownCoords` → `"x;y"`, stored in `Runtime.autoFarm.supportBuffLine.prebuff = { tileKey, tileAt, lastResult }`). Retries on the same tile skip with `reason: "tile_already_prebuffed"`. **Fast** casts only prebuffs that are ready; **Safe** first waits (bounded by `prebuff.safeModeWaitAllReadyMs`, default **60000 ms**) until ALL prebuff slots are off cooldown then casts longest-first; **Easy** never casts prebuffs. **LONGBUFFS are OOC-only**: **`maintainLongbuffsOutOfCombat`** runs only when `enemyCount === 0` and session is healthy. First safe OOC moment in an AUTO session refreshes ALL longbuffs (`supportBuffLine.longbuff.initialPassDone`); later passes only refresh those whose assumed remaining drops below `permanentSelf.renewWhenRemainingSec` (default 20 s). Legacy names `runPermanentSelfLongBuffRefreshPass` / `maybeMaintainLongSelfSupportBuffsOutOfCombat` survive as back-compat aliases. The pre-find-enemy long-buff call inside `secureTileAndLootOnce` is removed — `maybeApplyPermanentSelfLongBuffsBeforeFindEnemy` is now a deprecated no-op so longbuffs cannot fire on a mob tile. **Cast resolution wait (root-cause fix)**: new **`waitForSupportCastResolved(slot, row, meta)`** replaces the old slot-cooldown-only wait. Phases: minSettle → APPEAR (cast bar by name match / any non-fraction bar text / slot CD overlay; capped by `postBuffCastCooldownWait.castAppearTimeoutMs` default **900 ms**) → FINISH (wait for cast bar to clear up to `max(maxWaitMs, castTimeSec*1000 + safetyBufferMs)`; if no bar appeared but `castTimeSec` is known, sleep `max(instantFallbackMs, castTimeSec*1000 + safetyBufferMs)`) → postSettle (default **140 ms**). The old name `waitForSupportBuffSlotCooldownAfterClick` is preserved as a wrapper. **Safe-mode empty-tile gate** now does HP/MP top-off only — the short-prebuff casting that used to live there moved to the mob-tile prebuff pipeline. **Easy mode** short-circuits all buff pipelines + the safe-mode gate. **AUTO session reset**: `startAutoFarmLoop` calls `resetSupportBuffPrebuffTileGate("auto_session_start")` and `resetSupportBuffLongbuffSessionState("auto_session_start")`; `longSelfTracked` is intentionally NOT cleared across AUTO ON/OFF (use `ligmarBot.clearSupportBuffAssumedDurationTracking()` to dispel). Console (read-only): `ligmarBot.classifySupportBuffPolicyForRow`, `getSupportBuffPolicySnapshot`, `maybeApplyPrebuffsForNewMobTile`, `maintainLongbuffsOutOfCombat`, `waitForSupportCastResolved`, `resetSupportBuffPrebuffTileGate`, `resetSupportBuffLongbuffSessionState`. New TEST checks: `support_buff_policy_split`, `prebuff_list_excludes_longbuffs`, `prebuff_policy_tile_based`, `safe_mode_prebuff_wait_on_mob_tile`, `support_cast_resolution_wait_uses_cast_bar`, `longbuff_maintenance_ooc_only`, `easy_mode_no_buff_systems`, `prebuff_tile_gate_skips_same_tile`. Updated: `easy_mode_disables_buffs` now points at the renamed pipeline `maybeApplyPrebuffsForNewMobTile`. **`10-config.js`**, **`20-runtime.js`**, **`85-combat.js`**, **`90-ui.js`**, **`99-bootstrap.js`**, **`ARCHITECTURE.md`**, **`ROADMAP.md`**.
-- **Audit fixes: sleep yield, target-swap progress, charge race, HP-spike sanity, potion CD enforce, ring-scan baseline, click TOCTOU, map-open guard, health throttle, log dedup (ship)** — Implementation of bot audit feedback. **`sleep()` (`30-utils.js`)**: even on `stopRequested` or `ms===0`, callers always receive at least one macro-task tick (`MIN_YIELD_MS=30`) so a tight `await sleep(...)` loop cannot spin-freeze the page during the Stop wind-down. **`dispatchUserClickSequence` (`30-utils.js`)**: re-checks `isElementVisible` immediately before reading the rect (TOCTOU guard between `clickElementSafe`'s pre-check and the dispatch). **`hasCombatProgressSince` (`85-combat.js`)**: same-maxHP target swap is now a progress signal — large upward HP `cur` jump (configurable via `Config.combat.progressTargetSwapJumpFrac`, default **0.25**) or any change in `max` returns `true`, so combat no longer stalls fighting "the same HP bar". **`handleChargeSkillOpener` (`85-combat.js`)**: re-probes `isChargingSkillCancelHintVisible()` before clicking the cancel UI — if the charge already auto-fired, skip the cancel click (prevents a queued follow-up firing on the wrong action) and dive straight into the progress wait. **`updateCombatSustainObservations` (`85-combat.js`)**: HP-spike safety buff now requires the player to actually be below `Config.combat.safetyHpSpikeRequireHpBelowFrac` (default **0.85**) and respects `Config.combat.safetyHpSpikeCooldownMs` (default **4000 ms**) — rejects misreads / potion-HoT-tick false positives. **`listCombatPotionCandidates` (`85-combat.js`)**: when `Config.combat.combatPotionEnforceClientCooldown` is on (default **true**), candidates also obey `sustain.potionCooldownUntil` so we never click during the client-side cooldown window even if the DOM overlay is briefly absent. **`waitForCondition` (`70-verify.js`)**: `evaluateAutoFarmHealth` is throttled to `Config.verification.healthEvalThrottleMs` (default **250 ms**) — predicate still runs every `pollMs` (25 ms default) but the expensive ~15-selector health read no longer fires on every tick. **`ensureMapOpen` (`70-verify.js`)**: probes `Config.selectors.mapCanvas` before clicking the toggle; if the map canvas is mounted, waits briefly for the center button to reappear instead of toggling closed (fixes the "map flickers closed during lag" race). **`scanNeighborRing` (`80-map.js`)**: per-tile baseline is refreshed from the live popup right before each click (`preClickBaseline`) instead of trusting the cumulative `lastObservedCoords` — prevents drift-induced false-blocked classifications. **`Logger` (`15-logger.js`)**: consecutive identical lines are collapsed; emits a single `(repeated N times)` summary when a different line arrives or after **4000 ms**. `Logger.flushDedup()` exposed for TEST + edge cases. New TEST checks: `sleep_min_tick_on_stop`, `combat_progress_target_swap`, `hp_spike_requires_low_hp`, `potion_cooldown_client_enforced`, `wait_for_condition_health_throttle`, `ring_scan_fresh_baseline`, `logger_dedup_consecutive`, `click_safe_visibility_recheck`, `ensure_map_open_canvas_guard`. **`10-config.js`**, **`15-logger.js`**, **`30-utils.js`**, **`70-verify.js`**, **`80-map.js`**, **`85-combat.js`**, **`90-ui.js`**, **`ARCHITECTURE.md`**, **`ROADMAP.md`**.
-- **AUTO: ensure-skills runs once per session + Easy disables buffs (ship)** — `ensureSkillsAndHeroDataForAutoFarm` no longer reloads cache / scans / logs every OOC cycle. New `Runtime.autoFarm.skillEnsureDone` latches after the first run that lands usable skills; later cycles short-circuit with `already_ensured`. Reset in `startAutoFarmLoop` next to `autoLikeTestPrepDone`. `Config.farmLoop.ensureSkills.runOncePerAutoSession` (default **true**) — set to `false` to restore old per-cycle behavior. `Config.farmLoop.ensureSkills.skipInEasyMode` (default **true**) — Easy has no ranked picks, so the helper exits before touching cache/DOM. Easy mode now disables **all** buff usage via a single new predicate `isAutoFarmEasyMode()` gating the entry of `maybeApplySupportPrebuffsOnNewTile` (new-tile prebuffs), `runPermanentSelfLongBuffRefreshPass` (covers `maybeMaintainLongSelfSupportBuffsOutOfCombat` + `maybeApplyPermanentSelfLongBuffsBeforeFindEnemy`), `maybeCombatSafetyBuffInterrupt`, and `processCombatSafetyHpSpikeIfNeeded` — all return `{ skipped: true, reason: "easy_mode" }`. HP/MP potions still fire (sustain, not buffs). Console: `ligmarBot.isAutoFarmEasyMode()`. TEST: `auto_skill_ensure_runs_once`, `easy_mode_disables_buffs`. **`10-config.js`**, **`20-runtime.js`**, **`85-combat.js`**, **`90-ui.js`**, **`99-bootstrap.js`**, **`ARCHITECTURE.md`**, **`ROADMAP.md`**.
-- **Night Mode: hourly reload + boot autostart (ship)** — New panel checkbox **Night Mode (hourly reload + auto-start)** in **`90-ui.js`**, persisted in **`ligmarbot.autoFarmUi.v1`** alongside combat mode and chat spammer. **`10-config.js`** adds **`Config.nightMode`** (`hourlyReloadMs` default **3600000**, `reloadOnlyWhenAutoFarmRunning: true`, named reasons for logs). **`20-runtime.js`** adds **`Runtime.autoFarm.nightMode`** state. **`85-combat.js`** adds lifecycle helpers — **`setNightModeEnabled`**, **`scheduleNightModeHourlyReloadIfNeeded`** (armed from **`startAutoFarmLoop`**), **`cancelNightModeHourlyReload`** (called from **`stopAutoFarmLoop`**), **`triggerNightModeHourlyReload`** (writes the existing **`ligmarbot.autoRecoveryResume.v1`** token with reason `night_mode_hourly_refresh`, then **`location.reload()`**), **`writeNightModeBootAutostartTokenIfNeeded`** (writes the same shape with reason `night_mode_boot_autostart` when Night Mode persists across page load and no recovery token is already pending). Boot wiring in **`99-bootstrap.js`** calls `writeNightModeBootAutostartTokenIfNeeded` between `createControlPanel()` (which restores Night Mode via `loadAutoFarmUiPrefs`) and `resumeAutoFarmAfterRecoveryBootIfNeeded()`, so the existing recovery health-check loop drives AUTO start when the game surface is healthy. Console: **`ligmarBot.setNightModeEnabled`**, **`getNightModeStatus`**, **`scheduleNightModeHourlyReloadIfNeeded`**, **`cancelNightModeHourlyReload`**, **`triggerNightModeHourlyReload`**. TEST: **`night_mode_helpers_wired`**, **`night_mode_persistence_roundtrip`**. **`10-config.js`**, **`20-runtime.js`**, **`85-combat.js`**, **`90-ui.js`**, **`99-bootstrap.js`**, **`ARCHITECTURE.md`**, **`ROADMAP.md`**.
-- **Input: appsmartclick user-like click sequence (ship)** — Game update ignores native **`element.click()`** for action-bar skills; **`clickElementSafe`** now uses **`dispatchUserClickSequence`** (center-point `pointerdown`/`mousedown`/`pointerup`/`mouseup`/`click`) so skill taps cast like manual clicks. TEST **`user_click_sequence`**. **`30-utils.js`**, **`90-ui.js`**, **`ARCHITECTURE.md`**, **`ROADMAP.md`**.
-- **Versioning: 1.0.0-alpha baseline (ship)** — Bot semver now counts from **`1.0.0-alpha`** (game-stable epoch; **`0.3.224`** last in the old line). **`build.ps1`** bumps patch and preserves prerelease (`1.0.0-alpha` → `1.0.1-alpha`); **`-SetVersion`** for milestones. **`ARCHITECTURE.md`**, **`ROADMAP.md`**, **`.cursor/rules/ligmarbot-ship-version.mdc`**, **`bot/build.ps1`**, **`bot/version.json`**.
-- **Action bar: app-skill-button unified slots (ship)** — Game stable bar splits skills into **`app-skill-button`** (`img.skill-button-image`, `span.skill-counter`); bot now scans/clicks/cooldown-checks **`Config.selectors.actionBarSlot`** (`app-action-button, app-skill-button`) in DOM order. Skill cache fingerprint **v4** invalidates stale 8-slot caches. TEST **`action_bar_unified_slots`**. **`10-config.js`**, **`60-actions.js`**, **`82-skills.js`**, **`90-ui.js`**, **`99-bootstrap.js`**, **`ARCHITECTURE.md`**, **`ROADMAP.md`**.
-- **Panel: remove TEST / STOP+COPY + trim footer (ship)** — Removed in-page **TEST**, **Test result** line, **STOP + COPY LOGS**, and issue-clip hint; use **`ligmarBot.runUiTestBundle()`** / **`ligmarBot.copyIssueReportLogs()`** from the console. Status footer no longer shows Session / Health / Recovery / Last-action watchdog lines. **`.cursor/rules/ligmarbot-ship-version.mdc`**, **`ARCHITECTURE.md`**, **`ROADMAP.md`**, **`20-runtime.js`**, **`90-ui.js`**, **`99-bootstrap.js`**.
-- **Explore: allow goblin tiles (ship)** — **`scoreScannedTile`**: removed hard-avoid for **`goblin`** map markers (**champion/boss** still **-500000**). Goblin-only neighbors use base **350000** (between contract-only and mob-only). **`ringHasUsefulLoot`** / yellow-die **`ringCandidates`** skip **boss** only so goblin counts as “useful” 1-ring loot. **`80-map.js`**, **`ARCHITECTURE.md`**, **`ROADMAP.md`**.
-- **AUTO TEST-like first-cycle prep (ship)** — **`Config.farmLoop.autoLikeTest`** (default **on**): first **OOC** cycle of each **AUTO ON** session runs **`runAutoFarmAutoLikeTestPrepIfNeeded`** — **`probeSelectors`**, **`ensureSkillsAndHeroDataForAutoFarm`**, panel-style **`scanSkills`** when the bar is empty / all empty slots, **`readHeroCombatStats`** when missing, **`plannerPickSkillOpeningPick`** + **`applySkillMasterToSlots`** — **without** TEST’s ranked soak (**farm start/stop**), **`quickCalibrationSession`**, or damage-observe tail. **`Runtime.autoFarm.autoLikeTestPrepDone`** gates one-shot; loop boot **`ensureSkills`** skipped when enabled (prep includes it). TEST **`farm_loop_auto_like_test_config`**. **`10-config.js`**, **`20-runtime.js`**, **`85-combat.js`**, **`90-ui.js`**, **`ARCHITECTURE.md`**, **`ROADMAP.md`**.
-- **AUTO Safe = full in-fight planner like Fast (ship)** — **`applyAutoFarmCombatMode`**: **Safe** no longer throttles ranked to first burst or MP reserve; it matches **Fast** for **`useRankedAttackSkillsInCombat`**, **`useRankedSkillOnlyFirstBurstAfterFind`**, and **`skillMpReserve`**. **Safe**-only behavior remains the idle **`exploreByScan`** gate (**`waitForSafeModeExploreResourcesAndShortPrebuffs`**). TEST **`auto_combat_mode_safe_full_planner_like_fast`**; panel tooltips already describe OOC vs in-fight. **`85-combat.js`**, **`90-ui.js`**, **`ARCHITECTURE.md`**, **`ROADMAP.md`**.
-- **AUTO OOC skill + hero refresh (ship)** — **`scanSkills(opts)`**: **`allowDuringAutoFarm: true`** when **enemyCount===0** and session healthy (mid-scan honors **Stop**). **`ensureSkillsAndHeroDataForAutoFarm`** at AUTO boot + each cycle start: **`loadSkillsFromCache`**, **`loadHeroStatsFromCache`**, conditional DOM scan + optional **`readHeroCombatStats`** when stats missing. **`Config.farmLoop.ensureSkills`**. TEST **`farm_loop_ensure_skills_config`**. **`82-skills.js`**, **`85-combat.js`**, **`10-config.js`**, **`90-ui.js`**, **`99-bootstrap.js`**, **`ARCHITECTURE.md`**, **`ROADMAP.md`**.
-- **Support buff assumed duration + re-cast gate (ship)** — After **new-tile prebuff**, **Safe short prebuff**, or **permanent-self** casts with resolved duration, runtime stores **`expectedEndAt`** in **`supportBuffLine.longSelfTracked`**. While **`buffDurationTracking.enabled`**, skips re-cast until assumed remaining ≤ **`recastMinRemainingSec`** (default **30 s**). Console **`clearSupportBuffAssumedDurationTracking`** / **`getSupportBuffAssumedDurationTrackingSnapshot`**. TEST **`support_buff_duration_tracking_config`**. **`10-config.js`**, **`20-runtime.js`**, **`85-combat.js`**, **`90-ui.js`**, **`99-bootstrap.js`**, **`ARCHITECTURE.md`**, **`ROADMAP.md`**.
-- **Potion parse: base (+bonus) heal/MP (ship)** — **`parseSkillEffects`** `heal_hp` / `restore_mp` patterns: optional `\(\+N\)` after base, **`over N seconds`**; **`getCombatPotionEffectSpec`** uses merged **`value`**. **`ligmarBot.parseSkillEffects`**, TEST **`potion_parse_*`**, scan table **`heal_hp:457@10s`**. **`82-skills.js`**, **`90-ui.js`**, **`99-bootstrap.js`**, **`ARCHITECTURE.md`**, **`ROADMAP.md`**.
-- **Planner load + TEST finally reconcile ranked; idle MP top-off (ship)** — **`loadPlannerUiPrefs`**: **`applyAutoFarmCombatMode()`** after merge (empty JSON path too). **`runUiTestBundle` `finally`**: after **`plannerBackup`** restore, **`applyAutoFarmCombatMode()`**. Idle **`waitForOutOfCombatHealBeforeExplore`**: **`tryUseOutOfCombatMpTopoff`** toward **`Config.combat.idleRegenerationMpTopoffTargetPct`** (default **0.9**) each poll and when HP already ≥ gate; **`idleRegenerationMpTopoffTargetPct`** **`false`**/**`0`** disables that pass. **`90-ui.js`**, **`85-combat.js`**, **`10-config.js`**, **`ARCHITECTURE.md`**, **`ROADMAP.md`**.
-- **AUTO ranked restore + buff cast settle (ship)** — **`startAutoFarmLoop`**: **`applyAutoFarmCombatMode()`** runs **before** **`plannerSnapshotBeforeAuto`** so OFF-restore does not write back **`useRankedAttackSkillsInCombat: false`** from planner prefs after Fast/Safe (fixes “basics only until TEST”). Panel **ON** calls **`applyAutoFarmCombatMode()`** before **`startAutoFarmLoop()`**. **`waitForSupportBuffSlotCooldownAfterClick`** after new-tile prebuff, Safe short prebuff, and permanent-self clicks; **`Config.supportBuffs.postBuffCastCooldownWait`**. TEST: **`auto_combat_mode_*`**, **`support_buff_post_cast_cooldown_wait_config`**. **`85-combat.js`**, **`90-ui.js`**, **`10-config.js`**, **`ARCHITECTURE.md`**, **`ROADMAP.md`**.
-- **Support DB taxonomy + permanent self-buffs vs prebuff (ship)** — **`bot/tools/generate-support-classification.mjs`** (Node) reads **`bot/data/ligmar_hero_skills_db.json`** → **`88-support-classification.generated.js`**: **long/short** duration, **self/mass** scope, **protective/attacking** role, **`permanentSelfOoc`** (≥**60 s** self, not safety-like). **`runPermanentSelfLongBuffRefreshPass`**: renew when ≤**20 s** assumed remaining, **OOC idle** + **before find-enemy** on occupied tiles; **`Config.supportBuffs.longDurationMinSec`** **60**, **`permanentSelf.renewWhenRemainingSec`** **20**, **`maxCastPerPass`**. Permanent long **self** buffs **removed** from **`maybeApplySupportPrebuffsOnNewTile`**. Console **`ligmarBot.lookupSupportSkillClassificationFromGeneratedDb`**, **`listSupportSkillClassificationFromMasterDb`**. **`build.ps1`**, **`10-config.js`**, **`85-combat.js`**, **`99-bootstrap.js`**, **`ARCHITECTURE.md`**, **`ROADMAP.md`**.
-- **AUTO combat mode: re-enable ranked after Easy when AUTO off (ship)** — Panel **Fast/Safe/Easy** always calls **`applyAutoFarmCombatMode`** on click (not gated on **`Runtime.autoFarm.running`**). **`loadAutoFarmUiPrefs`** calls **`applyAutoFarmCombatMode`** after restore, on **empty** storage (sync default **`combatMode`** to planner), and on **JSON parse error**, so **`useRankedAttackSkillsInCombat`** is not left **false** after **Easy** when switching back or refreshing. **`90-ui.js`**, **`20-runtime.js`**, **`ARCHITECTURE.md`**, **`ROADMAP.md`**.
-- **Prebuff timing + HP-spike safety + Safe explore gate (ship)** — **`secureTileAndLootOnce`**: **`maybeApplySupportPrebuffsOnNewTile`** before find-enemy when enemies are present (long buffs first, then short prebuffs longest-first, cap **`prebuff.maxSkillsTotal`**). **Safety:** **`updateCombatSustainObservations`** sets **`safetyHpSpikePending`** when HP loss ≥ **`supportBuffs.safety.hpDropImmediateMaxFrac`** of max within **`spikeSampleMaxDtSec`**; **`processCombatSafetyHpSpikeIfNeeded`** calls **`clickChargingSkillCancelUi({ dangerBypassNameMatch: true })`** then **`safety.skillNames`**; attack **`waitForCondition`** paths pass **`onEachPoll`** spike handling. **AUTO Safe:** idle empty-tile path runs **`waitForSafeModeExploreResourcesAndShortPrebuffs`** before **`exploreByScan`** (HP/MP floors **`combat.safeModeExplore*`** + short prebuff CD wait/cast). Files: **`40-state.js`**, **`85-combat.js`**, **`10-config.js`**, **`20-runtime.js`**, **`70-verify.js`**, **`90-ui.js`**, **`ARCHITECTURE.md`**, **`ROADMAP.md`**.
-- **Idle MP potions + party prebuffs + safety prebuff exclusion (ship)** — **`tryUseOutOfCombatIdleLowManaPotion`**: OOC when **`enemyCount===0`**, MP potions if **`mp.pct`** &lt; **`idleMpPotionUseBelowPct`** (default **0.25**) toward **`idleMpPotionTopOffTargetPct`**. **`buildPrebuffRowMetaListForPolicy`**: party **Support**+**Party** (scan or **`getSkillMasterEntry`** DB); exclude safety via **`isSupportSkillExcludedFromPrebuffSafetyPolicy`** (reserve + **`safety.skillNames`** + absorb/incoming heuristic). **`10-config.js`**, **`85-combat.js`**, **`90-ui.js`**, **`ARCHITECTURE.md`**, **`ROADMAP.md`**.
-- **Support buff line + chat spammer toggle + MP floor (ship)** — **`Config.supportBuffs`**: OOC renew of long self-support buffs (`maybeMaintainLongSelfSupportBuffsOutOfCombat`). Short combat prebuffs are now applied on new tiles before find-enemy (`maybeApplySupportPrebuffsOnNewTile`; see newer roadmap bullet). Emergency **Windy Dome** is driven by **HP spike** detection (`maybeCombatSafetyBuffInterrupt` / `processCombatSafetyHpSpikeIfNeeded`). **`Runtime.autoFarm.supportBuffLine`** tracks assumed long-buff ends + spike telemetry. Console: **`ligmarBot.listScannedSupportBuffClassifications()`**, **`ligmarBot.listSafetyLikeBuffsFromScannedSkills()`**. Panel checkbox **Auto local chat promo spammer** + **`ligmarbot.autoFarmUi.v1.autoLocalChatSpammerEnabled`**. **`mpPotionForceUseBelowPct`** (default **0.25**) forces MP pot need before **`can_cast_any_attack_skill`**. TEST: **`support_buffs_surface`**, **`chat_spammer_auto`** no longer requires spammer enabled for probe pass (`90-ui.js`, `85-combat.js`, `10-config.js`, `20-runtime.js`, `99-bootstrap.js`, `ARCHITECTURE.md`).
-- **AUTO combat modes + MP potion max-heal threshold (v0.3.206–207)** — Panel **Fast / Safe / Easy** (`90-ui.js`): **`Runtime.autoFarm.combatMode`** in **`ligmarbot.autoFarmUi.v1`**; **`applyAutoFarmCombatMode`** sets ranked pipeline (**Fast** and **Safe**: full ranked every burst, **`skillMpReserve` 0**, **`useRankedSkillOnlyFirstBurstAfterFind` false**; **Safe** adds idle **`exploreByScan`** gate **`waitForSafeModeExploreResourcesAndShortPrebuffs`** — HP/MP floors + short prebuff CD wait/cast; **Easy**: basics only). **Later:** same helper also runs on panel mode click and **`loadAutoFarmUiPrefs`** so leaving **Easy** re-enables ranked even when **AUTO** is off (see **Done recently** top bullet). Snapshot/restore planner flags on loop exit (`85-combat.js`). MP sustain: **`mpPotionUseWhenBelowMaxMinusHeal`** — drink when missing MP ≥ largest bar MP pot heal, including after preferred-skill mana is satisfied (**v0.3.207** fall-through fix). Console **`ligmarBot.loadAutoFarmUiPrefs` / `saveAutoFarmUiPrefs`**, **`setAutoFarmCombatMode`**, **`applyAutoFarmCombatMode`**.
-- **Charge cancel cast-bar gate (ship)** — Default **`Config.combat.chargeCancelRequireCastBarNameMatch`**: **`clickChargingSkillCancelUi`** requires cancel hint **and** visible cast/progress bar text matching the opener **`expectedSkillName`** before map-gap or DOM cancel (`40-state.js`, `85-combat.js`, `10-config.js`). TEST on-demand cancel passes forced opener name; **`combat_sustain_policy`** detail includes the flag. **`ligmarBot.isCastBarShowingExpectedSkillNameForChargeCancel`** for console. Rollback: **`Config.combat.chargeCancelRequireCastBarNameMatch = false`**.
-- **Quick TEST: no charge-cancel clicks (v0.3.204)** — `testProfile: "quick"` sets `Runtime.testBundle.disableChargeCancelUi` (guards `clickChargingSkillCancelUi`), forces `rankedOpenerClickCancelUiIfChargeStuck` / map-gap cancel off for bundle scope, ignores `fireChargeCancelIfHint`; restored in `finally` (`20-runtime.js`, `40-state.js`, `90-ui.js`).
-- **Remove ranked opener early-cancel wait (ship)** — **`attackUntilProgress`**: no split first-wait / mid-wait **`clickChargingSkillCancelUi`**; single **`firstWaitTimeoutMs`** then existing stuck-cancel + basic path. Planner manual charge hold ms lives on **`Config.combat.chargeSkillReleaseOverrideMs`** (replaces **`rankedOpenerEarlyCancelIfHintAfterMs`**); **`loadCombatUiPrefs`** migrates old **`ligmarbot.combatUi.v1`** key once (`85-combat.js`, `86-planner.js`, `10-config.js`, `90-ui.js`, `20-runtime.js`, `ARCHITECTURE.md`).
-- **§6 buff research console API (v0.3.202)** — **`summarizeEnemyBuffSigBuckets({ key? })`** in **`84-enemy.js`**, **`ligmarBot.summarizeEnemyBuffSigBuckets`**: per-bucket **`signaturePreview`**, means, samples for one mob key (default **`lastFoughtKey`**). TEST soft **`enemy_buff_sig_buckets_api`**.
-- **§6 buff export readability (v0.3.200)** — **`fieldValidation.enemyBuffCalibration.buffSigTop`** entries include **`signaturePreview`** (truncated label fingerprint) plus **`signatureLen`** so **`TestSummary.md`** distinguishes buckets without opening DevTools DB.
-- **Field validation: plannerUiPrefs snapshot (v0.3.199)** — **`buildFieldValidationSnapshotForTestExport`**: **`plannerUiPrefs`** (same shape as **`plannerPrefsSnapshot()`**, includes **`openerFollowUpSkillDepth`**) for **`gameSnapshotEnd.fieldValidation`** / **`getFieldValidationSnapshot()`** soak triage.
-- **Planner UI prefs: openerFollowUpSkillDepth (v0.3.198)** — **`plannerPrefsSnapshot` / `loadPlannerUiPrefs` / `savePlannerUiPrefs`** persist **`openerFollowUpSkillDepth`** (**0–4**) in **`ligmarbot.plannerUi.v1`** so queue+horizon lookahead survives refresh without hand-editing **`10-config.js`**.
-- **Default queue + horizon follow-up depth 2 (v0.3.197)** — **`Config.planner.openerFollowUpSkillDepth`** default **2** for **`plannerBuildCombatQueueAction`** / **`plannerResolveCombatQueueScoreDepth`** and opener horizon follow-up tail (still one client queue slot). TEST **`combat_queue_policy`** detail **`queueScoreDepth`** reflects config; rollback: **`ligmarBot.Config.planner.openerFollowUpSkillDepth = 1`**.
-- **TEST Opener context scoring vs horizon basic (v0.3.196)** — **`planner_opener_context_scoring`**: when **`lastReason === "horizon_prefers_basic"`**, waive requiring **`lastDetail.contextAdjustment`** (preview candidates still must expose context); **`planner_ranked_reason_quality`** unchanged.
-- **§6 buff calibration slice (enemy DB) (v0.3.195)** — **`mergeLastDamageObserveIntoEnemyDb`**: **`observeCalLast.statusLabelsSignature`**, **`statusLabelsMergeSource`**, **`statusLabelCount`**, **`statusLabelsSample`**; **`observeCalAgg.buffSigBuckets`** (per-signature **`hp_drop`** aggregates, prune to **20** keys). **`summarizeEnemyDbCalibration`** adds **`buffSigBucketsTop`**. **`buildFieldValidationSnapshotForTestExport`**: **`enemyBuffCalibration`**. TEST soft **`enemy_buff_calibration_probe`** after calibration merge.
-- **Queue v3 (scoring): runtime queue uses opener follow-up depth (v0.3.194)** — **`plannerResolveCombatQueueScoreDepth`** + **`plannerBuildCombatQueueAction`**: next queued skill is chosen with **`plannerBestFollowUpActionValue(..., depth: openerFollowUpSkillDepth)`** instead of hardcoded **1** (client still one queue slot per step). TEST **`combat_queue_policy`** exports **`queueScoreDepth`**.
-- **Post-retarget: no cancel + queue on game basic (v0.3.193)** — Removed **`performPostAttackersRetargetCancel`** after kill-retarget; **`secureTileAndLootOnce`** no longer breaks the loop when cancel UI is missing. **`attackUntilProgress`**: **`applyPostRetargetQueueOpenerPick`** on **`firstBurstAfterRetarget`** skips the ranked **opener click** for **non-charge** picks and arms **`combatQueue`** anchored to **Attack** so the first skill queues while the client’s default basic winds; **charge** openers unchanged. **`allowCombatQueue: true`** on that first burst. **`combatEpisode`** plan for telemetry uses **opener_basic** + first queued skill when applicable. TEST **`combat_attackers_retarget_ui`** detail flags **`postRetargetQueueAfterGameBasic`**.
-- **Horizon unified overkill cap** — **`plannerHorizonResolveLiveTargetHpCur`**, **`plannerHorizonCapSkillDamageToTargetHp`**: one resolver + one cap helper for **generic** opener paper (`openerTargetHpAwareScoring`) and **charge release** damage (`chargeSkillTargetOverkillCapEnabled`); keeps prior defaults, removes duplicated inline min/max logic.
-- **Horizon single authority (channel hold + context)** — **`plannerComputeHorizonChannelHoldRisk`**: charge multi-mob / low-player-HP hold penalties are applied once via **`plannerComputeOpenerContextAdjustment`** (diagnostic **`hold_*`** parts, **`channelHoldRisk`** snapshot). **`pressure_cast_penalty`** is suppressed for charge skills so hold time is not taxed twice. Opener **`scored`** rows reuse **`score.cooldownForecast`** from **`plannerOpenerHorizonSkillPlusBasics`**.
-- **Combat episode v1 (structured burst plan)** — **`plannerResolveCombatEpisodeTargetKey`**, **`plannerBuildCombatEpisodePlan`**: each **`attackUntilProgress`** burst resolves the opener once, snapshots ordered steps (opener skill or basic + optional queued follow-up) to **`Runtime.autoFarm.combatEpisode`**, then applies the same pick (no double planner call). Cleared on fingerprint change, **`secureTileAndLootOnce`** start, and post-kill re-target. Console **`ligmarBot.getCombatEpisode()`**; TEST **`Combat episode plan`**.
-- **Opener danger pressure (incoming sustain)** — **`plannerComputeOpenerDangerPressure`**: adds optional **incoming HP loss/sec** pressure from **`Runtime.autoFarm.combatSustain.recentHpLossPerSec`** (scaled vs player max HP, capped; knobs **`openerContextIncomingHpLossEnabled`**, **`openerContextIncomingHpLossScale`**, **`openerContextIncomingHpLossPressureCap`** on **`Config.planner`**). **`plannerPickSkillOpeningPick`** calls **`updateCombatSustainObservations`** right after **`readBasicState`** so the signal is fresh before ranked scoring. TEST **`Opener danger pressure`** (`planner_opener_danger_pressure_shape`); **`fieldValidation.openerDangerPressureSample`** in self-export / **`getFieldValidationSnapshot()`**. **(v0.3.186)**
-- **Charge hold risk + pull labels (v0.3.187)** — **`plannerComputeHorizonChannelHoldRisk`**: optional **`hold_incoming_pressure_penalty`** uses **`incomingPressure`** (same sustain signal as opener danger; knobs **`chargeSkillHoldIncomingPressureEnabled`**, **`chargeSkillHoldIncomingPressurePenaltyInBasicDps`**). **`plannerComputeOpenerDangerPressure`** adds **`pullTier`** / **`pullEnemyCount`**. **`plannerComputeOpenerContextAdjustment`** passes precalculated **`pressure`** into hold-risk to avoid double work. Charge release score rows expose **`incomingHoldPenalty`**. TEST **`Channel hold risk`** (`planner_horizon_channel_hold_risk_shape`).
-- **Calibration → opener danger pressure (v0.3.188)** — **`plannerComputeCalibrationPressureAddon`** + **`plannerComputeOpenerDangerPressure(liveState, { enemyKey })`**: when DB ratio is below paper with enough samples, adds **`calibrationPressure`** into **`totalPressure`** and into charge hold **incoming-like** sum. **`plannerComputeOpenerContextAdjustment`** / horizon scoring pass **`enemyKey`**; field validation + TEST use **`Runtime.enemy.lastFoughtKey`** when present.
-- **Calibration pressure v2 — spread + ease (v0.3.189)** — **`(observedMax−observedMin)/mean`** gates confidence and skips **`spread_too_wide`**; optional **`openerContextCalibrationEase*`** subtracts bounded pressure when ratio is modestly above paper (charge hold still uses **hard** only). Exports **`calibrationSpreadRel`**, **`calibrationConfidenceMul`**, **`calibrationPressureHard` / `Ease`**.
-- **Horizon typed paper mob blend (v0.3.192)** — **`plannerHorizonPaperEffectiveMobFactor(mf, "non_basic", damageType)`**: **`physical`** instant/dot use **`horizonPaperMobBlendPhysicalWeight`** (default **1**); magic/unknown use **`horizonPaperMobBlendMagicWeight`** (fallback **`horizonPaperMobBlendNonBasicWeight`**). **`parseSkillEffects`**: instant also matches **additional N → M of physical damage**. TEST **`Horizon typed paper mob calibration`**.
-- **Horizon paper mob blend (v0.3.191)** — **`plannerHorizonPaperEffectiveMobFactor`**: per-line blend before **`damageType`** split on instant/dot; superseded by **v0.3.192** for physical vs magic wording.
-- **Verify + retarget settle defaults (v0.3.182)** — **`Config.verification.pollMs`** **25**, **`timeoutMs`** **1250**; **`attackersRetargetSettleMs`** / **`postRankedSkillClickSettleMs`** **25**.
-- **TEST Natural Sniper Shot pass on fresh other-opener (v0.3.180)** — **`acceptableFreshAlternative`**: when a non-Sniper ranked skill wins the same calm fresh-window probe, **`planner_natural_sniper_shot`** passes (see **`TestSummary.md`** export / **`ARCHITECTURE.md`** TEST forced opener).
-- **Charge late-wait tuning (v0.3.178)** — default **`chargeSkillReleaseLateProgressTimeoutMs`** **2000**; **`chargeSkillReleaseLateTinyCancelCapMs`** / **`chargeSkillReleaseLateTinyFractionThreshold`** shorten extended HP polling for micro **`cancel_release`** so the bot does not sit silent ~3.5s after a tap cancel.
-- **Charge cancel late-wait + queue tick fix (v0.3.177)** — **`chargeSkillReleaseLateProgressTimeoutMs`** second progress wait before alternate openers; per-opener queue arm for alternates; **`queueAdvanceTick`** when queue **active** (not gated on first opener non-charge).
-- **STOP + COPY LOGS + Logger ring (v0.3.176)** — **`15-logger.js`** buffers last **200** formatted lines; panel **STOP + COPY LOGS** stops auto-farm (if ON) and copies last **30** to clipboard (**`---LIGMARBOT_ISSUE_LOG_CLIP_…`**); **`ligmarBot.copyIssueReportLogs()`**; TEST soft **`Logger ring`**.
-- **Field validation snapshot in TEST export (v0.3.175)** — **`gameSnapshotEnd.fieldValidation`** bundles reliability / health / recovery / sustain / combat queue / chat spammer / last session / planner opener counters + **`ligmarBot.getFieldValidationSnapshot()`**; TEST adds soft **`Field validation`** check.
-- **Remove floating miss observer + DB miss merge (v0.3.174)** — no **`miss_text`** events, no **`scanFloatingMissNodes`**, no **`snapFloatingMissOnce`**, no **`includeMissTexts`** / **`missDiagnostics`**; **`mergeLastDamageObserveIntoEnemyDb`** requires **`hp_drop`** only; TEST drops **`Miss text scan`**; persisted damage summary **version 5**.
-- **Close map after find-enemy (v0.3.171)** — **`secureTileAndLootOnce`** calls **`closeMapIfOpenAfterFindEnemy()`** after verified find / find-enemy re-target (skips attackers-popup retarget). Knobs **`Config.combat.closeMapAfterFindEnemy`** / **`closeMapAfterFindEnemySettleMs`**. Loot path unchanged (**`ensureMapOpen`**).
-- **TEST calibration scans misses automatically (v0.3.170)** — panel/quick TEST **`quickCalibrationSession`** calls use **`includeMissTexts: true`**; **`quickCalibrationSession`** return adds **`missDiagnostics`** (**`missTextEventCount`**, merged row **`observeMissAgg`** / **`observeMissLast`**) for self-export. No console steps to exercise miss merge.
-- **Enemy DB miss_text merge (v0.3.169)** — **`mergeLastDamageObserveIntoEnemyDb()`** accumulates floating **`miss_text`** events into **`observeMissAgg`** / **`observeMissLast`** per **`makeEnemyDbKey`**; observe **`mergeToEnemyDb`** runs when **`hp_drop`** or **`miss_text`** present; **`observeCombatDamage`** skip error renamed accordingly; TEST calibration retries recognize **`skipped_no_hp_drops_or_miss_text`**.
-- **Skill master unique cross-class fallback (v0.3.168)** — **`applySkillMasterToSlots()`** falls back with **`tryResolveUniqueSkillMasterAcrossClasses()`** when the detected class list has no row but exactly one other class defines that normalized name; **`slot.master.resolvedVia`** is **`unique_cross_class`**; **`crossClassResolved`** + warn on ambiguous duplicates.
-- **TEST export: clone before prune (v0.3.167)** — **`cloneJsonSafeForTestExport()`** (JSON round-trip) runs before pruning so **`getPlannerOpeningPickDiagnostics()`** shared references are duplicated and keys like **`lastOpenerHorizonSim`** / **`runtimeAggression`** export as real objects instead of **`"[circular]"`**.
-- **Compact TEST self-export JSON (v0.3.166)** — the paste/tab/clipboard payload still includes every check id + ok/skip + compact **`detail`**, failures, timing, URL/UA, and end-game snapshot, but **`pruneValueForTestExport()`** collapses huge planner arrays (notably dense **`chargeReleasePlan.candidates`**) into **`__truncatedArray`** (**`length`** + **`head`**/**`tail`** samples). **`exportCompact`** records the limits. **`[TEST] DETAILS`** logging remains **unpruned** for deep DevTools debugging.
-- **TEST self-export package for support (v0.3.164)** — one highlighted DevTools **COPY** block (**`LIGMAR_TEST_EXPORT_BEGIN`/`END`**) plus **`[TEST] SELF_TEST_JSON`** / **`Runtime.ui.lastTestExportJson`** / **`ligmarBot.getLastTestExport()`** with full steps, failures, timing, URL/UA, end-game snapshot.
-- **TEST export tab + clipboard (v0.3.165)** — after TEST, opens a **new tab** with paste-ready JSON and **Copy JSON** button; **auto-copies** to clipboard when the browser allows (else use tab or console).
-- **Chat spammer 1/6 smart + bank (v0.3.163)** — each promo cycle rolls **uniform 1/6**: one outcome is the **smart** opener→delay→follow-up pair; the other five are the five **time-of-day** bank lines for the current slot (banks with fewer than five unique lines are **cycled** to five dispatch slots). Removed **`smartLinePickProbability`**. See **`pickAutoChatSpammerDispatch`** in **`85-combat.js`**.
-- **TEST panel default + single panel button (v0.3.162)** — **`runUiTestBundle()`** defaults to **`testProfile: "panel"`** (middle soak budgets vs quick/release, strict calibration + same observe/retry tier as release calibration path, resume farm when it was ON). Panel **TEST** calls **`{ testProfile: "panel" }`** explicitly; duplicate **TEST release** button removed — use **`ligmarBot.runUiTestBundle({ testProfile: "release" })`** for longest soak + forced skill scan. **`quick`** remains for fast dev passes.
-- **Floating Miss text observer (v0.3.161)** — `observeCombatDamage` can emit deduped **`miss_text`** events using **`Config.damageObserver.missTextSubstrings`**; session **`missTextEventCount`** + storage summary **v4**; **`ligmarBot.snapFloatingMissOnce()`**; **`quickCalibrationSession`** skips miss scan by default (`observe.includeMissTexts` to enable); TEST **`Miss text scan`**.
-- **AUTO chat smart pair (newbie ping + 40s + referral) (v0.3.160)** — each 5–15 min cycle used **either** the current time-of-day bank line **or** a two-step **smart** promo: **`Новички есть👋?`** then after **40s** **`Введи бонусный код v1ctory…`**; follow-up skipped if **Stop**, enemies appear, or session risk before send. **`smartLineFollowupDelayMs`** added; TEST flatten includes both smart strings for length checks. **Superseded by v0.3.163** (uniform **1/6** smart vs five bank lines; **`smartLinePickProbability`** removed).
-- **AUTO chat time-of-day banks + 5–15 min cadence (v0.3.159)** — **`Config.chat.messagesByTimeOfDay`** replaces the flat list: **morning / daytime / evening / night** message banks (local hours); interval **5–15 minutes**; **`getTimeOfDayChatSlot()`** selects the bank; duplicate-no-repeat uses **`lastChatSlot`** per slot; referral code remains **`v1ctory`**; TEST **`chat_spammer_auto`** now also fails if any bank string is ≥100 JS `.length` chars.
-- **AUTO chat promo copy + Enemy DB / buff research notes (v0.3.157)** — primary **`Config.chat.messages`** line now uses sync code **`v1ctorY`** and matches the “cache reset / VIP” wording; **`ARCHITECTURE.md`** documents what **`Runtime.enemy.db`** rows actually store (identity, **`statusLabelsLast`** strings, **`hp_drop` calibration**) versus **not** modeled buff magnitudes; **`ROADMAP.md`** adds milestone **#6** for prebuff/rebuff, run mechanics, and empirical paired-fight buff inference.
-- **Night resilience hardening (v0.3.156)** — AUTO now tracks real session health (dead / poor connection / missing core UI / stale no-verify windows / high ping), aborts long waits early on critical session risk, tries bounded soft recovery first (close transient UI, reopen map, recenter, re-check health), and escalates to an automatic page refresh with persisted AUTO resume when the session stays unhealthy too long. TEST now includes dedicated watchdog checks so the recovery ladder is visible without manual console work.
-- **AUTO local chat spammer (v0.3.155)** — AUTO ON now keeps a randomized **8-20 minute** local-chat promo timer, opens the battle-log chat only at safe cycle boundaries, fills one random configured `v1ctory` line, switches to **Local**, sends it, then closes the dialog. TEST now includes a non-sending chat smoke check so the open/fill/local/send-ready/clear/close path is validated without posting publicly during diagnostics.
-- **Retarget cancel fast-path + charge guard until progress (v0.3.154)** — attackers-popup retarget no longer does redundant HP reacquire waits before the cleanup cancel. It reuses the first verified HP>0 target state from the popup flow, taps cancel immediately, and keeps charge skills blocked on that re-targeted enemy until the first verified HP/count progress lands.
-- **Progress-bar-driven queue chaining (v0.3.152)** — queue advancement is no longer based on a fixed delay. The bot now waits until the visible cast/progress bar text matches the current queued action name (for example `Sniper Shot` or `Attack`) before sending the next queued follow-up. This also includes a same-name reset guard so repeated `basic -> basic` chains do not spam extra queue clicks off one unchanged `Attack` bar.
-- **Queue activation delay + attackers-retarget cancel (v0.3.151)** — queued follow-up clicks now wait **100 ms** before activation so the opener cast can latch first, and the attackers-popup re-target path now waits for **real target HP**, sends one **cancel** tap, then starts attacks on the new target. This keeps the post-retarget burst cleaner while preserving the fast popup re-target path.
-- **Charge verify fast-fallback hotfix (v0.3.150)** — lowered both charge post-release progress windows to **250 ms** (`chargeSkillReleaseProgressTimeoutMs`, `chargeSkillFullChargeProgressTimeoutMs`) so the bot does not wait ~2.2s after a charge release/full-charge shot that shows no real HP/count progress. This keeps the existing safe fallback path, but makes it react much faster.
-- **Combat retarget queue + no-charge first burst (v0.3.149)** — after a successful survivors-left re-target, the first burst now still allows ranked non-charge skills but filters charge skills for that burst only, preventing the old tiny-release/no-progress path from colliding with a still-settling target swap. Runtime combat also now arms and fires one buffered **non-charge/basic** follow-up action from planner follow-up scoring, with target/cooldown/MP revalidation and TEST visibility for the guard + queue state.
-- **Attackers-popup fast retarget (v0.3.148)** — after killing one mob in a multi-mob pull, the bot now first clicks the **attackers** button and selects the next visible enemy card from the popup instead of always waiting on **`find enemy`**. If the popup path fails, it falls back to the normal **`find enemy`** flow.
-- **Find-enemy positive-HP gate (v0.3.147)** — after pressing **`find enemy`**, the bot now waits for the target bar to have **real HP (`targetHp.cur > 0`)** before continuing to attack. This avoids treating an early/stale target shell as a finished retarget and reduces charge-skill/cancel actions landing while `find enemy` is still resolving.
-- **Idle explore heal / regen gate (v0.3.146)** — when **`enemyCount === 0`** before the next idle **`exploreByScan()`** step, the bot **waits** (status **`healing before next tile`**) until HP reaches **`Config.combat.outOfCombatHealWaitHpPct`** (default **75%**), using **HP potions** from the bar (missing-to-threshold sizing, shared cooldown respected) plus passive ticks. **`outOfCombatHealBeforeExplore`** toggles the feature. MP potions are **not** consumed in this gate.
-- **Parsed potion sustain and mana protection (v0.3.145)** — combat sustain no longer uses crude HP/MP percentage rules alone. HP potions now use parsed total-heal + HoT-duration + shared 15s cooldown logic with recent incoming-damage forecasting, while MP potions now protect the mana needed for the planner’s current best skill instead of only reacting to low mana percent. TEST `Combat sustain` now exposes parsed potion totals/durations and the runtime sustain snapshot.
-- **Combat readiness pack (v0.3.143)** — shipped the current-build combat milestone as one batch: dense 1% charge search, explicit execute/last-hit selection for low-target windows, live HP/MP potion sustain in combat, default ranked-combat ON for the current build, and new TEST checks (`Execute policy`, `Combat sustain`) plus richer golden-comparator payloads.
-- **Fresh-target alpha opener scoring (v0.3.142)** — calm single-target opener scoring now adds an extra fresh-target alpha preference: high-frontload burst and charge openers gain value when the target is still near full HP, while delayed DoT-heavy openers are discounted slightly there. `Natural Sniper Shot` TEST also now judges only true fresh-opener opportunities instead of the first arbitrary post-force ranked pick.
-- **Calm single-target burst credit for heavy openers (v0.3.141)** — opener context scoring now rewards slow high-frontload openers, including dynamic charge-release candidates, when the fight is calm and the target is healthy enough to justify setup time. Charge candidates now also keep their context breakdown in `previewOpenerHorizonSim()` / `Golden comparator`, so `Sniper Shot` no longer bypasses the new diagnostic path.
-- **Enemy-state-aware generic opener scoring (v0.3.140)** — generic opener scoring now adds small live-fight context adjustments on top of paper damage: pressure penalizes long casts, control/multi-target skills gain value in dangerous pulls, and immediate/front-loaded damage gets a finisher bonus on low-target fights while DoT-heavy value is discounted there. TEST now includes `Opener context scoring`, and `Golden comparator` exposes the new context adjustment fields.
-- **Runtime aggression credit for generic openers (v0.3.139)** — when ranked soak telemetry shows large opener headroom with low fallback/no-progress, the planner now lowers the generic opener threshold by one small bounded step instead of only printing `headroom_for_more_aggressive_skill_openers` as a hint. `Golden comparator` and `Ranked tuning hint` now expose whether that runtime credit was active and what threshold it produced.
-- **Canonical skill DB apostrophe cleanup (v0.3.137)** — repaired obvious mojibake names directly in `bot/data/ligmar_hero_skills_db.json` (`Hunter's Tread`, `Assassin's Gambit`, `War's Embrace`, `Blade's Grace`) so the embedded master DB ships clean source names instead of depending only on runtime normalization.
-- **Skill master separator-free lookup keys (v0.3.135)** — master DB matching now removes separator differences entirely from normalized lookup keys, so apostrophe/mojibake spacing variants collapse to the same name key instead of still drifting apart.
-- **Ranked soak partial-activity retry (v0.3.133)** — TEST ranked soak now extends once when some ranked runtime events were observed before timeout but the minimum event budget was not reached yet, reducing critical false fails from near-miss live runs.
-- **Skill master name-normalization hardening (v0.3.131)** — master DB matching now strips level suffixes and collapses punctuation/encoding variants into stable lookup keys, so apostrophe/mojibake mismatches like `Hunter’s Tread` no longer miss the embedded class DB.
-- **Skill master DB unmatched-name diagnostics (v0.3.130)** — applying the master DB now reports `unmatchedNames` / `unmatchedCount` in both the log and the TEST `skill_master_db` detail, so partial class-bar matches like `8/9` show exactly which skill is missing from the embedded master map.
-- **Cooldown-aware opener forecast (v0.3.129)** — opener horizon now applies a mild capped opportunity tax to skills whose cooldown extends far beyond the simulated window, and the preview / golden comparator payload now expose cooldown seconds, excess cooldown, and cooldown penalty for top candidates.
-- **Golden comparator TEST payload (v0.3.128)** — TEST now emits a compact `Golden comparator` block that bundles the opener decision, effective horizon, baseline, enemy adaptation, top candidates, runtime counters, and natural/forced `Sniper Shot` evidence into one always-on payload for faster debugging.
-- **Natural `Sniper Shot` opportunity-aware probe (v0.3.127)** — the live `Natural Sniper Shot` TEST now only fails after a real post-force opener decision is observed; if no natural opener opportunity happens in the probe window, TEST reports that check as skipped instead of a false failure.
-- **Natural `Sniper Shot` live probe hardening (v0.3.126)** — after the forced `Sniper Shot` soak, TEST now clears the force override and watches live ranked-pick runtime events for a short natural window while auto-farm is still running, so `Natural Sniper Shot` is judged from real opener behavior instead of post-stop planner polling.
-- **Natural `Sniper Shot` TEST cooldown hardening (v0.3.125)** — after a forced `Sniper Shot` soak, TEST now waits for `Sniper Shot` to become planner-eligible again before judging the `Natural Sniper Shot` check, reducing false failures caused by the test’s own forced cooldown.
-- **Enemy-adaptation one-way safety (v0.3.124)** — low enemy-calibration ratios no longer raise the opener improvement threshold by default, so verified per-skill openers like `Sniper Shot` are not suppressed by conservative adaptation; high-ratio lowering remains available.
-- **Enemy-calibrated basic baseline (v0.3.122)** — opener horizon now applies the enemy calibration ratio to baseline/basic follow-up DPS too, so skills are no longer compared against an idealized paper-basic baseline while their direct damage is scaled down.
-- **TTK-aware opener horizon (v0.3.121)** — opener horizon can now shrink toward live target TTK (with padding + floor) so nearly-dead targets no longer get scored as if they will survive the full 5s opener window; preview/diagnostics expose requested vs effective horizon.
-- **Threshold-aware opener selection (v0.3.120)** — opener horizon now chooses the best candidate that clears its own threshold, instead of letting the highest raw-damage skill block lower-threshold verified skills like `Sniper Shot`; preview/diagnostics now show per-candidate threshold pass state.
-- **Queue-aware opener scoring (v0.3.119)** — opener horizon now values one best follow-up skill instead of basics-only, and generic opener damage can cap to the live target HP so near-dead targets do not overvalue big openers.
-- **Context-aware dynamic charge scoring (v0.3.118)** — dynamic `channel_gear` selection now caps wasted overkill against the live target and adds mild hold-risk penalties for multi-mob / low-HP situations; TEST adds `Dynamic charge scoring`.
-- **Generic dynamic charge release scoring (v0.3.117)** — parsed `channel_gear` skills now compare several release fractions (`chargeSkillDynamicCandidateFractions`) and pick the best opener-horizon total; fixed per-skill fractions remain as fallback / preferred candidates, and TEST can still force one exact fraction when needed.
-- **Natural `Sniper Shot` shortlist fix (v0.3.116)** — per-skill opener threshold overrides now also bypass the conception shortlist gate, so verified skills like `Sniper Shot` still reach horizon DPS comparison instead of dying before the tie-break.
-- **Natural `Sniper Shot` opener tuning + TEST signal (v0.3.115)** — opener horizon now supports per-skill min-improvement gates and ships a live `Sniper Shot` override (`openerMinImprovementFractionByName.sniper shot = 0.01`); TEST now reports `Natural Sniper Shot` so we can see whether the planner picks it without force.
-- **Sniper Shot uses 75% release in normal combat (v0.3.114)** — `chargeSkillReleaseFractionsByName.sniper shot = 0.75` now drives both planner math and live combat; TEST uses that real policy by default.
-- **TEST forces `Sniper Shot` 75% release (v0.3.113)** — forced-opener TEST now also overrides `chargeSkillReleaseFraction` to `0.75` and clears the legacy ms override, so verification exercises a real partial cancel instead of full charge.
-- **Full-charge verify no longer cancels late (v0.3.112)** — after a full-charge auto-fire, combat only does a short post-fire verify (`chargeSkillFullChargeProgressTimeoutMs`) and never waits ~2.2s then tries a late cancel.
-- **TEST forced `Sniper Shot` opener (v0.3.110)** — `runUiTestBundle()` now temporarily requests `Sniper Shot` (or another override name) so charge-release mechanics can be verified even when the normal planner ranks it low; TEST reports `Forced opener`.
-- **Charge release plan for charge skills (v0.3.109)** — parsed `channel_gear` skills now use planned hold/release semantics (`chargeSkillReleaseFraction`, legacy ms override) in both `attackUntilProgress` and `openerHorizonSim`; TEST adds `Charge release policy`.
-- **Post–charge-cancel idle fix (v0.3.108)** — immediate basic after charge cancel + shorter verify timeout (`attackProgressAfterChargeCancelTimeoutMs`).
-- **Release calibration tier-2 + default ranked bursts (v0.3.107)** — `rankedBurstsPerFind` default `3`; second calibration retry path (`retryPasses`) when first seed still has no hp drops.
-- **Multi-mob channel rank deprioritization (v0.3.106)** — heuristic rank penalizes channel skills when `enemyCount` exceeds threshold; TEST reports `Multi-mob channel rank` diagnostics.
-- **Release calibration retry hardening (v0.3.105)** — if release calibration has `skipped_no_hp_drops`, TEST seeds one short combat attempt and retries calibration once with longer observe.
-- **Calibration observe attribution fix (v0.3.104)** — damage observe late-binds enemy key when target appears mid-window; release calibration observe 15s; TEST shows real merge error in `reason`.
-- **Canonical skill DB path + release TEST button (v0.3.103)** — `bot/data/ligmar_hero_skills_db.json` is the canonical embedded master export (`build.ps1` fallback to legacy root path). Panel **`TEST (release)`** runs `testProfile: "release"` without DevTools.
-- **Tuning-hint telemetry basis fix (v0.3.102)** — tuning hint now uses full ranked runtime event totals, reducing false `insufficient_runtime_events` skips after successful ranked soak.
-- **Soak telemetry budget gate (v0.3.101)** — ranked soak now targets a minimum runtime event budget before pass, improving tuning-hint availability and making timeout reason explicit when budget is not reached.
-- **Mid-session soak continuity (v0.3.100)** — release TEST now defaults to resume auto-farm after bundle when farm was ON; added `Farm resume policy` check for explicit visibility.
-- **Quick soak retry hardening (v0.3.99)** — quick TEST profile now auto-extends soak once when initial window has no ranked activity; details include retry diagnostics.
-- **Ranked soak criterion alignment (v0.3.98)** — soak now passes on any ranked runtime activity and reports explicit failure reason in detail payload.
-- **DevTools TEST detail policy (v0.3.97)** — TEST now prints `[TEST] DETAILS` per-check payload + richer table (`skipped`, `reason/error`) for precise debugging.
-- **TEST stability fixes (v0.3.96)** — fixed ranked soak false-fails (`ranked_progress` counts as activity) and class-mismatch false-fails in skill-master check across sequential class tests.
-- **TEST profiles (v0.3.95)** — added `testProfile: "quick" | "release"`; release mode runs strict checks + longer soak.
-- **Combat reliability hardening (v0.3.94)** — added no-progress streak cooldown backoff and TEST `Combat reliability` check.
-- **TEST graceful soak stop (v0.3.93)** — soak now waits for combat-safe boundary before stop request to avoid mid-fight cutoff.
-- **Mid-fight rotation control (v0.3.92)** — configurable ranked bursts per find cycle (`rankedBurstsPerFind`), with TEST `Rotation policy` check.
-- **Enemy-aware opener adaptation (v0.3.91)** — horizon threshold now adapts from enemy calibration ratio; TEST adds `Enemy adaptation`.
-- **Per-class planner profiles (v0.3.90)** — auto-detect class and apply class-specific planner knobs; TEST adds `Class profile` check.
-- **TEST auto-soak hang fix (v0.3.89)** — fixed soak start to not await long-running loop; TEST now ends and stays OFF by default.
-- **Ranked soak false-fail guard (v0.3.88)** — soak passes when stop was accepted (even if loop still unwinding), avoiding false critical fails after successful ranked picks.
-- **One-click TEST auto-soak (v0.3.87)** — TEST now auto-enables ranked mode for test scope, runs short farming soak, then performs strict ranked checks with new `Ranked soak` check.
-- **No-skip ranked TEST mode (v0.3.86)** — `runUiTestBundle({ strictRankedChecks: true })` fails ranked checks when ranked combat is OFF (no silent skips).
-- **Auto-farm session summary (v0.3.85)** — TEST now includes completed ON-session snapshot (duration/cycles/failures/exit reason).
-- **GUI footer live-refresh fix (v0.3.84)** — fixed frozen HP/MP/Ping/ON timer footer updates by restoring safe single-instance refresh ticker.
-- **GUI ON timer (v0.3.83)** — panel footer now shows live ON duration while auto-farm runs.
-- **Ranked tuning hints (v0.3.82)** — diagnostics suggest horizon threshold tuning from runtime telemetry; TEST adds `Ranked tuning hint` soft check.
-- **Ranked reason quality (v0.3.81)** — opener diagnostics now include `% vs baseline`, threshold %, and filtered-out buckets; TEST adds `Ranked reason quality`.
-- **Ranked opener soak telemetry (v0.3.80)** — added runtime opener event counters + TEST `Ranked runtime` check; exposes `getPlannerRuntimeTelemetry()` / `resetPlannerRuntimeTelemetry()`.
-- **TEST honesty tweak (v0.3.79)** — `Conception path` now reports `skipped` when ranked opener is OFF, and only passes when conception mode is actually exercised.
-- **Planner v2 (v0.3.78)** — conception-first opener selection: rank by master/scanned conception, then horizon DPS tie-break inside conception gate; TEST adds `Conception path` check.
-- **Master DB class sync (v0.3.77)** — auto-detect class from profile icon and auto-sync `masterClassKey`; TEST now fails `Skill master DB` when matched=0 on non-empty skill bars.
-- **UI cleanup (v0.3.76)** — removed TEST description/help text block from panel; GUI now shows controls + test result + runtime status only.
-- **UI cleanup (v0.3.75)** — removed opener timing calibration block from panel; TEST line + phase/status only. Keep patch-specific checks only.
-- **TEST + openerHorizonSim** — **`runUiTestBundle`** calls **`previewOpenerHorizonSim()`** when ranked combat is on (soft check **`planner_opener_horizon_preview`**). Ship rule: extend TEST for any new testable behavior.
-- **Planner — openerHorizonSim (v0.3.64)** — **`plannerPickSkillOpeningPick`**: paper damage over **`openerHorizonSimMs`** vs basics-only; **`previewOpenerHorizonSim`**, **`Config.planner.useOpenerHorizonSim`** / **`openerHorizonMinImprovementFraction`** / **`openerHorizonLog`**.
-- **Hotfix v0.3.63** — **TEST** left **`stopRequested`** true after farm exit → hero profile **`waitForCondition`** aborted instantly, wrong tab / stuck UI; clear flag on loop exit + before TEST body when idle.
-- **Hotfix v0.3.62** — **ON → TEST** tab freeze: **`sleep()`** was **0 ms** while **`stopRequested`**, so TEST’s farm-idle wait spun the main thread; **`sleep(80, { bypassStop: true })`** in **`runUiTestBundle`**.
-- **TEST (full auto)** — **`runUiTestBundle`** runs **scanSkills** (when needed), **readHeroCombatStats**, planner opener dry-run + diagnostics, probes, cancel smoke, calibration; console **`[TEST] SUMMARY`** + panel **Last TEST** line; opts **`forceSkillScan`**, **`strictCalibration`**, etc.
-- **Pack A — planner / empty or gated skills**: **`Runtime.planner`** records every ranked-opener pick (`empty_cache`, `no_attack_skills_for_ranker`, `all_candidates_filtered` + skip **breakdown**, or **`picked`**); throttled **`[PLANNER]`** logs when combat falls back to basic; **`Config.planner.logOpeningPickFailures`** / **`openingPickFailureLogThrottleMs`**; **`ligmarBot.getPlannerOpeningPickDiagnostics()`**.
-- Stuck ranked opener → cancel charge (hint visible) so cooldown can start; map button / canvas gap click first.
-- **TEST** — single click runs the full diagnostic + calibration path; auto-farm stops first when it was running.
-- **`rankedOpenerChargeGraceMs`** / optional **`chargeSkillReleaseOverrideMs`** — persisted **`ligmarbot.combatUi.v1`** (grace + fraction + override) or **`Config.combat`**; old saves may still carry **`rankedOpenerEarlyCancelIfHintAfterMs`** which **`loadCombatUiPrefs`** maps to **`chargeSkillReleaseOverrideMs`** once.
-- **Prefs** — **`ligmarBot.saveAllUiPrefs()`** / **`loadAllUiPrefs()`** or per-key helpers; console prints **`{ ok: true, … }`** on success.
-- **TEST** — press **in combat** for calibration (target bar visible, then keep hitting); **mid-charge** if you want cancel smoke; see panel hint / **`ARCHITECTURE.md`**.
-- **TEST + farm** — if auto-farm was **ON**, TEST stops it for the bundle, then **starts the loop again** (stay off: `ligmarBot.runUiTestBundle({ resumeAutoFarm: false })`).
-- **Opener Grace** — new installs default **200 ms**; existing **`combatUi.v1`** saves keep your old values until you change the panel.
-- **TEST mid-channel** — cancel hint visible → bot **will** tap cancel (smoke); DB merge from the follow-on observe is still a successful run.
+Main namespaces in `Runtime`:
 
-## Next (pick order) — milestone-sized
+```js
+Runtime.autoFarm
+Runtime.exploration
+Runtime.basement
+Runtime.planner
+Runtime.hero
+Runtime.skills
+Runtime.enemy
+Runtime.vision
+Runtime.ui
+Runtime.preferences
+```
 
-**Current maintainer priority:** ship **Queue v3 / horizon follow-on** first (default **`openerFollowUpSkillDepth: 2`** from **v0.3.197**; deeper carry-forward than one queued follow-up; typed calibration split vs defense **#7** as called out in §3). Then **Buff / empirical buff modeling** (§6 — paired fights, label snapshots, promote stable deltas). The **canonical master JSON already lives in-repo** at **`bot/data/ligmar_hero_skills_db.json`** (embedded at build via **`87-skill-master.generated.js`**); §1 below is **workflow + quality** (collector merge, unmatched-name fixes, **`normalizeSkillName()`** extensions, conception-keyed planner rules) — not “add a DB file from scratch.”
+### 3.1 Auto farm
 
-1. **Permanent skill DB (shared)** — **Collector:** **`bot/tools/skill-master-collector-console.js`**. **Runtime:** slots carry **`conception`** (roles / usage — level-invariant); master JSON **Requirements** are bot-irrelevant. **Canonical repo file:** **`bot/data/ligmar_hero_skills_db.json`** (**present today**; embedded at build). **v0.3.168:** unique **cross-class** name resolution when the hero’s class bucket misses but exactly one other class row matches the normalized scan name (ambiguous multi-class matches stay unmatched). **Still next:** use unmatched-name diagnostics for *true* DB gaps; optional **`normalizeSkillName()`** extensions; planner rules keyed on **conception**. See **`ARCHITECTURE.md`**.
-2. **Current-build field validation** — run long unattended farming with **`TEST`** + normal ON sessions on the main build, then tune only from real failures: execute false-positives, potion waste, ranked fallback/no-progress spikes, **idle explore heal** (HP should reach the configured floor before tile moves when `enemyCount===0`; Stop should exit the wait cleanly), **attackers-popup retarget** (after one kill in a pull, the next target should appear faster than `find enemy`, with clean fallback if popup selection fails), **post-retarget flow** (no cancel tap; first non-charge skill should queue on **Attack** while the game’s default basic winds; charge opener still tap+release), **post-retarget charge guard** (charge skills should stay blocked on the re-targeted enemy until the first verified HP/count progress lands there), **progress-bar-driven queue chaining** (next queue click should happen only after the previous queued action name is visible on the cast bar, including stable `Attack` chaining for basics), the **AUTO local chat spammer** (safe idle boundaries only; **5–15 minute** randomized cadence; copy pulled from the **time-of-day** bank matching local clock; dialog closes cleanly), and the **night watchdog** (soft recovery vs sustained unhealthy → refresh; AUTO resume; bounded retry cap). **Evidence:** panel **TEST** (full export + **`gameSnapshotEnd.fieldValidation`**) when you want a structured snapshot; during soak, **STOP + COPY LOGS** pastes the last **30** **`Logger`** lines without manual console selection; optional **`ligmarBot.getFieldValidationSnapshot()`** for a mid-session object.
-3. **Queue v3 / deeper carry-forward rotation** — `v0.3.152` cast-bar queue v2; **v0.3.193** post-retarget no cancel + queue on game basic; **v0.3.194** queue next-action scoring uses **`openerFollowUpSkillDepth`**. **v0.3.197:** default **`openerFollowUpSkillDepth: 2`** (horizon + runtime queue lookahead; client still one queue slot). **Combat episode v1** snapshots opener + queued follow-up. **Horizon v2 (partial):** channel hold risk + live-target overkill cap. **Incoming danger:** sustain **`incomingPressure`** (**v0.3.187**); **`pullTier`** / **`pullEnemyCount`**. **Calibration → pressure (v0.3.188–189)**; **Calibration → horizon paper (v0.3.190–192)**. **Next:** long AUTO soak + **`TestSummary.md`** on main build to validate depth-2 queue picks; optional **`openerFollowUpSkillDepth: 1`** rollback via **`ligmarBot.Config.planner.openerFollowUpSkillDepth`** if a class/build regresses; **or** typed **magic vs physical** calibration in enemy DB **or** defense pipeline **#7**; true multi-prep still limited by client two-skill queue.
-4. **Pack B (parallel):** **loot/settle + inventory** polish, or **neighbor scan** latency + richer **failure logging** (still no prefs-only micro-ships).
-5. **Recovery policy tuning** — after a few night soaks, tune the watchdog thresholds only from real failures: high-ping grace, stale-action window, soft-recovery delay, map reopen retries, refresh wait, and refresh retry cap.
-6. **Buff + run mechanics + empirical buff modeling** — automation ideas: **prebuff / rebuff** windows (when to refresh self-buffs before pulls), **run mechanics** (movement-based combat cadence / kiting — scope TBD once in-game signals exist). **Shipped slice (bot):** **`Config.supportBuffs`** drives OOC long self-buff renew; **new-tile prebuff** **`maybeApplySupportPrebuffsOnNewTile`** before find-enemy (long then short, longest-first per band; **party** Support+Party via scan or **`getSkillMasterEntry`**); **never prebuff** safety barriers (**`isSupportSkillExcludedFromPrebuffSafetyPolicy`** — reserve + **`safety.skillNames`** + absorb/incoming on self-only support from scan/DB); **HP-spike** safety; **idle MP** **`tryUseOutOfCombatIdleLowManaPotion`** when **`enemyCount===0`** and MP &lt; **`idleMpPotionUseBelowPct`**. Console **`ligmarBot.listScannedSupportBuffClassifications()`** / **`listSafetyLikeBuffsFromScannedSkills()`**. **Enemy DB today:** rows store identity + **status bar label snapshots** (`statusLabelsLast`) and **hp_drop calibration** merged from the damage observer — **not** numeric buff atk/def/res. **Shipped slice:** each merge writes **`observeCalLast.statusLabelsSignature`** + **`buffSigBuckets`** (per-signature running hp_drop stats, bucket cap **20**) and TEST / **`fieldValidation.enemyBuffCalibration`** surface the last-fought row for soak exports (**`buffSigTop.signaturePreview`** in **v0.3.200**). **Console:** **`ligmarBot.summarizeEnemyBuffSigBuckets({ key? })`** (**v0.3.202**, TEST **`enemy_buff_sig_buckets_api`**) lists all buckets for a mob key (defaults to **`lastFoughtKey`**) for paired-fight comparisons. **Research:** pair fights on the **same** mob key — **unbuffed vs buffed** — and compare **outgoing** damage (observed `hp_drop` vs baseline) and **incoming** damage (player HP change under comparable hits) to estimate buff effects; after observations, promote stable deltas into config/planner inputs for future calculations. **Next:** extend **`safety.skillNames`** beyond Windy Dome using curated absorb/barrier list + per-skill spacing.
-7. **Combat formula implementation (hit + mitigation + planner hooks)** — attacker stats are readable; monster **Defense / Resistance / Evasion** stay hidden (constants per mob). **TODO pipeline:**
-   - **Miss / hit-rate telemetry:** **Removed v0.3.174** — prior DOM **`miss_text`** scan + **`observeMissAgg`** merge dropped as non-essential; **reintroduce** (DOM and/or canvas) when planner needs empirical miss counts. Until then, **`hp_drop`** calibration only; swing-accurate hit counting remains **next**.
-   - **Hit rate:** per mob bucket estimate \(\hat p = \text{hits}/(\text{hits}+\text{misses})\) with confidence; optional **invert** game **HitChance** formula for **implied TargetEvasion** when **AttackerAccuracy** (and exact formula) are known — else store **`empiricalHitRate` only.
-   - **Player mitigation math:** implement **PhysicalDefense** / **MagicResistance** from **Vitality, Strength, Magic**, gear **Defense / Resistances**, **DefenseMultiplier / ResistanceMultiplier**, and **Effects** (BaseDefense, BaseResistance, floors) — wire inputs only when hero sheet / gear parsing exists; use for **paper vs observed** normalization on **your** side.
-   - **Monster side:** keep Defense/Resist as **latent**; optionally **split** calibration by **physical vs magic** skill tags from the skill DB; merge into enemy DB rows as typed multipliers or continue single **hp_drop** ratio until split is stable.
-   - **Planner:** fold EV as **paperDamage × empiricalHitRate × enemyCalibrationRatio** (and typed branches when ready); gate behind enough samples + TEST checks.
-   - **Damage reduction (reference — implement when levels + defense/resist inputs are wired):** caps **95%** per type.
-     - **PhysicalReduction (%)** = `min(95, (PhysicalDefense) / (40 × AttackerLevel + PhysicalDefense − 25) × 100)` with physical **Defense** from defender (mob constant or player-derived).
-     - **MagicReduction (%)** = `min(95, (MagicalResistance) / (40 × AttackerLevel + MagicalResistance − 25) × 100)`; for this branch **AttackerLevel** = **EffectiveCombatLevel** (World Sync), not raw character level.
-     - **FinalDamage** = `Damage × (1 − DamageReductionEffects/100) × (1 − DamageReduction/100)` where **DamageReduction** is the **physical** or **magic** percent from the row above (match skill damage type), and **DamageReductionEffects** is the extra percent layer (buffs/debuffs) on top.
-     - **Use in bot:** with only **our** level + **our** stats known, we can reduce **incoming** damage to the hero if we parse **Effects**; for **outgoing** damage to mobs, **target Defense/Resistance** stay **latent** — fit via **hp_drop** / typed split, or back-solve an **effective** defense if paper base damage is trusted.
+Important fields:
 
-## Parking lot
+```js
+Runtime.autoFarm.running
+Runtime.autoFarm.stopRequested
+Runtime.autoFarm.startedAt
+Runtime.autoFarm.cyclesCompleted
+Runtime.autoFarm.consecutiveFailures
+Runtime.autoFarm.combatSustain
+Runtime.autoFarm.combatQueue
+```
 
-- **AUTO Safe mode (follow-ups)** — **Shipped:** **Safe** matches **Fast** for in-fight ranked planner (**horizon, openers, queue, buffs** — same **`applyAutoFarmCombatMode`** flags); **`waitForSafeModeExploreResourcesAndShortPrebuffs`** still gates idle **`exploreByScan`** (HP/MP floors + short prebuff readiness). **Next:** optional stricter opener / potion / retarget policy knobs distinct from **Fast**/**Easy** if soak shows gaps.
-- Background-tab throttling: browser limits timers/RAF when the game tab is unfocused; mitigations are layout (second monitor / keep game window visible), not userscript-only fixes.
+### 3.2 Combat sustain
+
+```js
+Runtime.autoFarm.combatSustain = {
+  hpPotionCooldownUntil, // legacy/debug only; no longer authority
+  mpPotionCooldownUntil, // legacy/debug only; no longer authority
+  queuedThisCycle,
+  lastActiveCastName,
+  longSelfTracked,
+  lastRunAt,
+  runCooldownUntil,
+  runningSince,
+  freshTargetOpenerPending,
+  postRetargetQueueActive,
+  postRetargetQueued,
+  postRetargetWaitingAttackChange,
+  postRetargetArmedAt,
+  postRetargetQueuedSlot,
+  postRetargetQueuedName
+}
+```
+
+### 3.3 Vision / lens
+
+```js
+Runtime.vision = {
+  hasLens: null | boolean,
+  override: null | boolean,
+  detectedAt: null | number,
+  lastDetection: null | object
+}
+```
+
+### 3.4 Preferences
+
+```js
+Runtime.preferences = {
+  avoidChampions: true,
+  avoidGoblins: false,
+  basementFarmingEnabled: false,
+  combatMode: "normal" // easy | normal | hard
+}
+```
+
+---
+
+## 4. AUTO loop
+
+`startAutoFarmLoop()` performs:
+
+1. Reset session state.
+2. Read hero stats.
+3. Scan skills.
+4. Open/center map.
+5. Zoom out.
+6. Detect lens state.
+7. Loop while running:
+   - Wait until not moving.
+   - Global sustain check.
+   - Travel HP/MP gate.
+   - Maintain longbuffs OOC.
+   - Open/center map, settle.
+   - Scan first ring.
+   - Lens-aware target selection.
+   - `secureTileAndLootOnce(best)`.
+   - Stop if result has `holdPosition`.
+
+---
+
+## 5. Scanning and movement
+
+### 5.1 First-ring scan
+
+`scanNeighborRing()`:
+
+- Ensures map open.
+- Uses baseline current coords from `ensureMapCentered()`.
+- Clicks six neighbor offsets.
+- Classifies changed coords as walkable.
+- Reads tile popup details: coords, tileName, enemies, allies, lootIcons.
+- Adds `basementEntry` marker when the highlighted basement portal icon is present and Basement Farming is ON outside basement.
+- Closes coord popup at scan end.
+
+### 5.2 Lens detection and ring escalation
+
+At AUTO start:
+
+- open map
+- center map
+- zoom out
+- probe second ring clickability
+- if any second-ring tile click changes coords, lens is detected.
+
+Exploration selection:
+
+```txt
+1-ring click scan
+if useful 1-ring loot exists:
+  choose best 1-ring tile
+else if lens equipped:
+  click-scan 2-ring
+  if useful 2-ring target exists:
+    move one first-ring step toward it
+  else:
+    pixel-scan 3-ring yellow die
+    move one first-ring step toward it if found
+else:
+  pixel-scan 2-ring yellow die
+  move one first-ring step toward it if found
+fallback:
+  choose best 1-ring tile
+```
+
+### 5.3 Movement verification
+
+`moveToScannedNeighbor(target)`:
+
+1. Waits for Move button if visible.
+2. Double-clicks target tile on canvas.
+3. Waits movement bar clear.
+4. Runs `ensureMapCentered()`.
+5. Uses current tile popup coords as actual coords.
+6. Expected coords priority:
+   - `target.coords` from scan
+   - projection fallback only if missing
+7. If actual != expected, returns `move_coord_mismatch` with `holdPosition`.
+8. `secureTileAndLootOnce` retries once on mismatch, then stops safely if still mismatched.
+
+---
+
+## 6. Tile scoring
+
+`scoreScannedTile(tile)` rejects invalid/non-walkable tiles and hard-blocks `(0,0)`.
+
+Priority tiers:
+
+```txt
+Basement entry (only if Basement Farming ON): 1,100,000
+Broken cargo:                                1,000,000
+Champion/boss allowed:                         900,000+
+Purple chest:                                  800,000
+Altar:                                         700,000
+Blue chest:                                    600,000
+Grey chest:                                    500,000
+Goblin allowed:                                400,000
+Contract/other loot:                           300,000
+Mobs only:                                     200,000
+Empty:                                         100,000
+```
+
+Modifiers:
+
+```txt
++200 per enemy
+-2000 per ally/player
+reverse direction penalty:
+  normal map: -150,000
+  basement: Config.basement.backtrackPenalty (default 800,000), using basement moveStack only
+```
+
+Basement exploration suppresses entrance/visited tiles while phase is `exploring`.
+
+---
+
+## 7. Sustain and travel gating
+
+### 7.1 Combat modes
+
+```txt
+easy   → HP/MP threshold 70%
+normal → HP/MP threshold 80%
+hard   → HP/MP threshold 90%
+```
+
+### 7.2 Travel gate
+
+Before movement, bot waits until HP/MP meet current mode thresholds:
+
+```js
+waitForTravelResourcesForCurrentMode(reason)
+```
+
+It uses potions and recovery skills as needed. Movement is prohibited until both HP/MP are above threshold.
+
+### 7.3 Coord popup cleanup
+
+For non-combat sustain contexts, bot closes coord popup before sustain actions. Combat tick contexts do not close popup.
+
+### 7.4 Potions
+
+Potion availability is based on actual action-bar button state, not internal timers.
+
+Helpers:
+
+```js
+getPotionSlotState(slot)
+isPotionSlotReady(slot)
+isPotionSlotUnavailable(slot)
+waitForPotionSlotUnavailable(slot, resource)
+```
+
+Potion click is considered successful only after the slot becomes disabled/on cooldown.
+
+### 7.5 Emergency run
+
+Rule:
+
+```txt
+if HP <= 33%
+and health amulet/totem is in cooldown
+and Run button is ready
+then click Run
+```
+
+The bot does not click the totem.
+
+While running:
+
+- uses HP/MP potions only
+- no skills
+- waits until HP >= 80% or running ends/interrupts
+- running is tracked via Run button disabled/cooldown state
+
+---
+
+## 8. Buffs
+
+### 8.1 Prebuffs
+
+Before moving onto enemy tile:
+
+- close coord popup
+- cast short prebuffs
+- wait for exact clicked skill button `span.skill-cooldown`
+- only then cast next buff / move
+
+### 8.2 Longbuffs
+
+Longbuffs run only OOC, tracked by expected expiry:
+
+```js
+Runtime.autoFarm.combatSustain.longSelfTracked
+```
+
+Duration is parsed from effects/description, fallback 900s for long-maintenance buffs.
+
+---
+
+## 9. Combat and planner
+
+### 9.1 Target acquisition
+
+On tile entry:
+
+```txt
+if scanned or live enemies > 0:
+  wait Find Enemy ready
+  click Find Enemy with retries
+```
+
+After kill / survivor retarget:
+
+```txt
+if enemyCount > 0 and attackersCount > 0:
+  use attackers popup
+else if enemyCount > 0:
+  Find Enemy
+```
+
+Attackers count reads only:
+
+```css
+app-button-icon.button-attackers .button-icon-counter
+```
+
+### 9.2 Planner scoring policy
+
+Simplified planner utilities:
+
+- Immediate/direct damage.
+- DoT damage.
+- Healing utility.
+- Control utility.
+- Tactical bonuses.
+- Finisher urgency.
+
+Current tactical policy:
+
+```txt
+Fresh target opener + HP safe:
+  DoT gets +5000 and AoE bonus is suppressed.
+HP < 66%:
+  target-reset and stun/control get survival bonus.
+attackersCount > 1:
+  AoE gets multi-target bonus unless safe fresh opener.
+Finisher urgency:
+  large bonus preserved if immediate damage can kill target.
+```
+
+Skill property rules:
+
+```txt
+AoE: tag "close"
+Target reset: tag "attack" and description contains target + reset
+DoT: parsed effect type "dot"
+Attack skill: tag "attack" or old target-based flag
+```
+
+### 9.3 Queue behavior
+
+`plannerManageQueueTick()`:
+
+- If idle/no active icons: pick opener.
+- If one active icon: queue one follow-up.
+- If two active icons: do nothing.
+
+Post-attackers-retarget policy:
+
+- Arm one-skill queue policy.
+- Queue exactly one planner skill.
+- If progressbar says `Attack`, wait until it changes before normal queue resumes.
+- If no `Attack` appears (no-basic class), normal queue resumes.
+
+### 9.4 AoE cancel after target death
+
+If target dies while AoE cast is active:
+
+- detect AoE by cast-bar text or AoE button disabled without cooldown digits
+- click visible `Press to cancel`
+- verify active AoE cast stopped
+- clear queue state
+- proceed with normal retarget logic
+
+---
+
+## 10. Loot / progress settle
+
+`waitForLootSettled(label, options)` waits until:
+
+- loot/action button is gone, or allowed portal action visible, and
+- battle progressbar is not visible, and
+- stable for 1800ms.
+
+Timeout: 18000ms.
+
+Progressbar visibility is authoritative; hidden stale text does not block settlement.
+
+---
+
+## 11. Basement farming
+
+### 11.1 Entry
+
+Outside basement:
+
+- coord popup tile name does not identify basement entry
+- entry is detected by highlighted basement portal icon button signature
+- if Basement Farming OFF, button is suppressed and never clicked
+- if ON, scan marks `basementEntry: true`, tile can be selected
+- after entrance tile is cleared, bot clicks portal icon and enters
+- `markBasementEntered()` sets phase `exploring`
+
+### 11.2 Exploration
+
+Inside basement:
+
+- every tile popup may say `Basement`; this is not portal evidence
+- entrance/visited tiles suppressed while exploring
+- champion/end tiles are allowed even if Avoid Champions is ON
+- non-end loot/action buttons suppressed while exploring
+
+### 11.3 End/champion detection
+
+End candidate is currently:
+
+```txt
+inside basement + tile has boss/champion marker in lootIcons
+```
+
+After clearing end candidate:
+
+- click knowledge
+- wait settle
+- phase `complete`
+- click visible `Exiting` button primarily
+- fallback to portal icon if Exiting missing
+- wait exit settle
+- mark basement exited
+
+If exit missing, stop safely. No return/backtracking-to-exit flow yet.
+
+---
+
+## 12. GUI
+
+- Auto-mounted by default.
+- Collapsible via header button.
+- Single START/STOP toggle button.
+- Combat mode buttons: Easy / Normal / Hard.
+- Checkboxes: Avoid Champions, Basement Farming.
+- Diagnostic test button removed.
+
+---
+
+## 13. Current version history baseline
+
+- `1.1.0`: first stable lens-aware ring exploration baseline.
+- `1.2.0`: GUI streamlined and initial combat scoring tuning.
+- `1.2.8`: DoT fresh opener enforced and AoE cancel queue clear.
+- `1.4.3-beta`: diagnostic clipboard recursion fix, confirmed HP-drop sustain interrupt, and Archer Sniper Shot finisher.
+- `1.4.2-beta`: buff toggles, red champion dice pathing, and sustain HP-drop combat interrupt.
+- `1.4.1-beta`: crash reports and recent-cycle diagnostics.
+- `1.4.0-beta`: boss avoidance toggle, threat-priority attacker targeting, and normal Windy Dome buff handling.
+- `1.2.9-beta`: first public beta; retarget queue lock and basement entry suppression.
